@@ -1,3 +1,16 @@
 .caliber
 CLAUDE.md
 .claude
+
+# Workspace folder for testing
+workspace/
+
+# Build artifacts
+/ephemeral
+
+# Data directory (when run from root)
+data/
+
+# Test repositories
+test-repo/
+test-clone/
