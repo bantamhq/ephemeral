@@ -5,20 +5,41 @@ import (
 	"time"
 )
 
+// Scope constants for token permissions.
+const (
+	ScopeReadOnly = "read-only"
+	ScopeRepos    = "repos"
+	ScopeFull     = "full"
+	ScopeAdmin    = "admin"
+)
+
 // Store defines the database interface.
 type Store interface {
 	Initialize() error
 
+	// Token operations
 	CreateToken(token *Token) error
 	GetTokenByHash(hash string) (*Token, error)
+	GetTokenByID(id string) (*Token, error)
+	ListTokens(namespaceID, cursor string, limit int) ([]Token, error)
+	DeleteToken(id string) error
 	GenerateRootToken() (string, error)
 
+	// Repo operations
 	CreateRepo(repo *Repo) error
 	GetRepo(namespaceID, name string) (*Repo, error)
 	GetRepoByID(id string) (*Repo, error)
+	ListRepos(namespaceID, cursor string, limit int) ([]Repo, error)
+	UpdateRepo(repo *Repo) error
+	DeleteRepo(id string) error
 	UpdateRepoLastPush(id string, pushTime time.Time) error
 
+	// Namespace operations
+	CreateNamespace(ns *Namespace) error
 	GetNamespace(id string) (*Namespace, error)
+	GetNamespaceByName(name string) (*Namespace, error)
+	ListNamespaces(cursor string, limit int) ([]Namespace, error)
+	DeleteNamespace(id string) error
 
 	Close() error
 }

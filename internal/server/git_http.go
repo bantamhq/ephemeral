@@ -39,21 +39,43 @@ func (h *GitHTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	token := GetTokenFromContext(r.Context())
-	if token == nil {
-		http.Error(w, "Authentication required", http.StatusUnauthorized)
-		return
-	}
+	isWrite := h.isWriteOperation(r)
 
-	if token.NamespaceID != namespace {
-		http.Error(w, "Access denied", http.StatusForbidden)
-		return
+	if isWrite {
+		if token == nil {
+			w.Header().Set("WWW-Authenticate", `Basic realm="Ephemeral"`)
+			http.Error(w, "Authentication required", http.StatusUnauthorized)
+			return
+		}
+		if token.NamespaceID != namespace {
+			http.Error(w, "Access denied", http.StatusForbidden)
+			return
+		}
+	} else {
+		if token != nil && token.NamespaceID != namespace {
+			http.Error(w, "Access denied", http.StatusForbidden)
+			return
+		}
+
+		if token == nil {
+			repo, err := h.store.GetRepo(namespace, repoName)
+			if err != nil {
+				http.Error(w, "Internal server error", http.StatusInternalServerError)
+				return
+			}
+			if repo == nil || !repo.Public {
+				w.Header().Set("WWW-Authenticate", `Basic realm="Ephemeral"`)
+				http.Error(w, "Authentication required", http.StatusUnauthorized)
+				return
+			}
+		}
 	}
 
 	switch {
 	case strings.HasSuffix(r.URL.Path, "/info/refs"):
 		h.handleInfoRefs(w, r, namespace, repoName, token)
 	case strings.HasSuffix(r.URL.Path, "/git-upload-pack"):
-		h.handleUploadPack(w, r, namespace, repoName, token)
+		h.handleUploadPack(w, r, namespace, repoName)
 	case strings.HasSuffix(r.URL.Path, "/git-receive-pack"):
 		h.handleReceivePack(w, r, namespace, repoName, token)
 	default:
@@ -61,11 +83,21 @@ func (h *GitHTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (h *GitHTTPHandler) isWriteOperation(r *http.Request) bool {
+	if strings.HasSuffix(r.URL.Path, "/git-receive-pack") {
+		return true
+	}
+	if strings.HasSuffix(r.URL.Path, "/info/refs") {
+		return r.URL.Query().Get("service") == "git-receive-pack"
+	}
+	return false
+}
+
 func (h *GitHTTPHandler) handleInfoRefs(w http.ResponseWriter, r *http.Request, namespace, repoName string, token *store.Token) {
 	service := r.URL.Query().Get("service")
 	isWrite := service == "git-receive-pack"
 
-	if isWrite && token.Scope == "read-only" {
+	if isWrite && token.Scope == store.ScopeReadOnly {
 		http.Error(w, "Write access denied", http.StatusForbidden)
 		return
 	}
@@ -108,7 +140,7 @@ func (h *GitHTTPHandler) handleInfoRefs(w http.ResponseWriter, r *http.Request, 
 	w.Write(output)
 }
 
-func (h *GitHTTPHandler) handleUploadPack(w http.ResponseWriter, r *http.Request, namespace, repoName string, token *store.Token) {
+func (h *GitHTTPHandler) handleUploadPack(w http.ResponseWriter, r *http.Request, namespace, repoName string) {
 	repo, err := h.store.GetRepo(namespace, repoName)
 	if err != nil {
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
@@ -129,13 +161,12 @@ func (h *GitHTTPHandler) handleUploadPack(w http.ResponseWriter, r *http.Request
 	cmd.Stdout = w
 
 	if err := cmd.Run(); err != nil {
-		// Client disconnect is common and not an error worth logging loudly
 		fmt.Printf("git-upload-pack error: %v\n", err)
 	}
 }
 
 func (h *GitHTTPHandler) handleReceivePack(w http.ResponseWriter, r *http.Request, namespace, repoName string, token *store.Token) {
-	if token.Scope == "read-only" {
+	if token.Scope == store.ScopeReadOnly {
 		http.Error(w, "Write access denied", http.StatusForbidden)
 		return
 	}
