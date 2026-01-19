@@ -30,7 +30,7 @@ else
     fail "create label" "valid ID" "$RESPONSE"
 fi
 
-expect_json "$RESPONSE" '.data.Name' "go" "name matches"
+expect_json "$RESPONSE" '.data.name' "go" "name matches"
 
 # Create label with color
 RESPONSE=$(auth_curl -X POST -H "Content-Type: application/json" \
@@ -41,8 +41,8 @@ LABEL2_ID=$(get_id "$RESPONSE")
 if [ -n "$LABEL2_ID" ]; then
     track_label "$LABEL2_ID"
 fi
-expect_json "$RESPONSE" '.data.Name' "typescript" "name matches"
-expect_json "$RESPONSE" '.data.Color' "#3178C6" "color set"
+expect_json "$RESPONSE" '.data.name' "typescript" "name matches"
+expect_json "$RESPONSE" '.data.color' "#3178C6" "color set"
 
 # Create more labels for testing
 RESPONSE=$(auth_curl -X POST -H "Content-Type: application/json" \
@@ -80,8 +80,8 @@ section "Get"
 
 # Get label by ID
 RESPONSE=$(auth_curl "$API/labels/$LABEL1_ID")
-expect_json "$RESPONSE" '.data.ID' "$LABEL1_ID" "returns correct label"
-expect_json "$RESPONSE" '.data.Name' "go" "name matches"
+expect_json "$RESPONSE" '.data.id' "$LABEL1_ID" "returns correct label"
+expect_json "$RESPONSE" '.data.name' "go" "name matches"
 
 # Get non-existent label
 RESPONSE=$(auth_curl "$API/labels/nonexistent-id")
@@ -96,19 +96,19 @@ RESPONSE=$(auth_curl -X PATCH -H "Content-Type: application/json" \
     -d '{"name":"golang"}' \
     "$API/labels/$LABEL1_ID")
 
-expect_json "$RESPONSE" '.data.Name' "golang" "name changed"
+expect_json "$RESPONSE" '.data.name' "golang" "name changed"
 
 # Update color
 RESPONSE=$(auth_curl -X PATCH -H "Content-Type: application/json" \
     -d '{"color":"#00ADD8"}' \
     "$API/labels/$LABEL1_ID")
 
-expect_json "$RESPONSE" '.data.Color' "#00ADD8" "color changed"
+expect_json "$RESPONSE" '.data.color' "#00ADD8" "color changed"
 
 # Verify persisted
 RESPONSE=$(auth_curl "$API/labels/$LABEL1_ID")
-expect_json "$RESPONSE" '.data.Name' "golang" "name persisted"
-expect_json "$RESPONSE" '.data.Color' "#00ADD8" "color persisted"
+expect_json "$RESPONSE" '.data.name' "golang" "name persisted"
+expect_json "$RESPONSE" '.data.color' "#00ADD8" "color persisted"
 
 ###############################################################################
 section "Repo Labels"

@@ -38,7 +38,7 @@ else
     fail "create namespace" "valid ID" "$RESPONSE"
 fi
 
-expect_json "$RESPONSE" '.data.Name' "test-namespace" "name matches"
+expect_json "$RESPONSE" '.data.name' "test-namespace" "name matches"
 
 # Create with limits
 RESPONSE=$(auth_curl -X POST -H "Content-Type: application/json" \
@@ -49,8 +49,8 @@ NS2_ID=$(get_id "$RESPONSE")
 if [ -n "$NS2_ID" ]; then
     track_namespace "$NS2_ID"
 fi
-expect_json "$RESPONSE" '.data.RepoLimit' "10" "repo_limit set"
-expect_json "$RESPONSE" '.data.StorageLimitBytes' "1073741824" "storage_limit set"
+expect_json "$RESPONSE" '.data.repo_limit' "10" "repo_limit set"
+expect_json "$RESPONSE" '.data.storage_limit_bytes' "1073741824" "storage_limit set"
 
 # Duplicate name should fail
 RESPONSE=$(auth_curl -X POST -H "Content-Type: application/json" \
@@ -72,8 +72,8 @@ section "Get"
 
 # Get namespace by ID
 RESPONSE=$(auth_curl "$API/namespaces/$NS_ID")
-expect_json "$RESPONSE" '.data.ID' "$NS_ID" "returns correct namespace"
-expect_json "$RESPONSE" '.data.Name' "test-namespace" "name matches"
+expect_json "$RESPONSE" '.data.id' "$NS_ID" "returns correct namespace"
+expect_json "$RESPONSE" '.data.name' "test-namespace" "name matches"
 
 # Get non-existent namespace
 RESPONSE=$(auth_curl "$API/namespaces/nonexistent-id")

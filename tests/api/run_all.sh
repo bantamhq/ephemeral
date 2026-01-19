@@ -27,6 +27,18 @@ cleanup() {
 
 trap cleanup EXIT
 
+TEST_PORT=18080
+
+# Check if port is already in use
+if lsof -i ":$TEST_PORT" >/dev/null 2>&1; then
+    echo -e "${RED}Error: Port $TEST_PORT is already in use${NC}"
+    echo "Another process is listening on this port:"
+    lsof -i ":$TEST_PORT"
+    echo ""
+    echo "Kill the process or wait for it to finish before running tests."
+    exit 1
+fi
+
 # Create temp directory for test
 TEST_DIR=$(mktemp -d)
 echo -e "${BLUE}Test directory: $TEST_DIR${NC}"
@@ -39,7 +51,7 @@ go build -o "$TEST_DIR/ephemeral" ./cmd/ephemeral
 # Create config
 cat > "$TEST_DIR/server.toml" << EOF
 [server]
-port = 18080
+port = $TEST_PORT
 host = "127.0.0.1"
 
 [storage]
@@ -73,13 +85,13 @@ fi
 
 # Wait for server to be ready
 for i in {1..30}; do
-    if curl -s "http://127.0.0.1:18080/health" > /dev/null 2>&1; then
+    if curl -s "http://127.0.0.1:$TEST_PORT/health" > /dev/null 2>&1; then
         break
     fi
     sleep 0.2
 done
 
-if ! curl -s "http://127.0.0.1:18080/health" > /dev/null 2>&1; then
+if ! curl -s "http://127.0.0.1:$TEST_PORT/health" > /dev/null 2>&1; then
     echo -e "${RED}Server failed to start${NC}"
     echo "Server log:"
     cat server.log
@@ -90,7 +102,7 @@ echo -e "${GREEN}Server ready${NC}"
 
 # Export for test scripts
 export TOKEN
-export BASE_URL="http://127.0.0.1:18080"
+export BASE_URL="http://127.0.0.1:$TEST_PORT"
 
 echo ""
 echo -e "${BLUE}╔═══════════════════════════════════════╗${NC}"

@@ -30,8 +30,8 @@ else
     fail "create private repo" "valid ID" "$RESPONSE"
 fi
 
-expect_json "$RESPONSE" '.data.Name' "test-repo-1" "name matches"
-expect_json "$RESPONSE" '.data.Public' "false" "public=false"
+expect_json "$RESPONSE" '.data.name' "test-repo-1" "name matches"
+expect_json "$RESPONSE" '.data.public' "false" "public=false"
 
 # Create a public repo
 RESPONSE=$(auth_curl -X POST -H "Content-Type: application/json" \
@@ -42,7 +42,7 @@ REPO2_ID=$(get_id "$RESPONSE")
 if [ -n "$REPO2_ID" ]; then
     track_repo "$REPO2_ID"
 fi
-expect_json "$RESPONSE" '.data.Public' "true" "public=true"
+expect_json "$RESPONSE" '.data.public' "true" "public=true"
 
 # Duplicate name should fail
 RESPONSE=$(auth_curl -X POST -H "Content-Type: application/json" \
@@ -64,8 +64,8 @@ section "Get"
 
 # Get repo by ID
 RESPONSE=$(auth_curl "$API/repos/$REPO1_ID")
-expect_json "$RESPONSE" '.data.ID' "$REPO1_ID" "returns correct repo"
-expect_json "$RESPONSE" '.data.Name' "test-repo-1" "name matches"
+expect_json "$RESPONSE" '.data.id' "$REPO1_ID" "returns correct repo"
+expect_json "$RESPONSE" '.data.name' "test-repo-1" "name matches"
 
 # Get non-existent repo
 RESPONSE=$(auth_curl "$API/repos/nonexistent-id")
@@ -92,19 +92,19 @@ RESPONSE=$(auth_curl -X PATCH -H "Content-Type: application/json" \
     -d '{"name":"test-repo-renamed"}' \
     "$API/repos/$REPO1_ID")
 
-expect_json "$RESPONSE" '.data.Name' "test-repo-renamed" "name changed"
+expect_json "$RESPONSE" '.data.name' "test-repo-renamed" "name changed"
 
 # Update public flag
 RESPONSE=$(auth_curl -X PATCH -H "Content-Type: application/json" \
     -d '{"public":true}' \
     "$API/repos/$REPO1_ID")
 
-expect_json "$RESPONSE" '.data.Public' "true" "public changed to true"
+expect_json "$RESPONSE" '.data.public' "true" "public changed to true"
 
 # Verify changes persisted
 RESPONSE=$(auth_curl "$API/repos/$REPO1_ID")
-expect_json "$RESPONSE" '.data.Name' "test-repo-renamed" "name persisted"
-expect_json "$RESPONSE" '.data.Public' "true" "public persisted"
+expect_json "$RESPONSE" '.data.name' "test-repo-renamed" "name persisted"
+expect_json "$RESPONSE" '.data.public' "true" "public persisted"
 
 # Update non-existent repo
 RESPONSE=$(auth_curl -X PATCH -H "Content-Type: application/json" \

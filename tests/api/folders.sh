@@ -30,8 +30,8 @@ else
     fail "create root folder" "valid ID" "$RESPONSE"
 fi
 
-expect_json "$RESPONSE" '.data.Name' "projects" "name matches"
-expect_json "$RESPONSE" '.data.ParentID' "null" "parent_id is null"
+expect_json "$RESPONSE" '.data.name' "projects" "name matches"
+expect_json "$RESPONSE" '.data.parent_id' "null" "parent_id is null"
 
 # Create a nested folder
 RESPONSE=$(auth_curl -X POST -H "Content-Type: application/json" \
@@ -42,8 +42,8 @@ FOLDER2_ID=$(get_id "$RESPONSE")
 if [ -n "$FOLDER2_ID" ]; then
     track_folder "$FOLDER2_ID"
 fi
-expect_json "$RESPONSE" '.data.Name' "web" "nested folder name"
-expect_json "$RESPONSE" '.data.ParentID' "$FOLDER1_ID" "parent_id set"
+expect_json "$RESPONSE" '.data.name' "web" "nested folder name"
+expect_json "$RESPONSE" '.data.parent_id' "$FOLDER1_ID" "parent_id set"
 
 # Create another nested folder
 RESPONSE=$(auth_curl -X POST -H "Content-Type: application/json" \
@@ -84,8 +84,8 @@ section "Get"
 
 # Get folder by ID
 RESPONSE=$(auth_curl "$API/folders/$FOLDER1_ID")
-expect_json "$RESPONSE" '.data.ID' "$FOLDER1_ID" "returns correct folder"
-expect_json "$RESPONSE" '.data.Name' "projects" "name matches"
+expect_json "$RESPONSE" '.data.id' "$FOLDER1_ID" "returns correct folder"
+expect_json "$RESPONSE" '.data.name' "projects" "name matches"
 
 # Get non-existent folder
 RESPONSE=$(auth_curl "$API/folders/nonexistent-id")
@@ -100,11 +100,11 @@ RESPONSE=$(auth_curl -X PATCH -H "Content-Type: application/json" \
     -d '{"name":"all-projects"}' \
     "$API/folders/$FOLDER1_ID")
 
-expect_json "$RESPONSE" '.data.Name' "all-projects" "name changed"
+expect_json "$RESPONSE" '.data.name' "all-projects" "name changed"
 
 # Verify persisted
 RESPONSE=$(auth_curl "$API/folders/$FOLDER1_ID")
-expect_json "$RESPONSE" '.data.Name' "all-projects" "name persisted"
+expect_json "$RESPONSE" '.data.name' "all-projects" "name persisted"
 
 # Cannot set self as parent
 RESPONSE=$(auth_curl -X PATCH -H "Content-Type: application/json" \
