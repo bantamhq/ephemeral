@@ -41,4 +41,36 @@ var (
 
 	StyleCursor = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("12"))
+
+	StyleDialogBox = lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(lipgloss.Color("62")).
+			Padding(1, 2).
+			Background(lipgloss.Color("235"))
+
+	StyleDialogButton = lipgloss.NewStyle().
+				Padding(0, 2).
+				Background(lipgloss.Color("240")).
+				Foreground(lipgloss.Color("252"))
+
+	StyleDialogButtonFocused = lipgloss.NewStyle().
+					Padding(0, 2).
+					Background(lipgloss.Color("62")).
+					Foreground(lipgloss.Color("230")).
+					Bold(true)
+
+	StyleDialogHint = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("8")).
+			Italic(true)
+
+	StylePickerSelected = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("12")).
+				Bold(true)
+
+	StylePublicBadge = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("10"))
+
+	StyleStatusMsg = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("11")).
+			Italic(true)
 )

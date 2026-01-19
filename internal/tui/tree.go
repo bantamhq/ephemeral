@@ -22,13 +22,17 @@ type TreeNode struct {
 	Children []*TreeNode
 	Expanded bool
 	Depth    int
+
+	Repo   *client.Repo
+	Folder *client.Folder
 }
 
 func BuildTree(folders []client.Folder, repos []client.Repo) []*TreeNode {
 	folderMap := make(map[string]*TreeNode)
 	var roots []*TreeNode
 
-	for _, f := range folders {
+	for i := range folders {
+		f := &folders[i]
 		node := &TreeNode{
 			Kind:     NodeFolder,
 			Name:     f.Name,
@@ -36,6 +40,7 @@ func BuildTree(folders []client.Folder, repos []client.Repo) []*TreeNode {
 			ParentID: f.ParentID,
 			Children: []*TreeNode{},
 			Expanded: true,
+			Folder:   f,
 		}
 		folderMap[f.ID] = node
 	}
@@ -54,11 +59,13 @@ func BuildTree(folders []client.Folder, repos []client.Repo) []*TreeNode {
 		attachNode(folderMap[f.ID], f.ParentID)
 	}
 
-	for _, r := range repos {
+	for i := range repos {
+		r := &repos[i]
 		node := &TreeNode{
 			Kind: NodeRepo,
 			Name: r.Name,
 			ID:   r.ID,
+			Repo: r,
 		}
 		attachNode(node, r.FolderID)
 	}
