@@ -3,6 +3,7 @@ package client
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -73,7 +74,10 @@ func (c *Client) decodeError(resp *http.Response, operation string) error {
 	if err := json.NewDecoder(resp.Body).Decode(&errResp); err != nil {
 		return fmt.Errorf("%s: status %d", operation, resp.StatusCode)
 	}
-	return fmt.Errorf("%s: %s", operation, errResp.Error)
+	if errResp.Error != "" {
+		return errors.New(errResp.Error)
+	}
+	return fmt.Errorf("%s: status %d", operation, resp.StatusCode)
 }
 
 func (c *Client) ListRepos(cursor string, limit int) ([]Repo, bool, error) {

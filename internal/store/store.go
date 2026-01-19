@@ -37,6 +37,7 @@ type Store interface {
 	// Folder operations
 	CreateFolder(folder *Folder) error
 	GetFolderByID(id string) (*Folder, error)
+	GetFolderByName(namespaceID, name string, parentID *string) (*Folder, error)
 	ListFolders(namespaceID, cursor string, limit int) ([]Folder, error)
 	UpdateFolder(folder *Folder) error
 	DeleteFolder(id string) error

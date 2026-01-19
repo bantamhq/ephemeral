@@ -2,6 +2,7 @@ package tui
 
 import (
 	"strings"
+	"unicode"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
@@ -15,6 +16,10 @@ const (
 	DialogConfirm
 )
 
+func isValidNameChar(r rune) bool {
+	return unicode.IsLetter(r) || unicode.IsDigit(r) || r == '.' || r == '_' || r == '-'
+}
+
 type DialogSubmitMsg struct {
 	Value string
 }
@@ -22,14 +27,15 @@ type DialogSubmitMsg struct {
 type DialogCancelMsg struct{}
 
 type DialogModel struct {
-	mode        DialogMode
-	title       string
-	message     string
-	input       textinput.Model
-	confirmText string
-	cancelText  string
-	focused     int
-	width       int
+	mode           DialogMode
+	title          string
+	message        string
+	input          textinput.Model
+	confirmText    string
+	cancelText     string
+	focused        int
+	width          int
+	filterNameChar bool
 }
 
 func NewInputDialog(title, message, placeholder string) DialogModel {
@@ -45,6 +51,23 @@ func NewInputDialog(title, message, placeholder string) DialogModel {
 		message: message,
 		input:   ti,
 		width:   40,
+	}
+}
+
+func NewNameInputDialog(title, message, placeholder string) DialogModel {
+	ti := textinput.New()
+	ti.Placeholder = placeholder
+	ti.Focus()
+	ti.CharLimit = 128
+	ti.Width = 30
+
+	return DialogModel{
+		mode:           DialogInput,
+		title:          title,
+		message:        message,
+		input:          ti,
+		width:          40,
+		filterNameChar: true,
 	}
 }
 
@@ -88,6 +111,16 @@ func (d DialogModel) Update(msg tea.Msg) (DialogModel, tea.Cmd) {
 				d.focused = 1 - d.focused
 			}
 			return d, nil
+		}
+
+		if d.mode == DialogInput && d.filterNameChar {
+			if len(msg.Runes) > 0 {
+				for _, r := range msg.Runes {
+					if !isValidNameChar(r) {
+						return d, nil
+					}
+				}
+			}
 		}
 	}
 

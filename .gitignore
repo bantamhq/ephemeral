@@ -1,6 +1,7 @@
 .caliber
 CLAUDE.md
 .claude
+.DS_STORE
 
 # Workspace folder for testing
 workspace/

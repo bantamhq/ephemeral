@@ -52,6 +52,19 @@ type createFolderRequest struct {
 	ParentID *string `json:"parent_id,omitempty"`
 }
 
+func (s *Server) checkFolderNameConflict(w http.ResponseWriter, namespaceID, name string, parentID *string, excludeID string) bool {
+	existing, err := s.store.GetFolderByName(namespaceID, name, parentID)
+	if err != nil {
+		JSONError(w, http.StatusInternalServerError, "Failed to check existing folder")
+		return true
+	}
+	if existing != nil && existing.ID != excludeID {
+		JSONError(w, http.StatusConflict, "Folder with that name already exists in this location")
+		return true
+	}
+	return false
+}
+
 func (s *Server) handleCreateFolder(w http.ResponseWriter, r *http.Request) {
 	token := s.requireAuth(w, r)
 	if token == nil {
@@ -67,8 +80,8 @@ func (s *Server) handleCreateFolder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.Name == "" {
-		JSONError(w, http.StatusBadRequest, "Name is required")
+	if err := ValidateName(req.Name); err != nil {
+		JSONError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -86,6 +99,10 @@ func (s *Server) handleCreateFolder(w http.ResponseWriter, r *http.Request) {
 			JSONError(w, http.StatusForbidden, "Parent folder not in namespace")
 			return
 		}
+	}
+
+	if s.checkFolderNameConflict(w, token.NamespaceID, req.Name, req.ParentID, "") {
+		return
 	}
 
 	folder := &store.Folder{
@@ -144,35 +161,60 @@ func (s *Server) handleUpdateFolder(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if req.Name != nil {
-		folder.Name = *req.Name
+		if err := ValidateName(*req.Name); err != nil {
+			JSONError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 	}
+
+	newParentID := folder.ParentID
 	if req.ParentID != nil {
-		if *req.ParentID == folder.ID {
+		if *req.ParentID == "" {
+			newParentID = nil
+		} else if *req.ParentID == folder.ID {
 			JSONError(w, http.StatusBadRequest, "Folder cannot be its own parent")
 			return
-		}
+		} else {
+			parent, err := s.store.GetFolderByID(*req.ParentID)
+			if err != nil {
+				JSONError(w, http.StatusInternalServerError, "Failed to check parent folder")
+				return
+			}
+			if parent == nil {
+				JSONError(w, http.StatusBadRequest, "Parent folder not found")
+				return
+			}
+			if parent.NamespaceID != folder.NamespaceID {
+				JSONError(w, http.StatusBadRequest, "Parent folder not in same namespace")
+				return
+			}
 
-		parent, err := s.store.GetFolderByID(*req.ParentID)
-		if err != nil {
-			JSONError(w, http.StatusInternalServerError, "Failed to check parent folder")
-			return
-		}
-		if parent == nil {
-			JSONError(w, http.StatusBadRequest, "Parent folder not found")
-			return
-		}
-		if parent.NamespaceID != folder.NamespaceID {
-			JSONError(w, http.StatusBadRequest, "Parent folder not in same namespace")
-			return
-		}
+			if s.isFolderDescendant(folder.ID, *req.ParentID) {
+				JSONError(w, http.StatusBadRequest, "Cannot set parent to a descendant folder (would create cycle)")
+				return
+			}
 
-		if s.isFolderDescendant(folder.ID, *req.ParentID) {
-			JSONError(w, http.StatusBadRequest, "Cannot set parent to a descendant folder (would create cycle)")
-			return
+			newParentID = req.ParentID
 		}
-
-		folder.ParentID = req.ParentID
 	}
+
+	newName := folder.Name
+	if req.Name != nil {
+		newName = *req.Name
+	}
+
+	nameChanged := newName != folder.Name
+	parentChanged := (newParentID == nil) != (folder.ParentID == nil) ||
+		(newParentID != nil && folder.ParentID != nil && *newParentID != *folder.ParentID)
+
+	if nameChanged || parentChanged {
+		if s.checkFolderNameConflict(w, folder.NamespaceID, newName, newParentID, folder.ID) {
+			return
+		}
+	}
+
+	folder.Name = newName
+	folder.ParentID = newParentID
 
 	if err := s.store.UpdateFolder(folder); err != nil {
 		JSONError(w, http.StatusInternalServerError, "Failed to update folder")

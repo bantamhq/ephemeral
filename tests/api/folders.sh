@@ -69,6 +69,75 @@ RESPONSE=$(auth_curl -X POST -H "Content-Type: application/json" \
 
 expect_contains "$RESPONSE" "not found" "invalid parent rejected"
 
+# Invalid characters should fail (spaces)
+RESPONSE=$(auth_curl -X POST -H "Content-Type: application/json" \
+    -d '{"name":"my folder"}' \
+    "$API/folders")
+
+expect_contains "$RESPONSE" "alphanumeric" "spaces in name rejected"
+
+# Invalid characters should fail (special chars)
+RESPONSE=$(auth_curl -X POST -H "Content-Type: application/json" \
+    -d '{"name":"folder@123"}' \
+    "$API/folders")
+
+expect_contains "$RESPONSE" "alphanumeric" "special chars rejected"
+
+# Name starting with non-alphanumeric should fail
+RESPONSE=$(auth_curl -X POST -H "Content-Type: application/json" \
+    -d '{"name":"-myfolder"}' \
+    "$API/folders")
+
+expect_contains "$RESPONSE" "start with alphanumeric" "leading hyphen rejected"
+
+# Duplicate folder name at root should fail
+RESPONSE=$(auth_curl -X POST -H "Content-Type: application/json" \
+    -d '{"name":"projects"}' \
+    "$API/folders")
+
+expect_contains "$RESPONSE" "already exists" "duplicate root folder rejected"
+
+# Same name under different parents should succeed
+RESPONSE=$(auth_curl -X POST -H "Content-Type: application/json" \
+    -d "{\"name\":\"docs\",\"parent_id\":\"$FOLDER1_ID\"}" \
+    "$API/folders")
+
+FOLDER_DOCS1_ID=$(get_id "$RESPONSE")
+if [ -n "$FOLDER_DOCS1_ID" ]; then
+    track_folder "$FOLDER_DOCS1_ID"
+    pass "create docs under projects"
+fi
+
+# Create another folder at root level to test same name under different parents
+RESPONSE=$(auth_curl -X POST -H "Content-Type: application/json" \
+    -d '{"name":"archive"}' \
+    "$API/folders")
+
+FOLDER_ARCHIVE_ID=$(get_id "$RESPONSE")
+if [ -n "$FOLDER_ARCHIVE_ID" ]; then
+    track_folder "$FOLDER_ARCHIVE_ID"
+fi
+
+# Same name (docs) under different parent should succeed
+RESPONSE=$(auth_curl -X POST -H "Content-Type: application/json" \
+    -d "{\"name\":\"docs\",\"parent_id\":\"$FOLDER_ARCHIVE_ID\"}" \
+    "$API/folders")
+
+FOLDER_DOCS2_ID=$(get_id "$RESPONSE")
+if [ -n "$FOLDER_DOCS2_ID" ]; then
+    track_folder "$FOLDER_DOCS2_ID"
+    pass "same name under different parent allowed"
+else
+    fail "same name under different parent allowed" "success" "$RESPONSE"
+fi
+
+# Duplicate name within same parent should fail
+RESPONSE=$(auth_curl -X POST -H "Content-Type: application/json" \
+    -d "{\"name\":\"docs\",\"parent_id\":\"$FOLDER1_ID\"}" \
+    "$API/folders")
+
+expect_contains "$RESPONSE" "already exists" "duplicate in same parent rejected"
+
 ###############################################################################
 section "List"
 ###############################################################################
@@ -112,6 +181,30 @@ RESPONSE=$(auth_curl -X PATCH -H "Content-Type: application/json" \
     "$API/folders/$FOLDER1_ID")
 
 expect_contains "$RESPONSE" "cannot be its own parent" "self-parent rejected"
+
+# Update with invalid name should fail
+RESPONSE=$(auth_curl -X PATCH -H "Content-Type: application/json" \
+    -d '{"name":"invalid name with spaces"}' \
+    "$API/folders/$FOLDER1_ID")
+
+expect_contains "$RESPONSE" "alphanumeric" "update: invalid name rejected"
+
+# Rename to existing name at same level should fail
+RESPONSE=$(auth_curl -X PATCH -H "Content-Type: application/json" \
+    -d '{"name":"archive"}' \
+    "$API/folders/$FOLDER1_ID")
+
+expect_contains "$RESPONSE" "already exists" "update: duplicate name rejected"
+
+# Move to location with same name should fail
+# FOLDER_DOCS1_ID is "docs" under FOLDER1_ID (all-projects)
+# FOLDER_DOCS2_ID is "docs" under FOLDER_ARCHIVE_ID (archive)
+# Try to move FOLDER_DOCS1_ID to FOLDER_ARCHIVE_ID (where docs already exists)
+RESPONSE=$(auth_curl -X PATCH -H "Content-Type: application/json" \
+    -d "{\"parent_id\":\"$FOLDER_ARCHIVE_ID\"}" \
+    "$API/folders/$FOLDER_DOCS1_ID")
+
+expect_contains "$RESPONSE" "already exists" "update: move to duplicate rejected"
 
 ###############################################################################
 section "Delete"

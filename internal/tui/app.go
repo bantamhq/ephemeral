@@ -257,7 +257,7 @@ func (m Model) openCreateFolder() (tea.Model, tea.Cmd) {
 	}
 
 	m.modal = modalCreateFolder
-	m.dialog = NewInputDialog("New Folder", "Enter folder name:", "folder-name")
+	m.dialog = NewNameInputDialog("New Folder", "Enter folder name:", "folder-name")
 	m.actionTarget = &TreeNode{ParentID: parentID}
 	return m, m.dialog.Init()
 }
@@ -269,7 +269,7 @@ func (m Model) openRename() (tea.Model, tea.Cmd) {
 	}
 
 	m.modal = modalRenameRepo
-	m.dialog = NewInputDialog("Rename Repo", "Enter new name:", node.Name)
+	m.dialog = NewNameInputDialog("Rename Repo", "Enter new name:", node.Name)
 	m.dialog.SetValue(node.Name)
 	m.actionTarget = node
 	return m, m.dialog.Init()

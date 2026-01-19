@@ -580,6 +580,31 @@ func (s *SQLiteStore) GetFolderByID(id string) (*Folder, error) {
 	return s.scanFolder(s.db.QueryRow(query, id))
 }
 
+// GetFolderByName retrieves a folder by name within the same parent.
+// parentID can be nil to check root-level folders.
+func (s *SQLiteStore) GetFolderByName(namespaceID, name string, parentID *string) (*Folder, error) {
+	var query string
+	var row *sql.Row
+
+	if parentID == nil {
+		query = `
+			SELECT id, namespace_id, name, parent_id, created_at
+			FROM folders
+			WHERE namespace_id = ? AND name = ? AND parent_id IS NULL
+		`
+		row = s.db.QueryRow(query, namespaceID, name)
+	} else {
+		query = `
+			SELECT id, namespace_id, name, parent_id, created_at
+			FROM folders
+			WHERE namespace_id = ? AND name = ? AND parent_id = ?
+		`
+		row = s.db.QueryRow(query, namespaceID, name, *parentID)
+	}
+
+	return s.scanFolder(row)
+}
+
 func (s *SQLiteStore) scanFolder(row *sql.Row) (*Folder, error) {
 	var folder Folder
 	var parentID sql.NullString
