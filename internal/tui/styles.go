@@ -21,10 +21,6 @@ var (
 			Background(lipgloss.Color("62")).
 			Foreground(lipgloss.Color("230"))
 
-	StyleFooter = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("8")).
-			Padding(0, 1)
-
 	StyleError = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("9"))
 
@@ -90,4 +86,15 @@ var (
 			Background(lipgloss.Color("236")).
 			Foreground(lipgloss.Color("255")).
 			Bold(true)
+
+	StyleFooterNamespace = lipgloss.NewStyle().
+				Background(lipgloss.Color("62")).
+				Foreground(lipgloss.Color("230")).
+				Bold(true).
+				Padding(0, 1)
+
+	StyleFooterHelp = lipgloss.NewStyle().
+			Background(lipgloss.Color("237")).
+			Foreground(lipgloss.Color("243")).
+			PaddingLeft(1)
 )

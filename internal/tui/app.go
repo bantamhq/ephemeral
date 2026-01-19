@@ -29,6 +29,8 @@ const (
 	modalCloneDir
 )
 
+const footerHeight = 1
+
 type Model struct {
 	client    *client.Client
 	namespace string
@@ -54,10 +56,11 @@ type Model struct {
 	editText          string
 	statusMsg         string
 
-	spinner spinner.Model
-	width   int
-	height  int
-	keys    KeyMap
+	spinner      spinner.Model
+	scrollOffset int
+	width        int
+	height       int
+	keys         KeyMap
 }
 
 type dataLoadedMsg struct {
@@ -124,6 +127,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else if m.cursor == 0 && len(m.flatTree) > 1 {
 			m.cursor = 1
 		}
+		m.syncViewportWithCursor()
 		return m, nil
 
 	case errMsg:
@@ -206,12 +210,14 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, m.keys.Up):
 		if m.cursor > 0 {
 			m.cursor--
+			m.syncViewportWithCursor()
 		}
 		return m, nil
 
 	case key.Matches(msg, m.keys.Down):
 		if m.cursor < len(m.flatTree)-1 {
 			m.cursor++
+			m.syncViewportWithCursor()
 		}
 		return m, nil
 
@@ -230,6 +236,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.toggleAllFolders()
 		m.flatTree = FlattenTree(m.tree)
 		m.clampCursor()
+		m.syncViewportWithCursor()
 		return m, nil
 
 	case key.Matches(msg, m.keys.Rename):
@@ -262,15 +269,18 @@ func (m Model) handleMoveMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.preMoveExpanded = nil
 		m.flatTree = FlattenTree(m.tree)
 		m.clampCursor()
+		m.syncViewportWithCursor()
 		m.statusMsg = "Move cancelled"
 		return m, nil
 
 	case key.Matches(msg, m.keys.Up):
 		m.moveCursorToFolder(-1)
+		m.ensureFolderContentsVisible()
 		return m, nil
 
 	case key.Matches(msg, m.keys.Down):
 		m.moveCursorToFolder(1)
+		m.ensureFolderContentsVisible()
 		return m, nil
 
 	case key.Matches(msg, m.keys.Left):
@@ -452,6 +462,7 @@ func (m Model) startMove() (tea.Model, tea.Cmd) {
 	m.preMoveExpanded = m.saveFolderStates(m.tree)
 	m.flatTree = FlattenTree(m.tree)
 	m.selectContainingFolder(node)
+	m.ensureFolderContentsVisible()
 	return m, nil
 }
 
@@ -809,19 +820,12 @@ func (m Model) View() string {
 		return ""
 	}
 
+	mainHeight := m.height - footerHeight
+
 	sections := []string{
-		m.headerView(),
+		m.mainContentView(mainHeight),
+		m.footerView(),
 	}
-
-	if m.loading {
-		sections = append(sections, m.loadingView())
-	} else if m.err != nil {
-		sections = append(sections, m.errorView())
-	} else {
-		sections = append(sections, m.treeView())
-	}
-
-	sections = append(sections, m.footerView())
 
 	base := lipgloss.JoinVertical(lipgloss.Left, sections...)
 
@@ -836,8 +840,39 @@ func (m Model) overlayModal(background string) string {
 	return overlay.Composite(m.dialog.View(), background, overlay.Center, overlay.Center, 0, 0)
 }
 
-func (m Model) headerView() string {
-	return StyleHeader.Width(m.width).Render(m.namespace)
+func (m Model) mainContentView(height int) string {
+	if m.loading {
+		return lipgloss.NewStyle().Height(height).Render(m.loadingView())
+	}
+
+	if m.err != nil {
+		return lipgloss.NewStyle().Height(height).Render(m.errorView())
+	}
+
+	return lipgloss.NewStyle().Height(height).Render(m.visibleTreeView(height))
+}
+
+func (m Model) visibleTreeView(height int) string {
+	if len(m.flatTree) == 0 {
+		return StyleSubtle.Render("  No repositories found")
+	}
+
+	var b strings.Builder
+
+	end := m.scrollOffset + height
+	if end > len(m.flatTree) {
+		end = len(m.flatTree)
+	}
+
+	for i := m.scrollOffset; i < end; i++ {
+		if i > m.scrollOffset {
+			b.WriteString("\n")
+		}
+		line := m.renderNode(m.flatTree[i], i == m.cursor)
+		b.WriteString(line)
+	}
+
+	return b.String()
 }
 
 func (m Model) loadingView() string {
@@ -848,21 +883,71 @@ func (m Model) errorView() string {
 	return StyleError.Render(fmt.Sprintf("\n  Error: %v\n", m.err))
 }
 
-func (m Model) treeView() string {
+func (m *Model) syncViewportWithCursor() {
+	m.ensureCursorVisible()
+}
+
+func (m *Model) ensureCursorVisible() {
 	if len(m.flatTree) == 0 {
-		return StyleSubtle.Render("\n  No repositories found\n")
+		return
 	}
 
-	var b strings.Builder
-	b.WriteString("\n")
-
-	for i, node := range m.flatTree {
-		line := m.renderNode(node, i == m.cursor)
-		b.WriteString(line)
-		b.WriteString("\n")
+	viewportHeight := m.height - footerHeight
+	if viewportHeight <= 0 {
+		return
 	}
 
-	return b.String()
+	top := m.scrollOffset
+	bottom := top + viewportHeight - 1
+
+	if m.cursor < top {
+		m.scrollOffset = m.cursor
+	} else if m.cursor > bottom {
+		m.scrollOffset = m.cursor - viewportHeight + 1
+	}
+}
+
+func (m *Model) ensureFolderContentsVisible() {
+	if m.cursor < 0 || m.cursor >= len(m.flatTree) {
+		return
+	}
+
+	viewportHeight := m.height - footerHeight
+	if viewportHeight <= 0 {
+		return
+	}
+
+	node := m.flatTree[m.cursor]
+	if !node.IsContainer() {
+		m.ensureCursorVisible()
+		return
+	}
+
+	contentLines := m.countFolderContents(m.cursor)
+
+	if contentLines <= viewportHeight {
+		endLine := m.cursor + contentLines - 1
+		if endLine > m.scrollOffset+viewportHeight-1 {
+			m.scrollOffset = endLine - viewportHeight + 1
+		}
+		if m.cursor < m.scrollOffset {
+			m.scrollOffset = m.cursor
+		}
+	} else {
+		m.scrollOffset = m.cursor
+	}
+}
+
+func (m *Model) countFolderContents(cursorPos int) int {
+	node := m.flatTree[cursorPos]
+	count := 1
+	for i := cursorPos + 1; i < len(m.flatTree); i++ {
+		if m.flatTree[i].Depth <= node.Depth {
+			break
+		}
+		count++
+	}
+	return count
 }
 
 func (m Model) renderNode(node *TreeNode, selected bool) string {
@@ -972,19 +1057,21 @@ func (m Model) renderWithDetails(left, details string) string {
 }
 
 func (m Model) footerView() string {
-	var nodeKind *NodeKind
-	if node := m.selectedNode(); node != nil {
-		nodeKind = &node.Kind
-	}
+	namespaceBadge := StyleFooterNamespace.Render(m.namespace)
+	badgeWidth := lipgloss.Width(namespaceBadge)
 
-	help := m.keys.ShortHelp(nodeKind, m.movingRepo != nil)
-	footer := "\n" + help
-
+	var helpContent string
 	if m.statusMsg != "" {
-		footer += "\n" + StyleStatusMsg.Render(m.statusMsg)
+		helpContent = StyleStatusMsg.Render(m.statusMsg)
+	} else {
+		var nodeKind *NodeKind
+		if node := m.selectedNode(); node != nil {
+			nodeKind = &node.Kind
+		}
+		helpContent = m.keys.ShortHelp(nodeKind, m.movingRepo != nil)
 	}
 
-	return StyleFooter.Width(m.width).Render(footer)
+	return namespaceBadge + StyleFooterHelp.Width(m.width-badgeWidth).Render(helpContent)
 }
 
 func Run(c *client.Client, namespace, server string) error {
