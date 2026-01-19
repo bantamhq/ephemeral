@@ -17,13 +17,35 @@ func (s *Server) handleListLabels(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	labels, err := s.store.ListLabels(token.NamespaceID)
+	cursor := r.URL.Query().Get("cursor")
+	limit := parseLimit(r.URL.Query().Get("limit"), defaultPageSize)
+
+	fetchLimit := limit
+	if limit > 0 {
+		fetchLimit = limit + 1
+	}
+
+	labels, err := s.store.ListLabels(token.NamespaceID, cursor, fetchLimit)
 	if err != nil {
 		JSONError(w, http.StatusInternalServerError, "Failed to list labels")
 		return
 	}
 
-	JSON(w, http.StatusOK, labels)
+	var hasMore bool
+	var nextCursor *string
+
+	if limit > 0 {
+		hasMore = len(labels) > limit
+		if hasMore {
+			labels = labels[:limit]
+		}
+		if hasMore && len(labels) > 0 {
+			c := labels[len(labels)-1].Name
+			nextCursor = &c
+		}
+	}
+
+	JSONList(w, labels, nextCursor, hasMore)
 }
 
 type createLabelRequest struct {

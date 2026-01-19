@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"strconv"
 	"time"
 
 	"github.com/google/uuid"
@@ -22,30 +21,31 @@ func (s *Server) handleListRepos(w http.ResponseWriter, r *http.Request) {
 	}
 
 	cursor := r.URL.Query().Get("cursor")
-	limitStr := r.URL.Query().Get("limit")
+	limit := parseLimit(r.URL.Query().Get("limit"), defaultPageSize)
 
-	limit := defaultPageSize
-	if limitStr != "" {
-		if l, err := strconv.Atoi(limitStr); err == nil && l >= 1 && l <= 100 {
-			limit = l
-		}
+	fetchLimit := limit
+	if limit > 0 {
+		fetchLimit = limit + 1
 	}
 
-	repos, err := s.store.ListRepos(token.NamespaceID, cursor, limit+1)
+	repos, err := s.store.ListRepos(token.NamespaceID, cursor, fetchLimit)
 	if err != nil {
 		JSONError(w, http.StatusInternalServerError, "Failed to list repos")
 		return
 	}
 
-	hasMore := len(repos) > limit
-	if hasMore {
-		repos = repos[:limit]
-	}
-
+	var hasMore bool
 	var nextCursor *string
-	if hasMore && len(repos) > 0 {
-		c := repos[len(repos)-1].ID
-		nextCursor = &c
+
+	if limit > 0 {
+		hasMore = len(repos) > limit
+		if hasMore {
+			repos = repos[:limit]
+		}
+		if hasMore && len(repos) > 0 {
+			c := repos[len(repos)-1].Name
+			nextCursor = &c
+		}
 	}
 
 	JSONList(w, repos, nextCursor, hasMore)

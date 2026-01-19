@@ -45,6 +45,13 @@ type Namespace struct {
 	StorageLimitBytes *int      `json:"storage_limit_bytes,omitempty"`
 }
 
+type Folder struct {
+	ID        string    `json:"id"`
+	Name      string    `json:"name"`
+	ParentID  *string   `json:"parent_id,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
 type response struct {
 	Data  json.RawMessage `json:"data,omitempty"`
 	Error string          `json:"error,omitempty"`
@@ -73,6 +80,14 @@ func (c *Client) doRequest(method, path string) (*http.Response, error) {
 	return resp, nil
 }
 
+func (c *Client) decodeError(resp *http.Response, operation string) error {
+	var errResp response
+	if err := json.NewDecoder(resp.Body).Decode(&errResp); err != nil {
+		return fmt.Errorf("%s: status %d", operation, resp.StatusCode)
+	}
+	return fmt.Errorf("%s: %s", operation, errResp.Error)
+}
+
 func (c *Client) ListRepos(cursor string, limit int) ([]Repo, bool, error) {
 	params := url.Values{}
 	if cursor != "" {
@@ -94,11 +109,7 @@ func (c *Client) ListRepos(cursor string, limit int) ([]Repo, bool, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		var errResp response
-		if err := json.NewDecoder(resp.Body).Decode(&errResp); err != nil {
-			return nil, false, fmt.Errorf("list repos: status %d", resp.StatusCode)
-		}
-		return nil, false, fmt.Errorf("list repos: %s", errResp.Error)
+		return nil, false, c.decodeError(resp, "list repos")
 	}
 
 	var listResp listResponse
@@ -122,11 +133,7 @@ func (c *Client) GetNamespaceInfo() (*Namespace, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		var errResp response
-		if err := json.NewDecoder(resp.Body).Decode(&errResp); err != nil {
-			return nil, fmt.Errorf("get namespace: status %d", resp.StatusCode)
-		}
-		return nil, fmt.Errorf("get namespace: %s", errResp.Error)
+		return nil, c.decodeError(resp, "get namespace")
 	}
 
 	var ns Namespace
@@ -135,4 +142,41 @@ func (c *Client) GetNamespaceInfo() (*Namespace, error) {
 	}
 
 	return &ns, nil
+}
+
+func (c *Client) ListFolders(cursor string, limit int) ([]Folder, bool, error) {
+	params := url.Values{}
+	if cursor != "" {
+		params.Set("cursor", cursor)
+	}
+	if limit > 0 {
+		params.Set("limit", strconv.Itoa(limit))
+	}
+
+	path := "/api/v1/folders"
+	if len(params) > 0 {
+		path += "?" + params.Encode()
+	}
+
+	resp, err := c.doRequest(http.MethodGet, path)
+	if err != nil {
+		return nil, false, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, false, c.decodeError(resp, "list folders")
+	}
+
+	var listResp listResponse
+	if err := json.NewDecoder(resp.Body).Decode(&listResp); err != nil {
+		return nil, false, fmt.Errorf("decode response: %w", err)
+	}
+
+	var folders []Folder
+	if err := json.Unmarshal(listResp.Data, &folders); err != nil {
+		return nil, false, fmt.Errorf("decode folders: %w", err)
+	}
+
+	return folders, listResp.HasMore, nil
 }

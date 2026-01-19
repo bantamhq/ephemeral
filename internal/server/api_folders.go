@@ -16,13 +16,35 @@ func (s *Server) handleListFolders(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	folders, err := s.store.ListFolders(token.NamespaceID)
+	cursor := r.URL.Query().Get("cursor")
+	limit := parseLimit(r.URL.Query().Get("limit"), defaultPageSize)
+
+	fetchLimit := limit
+	if limit > 0 {
+		fetchLimit = limit + 1
+	}
+
+	folders, err := s.store.ListFolders(token.NamespaceID, cursor, fetchLimit)
 	if err != nil {
 		JSONError(w, http.StatusInternalServerError, "Failed to list folders")
 		return
 	}
 
-	JSON(w, http.StatusOK, folders)
+	var hasMore bool
+	var nextCursor *string
+
+	if limit > 0 {
+		hasMore = len(folders) > limit
+		if hasMore {
+			folders = folders[:limit]
+		}
+		if hasMore && len(folders) > 0 {
+			c := folders[len(folders)-1].Name
+			nextCursor = &c
+		}
+	}
+
+	JSONList(w, folders, nextCursor, hasMore)
 }
 
 type createFolderRequest struct {

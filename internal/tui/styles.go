@@ -29,8 +29,15 @@ var (
 	StyleRepoName = lipgloss.NewStyle().
 			Bold(true)
 
-	StyleRepoMeta = lipgloss.NewStyle().
+	StyleRepoIcon = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("8"))
+
+	StyleFolderName = lipgloss.NewStyle().
+			Bold(true).
+			Foreground(lipgloss.Color("12"))
+
+	StyleFolderIcon = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("12"))
 
 	StyleCursor = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("12"))

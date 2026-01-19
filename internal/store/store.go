@@ -37,7 +37,7 @@ type Store interface {
 	// Folder operations
 	CreateFolder(folder *Folder) error
 	GetFolderByID(id string) (*Folder, error)
-	ListFolders(namespaceID string) ([]Folder, error)
+	ListFolders(namespaceID, cursor string, limit int) ([]Folder, error)
 	UpdateFolder(folder *Folder) error
 	DeleteFolder(id string) error
 	CountFolderContents(id string) (repos int, subfolders int, err error)
@@ -46,7 +46,7 @@ type Store interface {
 	CreateLabel(label *Label) error
 	GetLabelByID(id string) (*Label, error)
 	GetLabelByName(namespaceID, name string) (*Label, error)
-	ListLabels(namespaceID string) ([]Label, error)
+	ListLabels(namespaceID, cursor string, limit int) ([]Label, error)
 	UpdateLabel(label *Label) error
 	DeleteLabel(id string) error
 
@@ -67,56 +67,54 @@ type Store interface {
 }
 
 type Namespace struct {
-	ID               string
-	Name             string
-	CreatedAt        time.Time
-	RepoLimit        *int
-	StorageLimitBytes *int
-	ExternalID       *string
+	ID                string     `json:"id"`
+	Name              string     `json:"name"`
+	CreatedAt         time.Time  `json:"created_at"`
+	RepoLimit         *int       `json:"repo_limit,omitempty"`
+	StorageLimitBytes *int       `json:"storage_limit_bytes,omitempty"`
+	ExternalID        *string    `json:"external_id,omitempty"`
 }
 
 type Token struct {
-	ID          string
-	TokenHash   string
-	Name        *string
-	NamespaceID string
-	Scope       string
-	RepoIDs     *string // JSON array
-	CreatedAt   time.Time
-	ExpiresAt   *time.Time
-	LastUsedAt  *time.Time
-	ExternalID  *string
+	ID          string     `json:"id"`
+	TokenHash   string     `json:"-"`
+	Name        *string    `json:"name,omitempty"`
+	NamespaceID string     `json:"namespace_id"`
+	Scope       string     `json:"scope"`
+	RepoIDs     *string    `json:"repo_ids,omitempty"`
+	CreatedAt   time.Time  `json:"created_at"`
+	ExpiresAt   *time.Time `json:"expires_at,omitempty"`
+	LastUsedAt  *time.Time `json:"last_used_at,omitempty"`
+	ExternalID  *string    `json:"external_id,omitempty"`
 }
 
 type Repo struct {
-	ID          string
-	NamespaceID string
-	Name        string
-	FolderID    *string
-	Public      bool
-	SizeBytes   int
-	LastPushAt  *time.Time
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
+	ID          string     `json:"id"`
+	NamespaceID string     `json:"namespace_id"`
+	Name        string     `json:"name"`
+	FolderID    *string    `json:"folder_id,omitempty"`
+	Public      bool       `json:"public"`
+	SizeBytes   int        `json:"size_bytes"`
+	LastPushAt  *time.Time `json:"last_push_at,omitempty"`
+	CreatedAt   time.Time  `json:"created_at"`
+	UpdatedAt   time.Time  `json:"updated_at"`
 }
 
 type Folder struct {
-	ID          string
-	NamespaceID string
-	Name        string
-	ParentID    *string
-	CreatedAt   time.Time
+	ID          string    `json:"id"`
+	NamespaceID string    `json:"namespace_id"`
+	Name        string    `json:"name"`
+	ParentID    *string   `json:"parent_id,omitempty"`
+	CreatedAt   time.Time `json:"created_at"`
 }
 
 type Label struct {
-	ID          string
-	NamespaceID string
-	Name        string
-	Color       *string
-	CreatedAt   time.Time
+	ID          string    `json:"id"`
+	NamespaceID string    `json:"namespace_id"`
+	Name        string    `json:"name"`
+	Color       *string   `json:"color,omitempty"`
+	CreatedAt   time.Time `json:"created_at"`
 }
-
-// SQL null type conversions for optional model fields.
 
 func ToNullString(s *string) sql.NullString {
 	if s == nil {

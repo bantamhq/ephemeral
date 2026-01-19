@@ -446,16 +446,29 @@ func (s *SQLiteStore) DeleteToken(id string) error {
 
 // ListRepos lists repos in a namespace with cursor-based pagination.
 func (s *SQLiteStore) ListRepos(namespaceID, cursor string, limit int) ([]Repo, error) {
-	query := `
-		SELECT id, namespace_id, name, folder_id, public,
-			   size_bytes, last_push_at, created_at, updated_at
-		FROM repos
-		WHERE namespace_id = ? AND id > ?
-		ORDER BY id
-		LIMIT ?
-	`
+	var rows *sql.Rows
+	var err error
 
-	rows, err := s.db.Query(query, namespaceID, cursor, limit)
+	if limit > 0 {
+		query := `
+			SELECT id, namespace_id, name, folder_id, public,
+				   size_bytes, last_push_at, created_at, updated_at
+			FROM repos
+			WHERE namespace_id = ? AND name > ?
+			ORDER BY name
+			LIMIT ?
+		`
+		rows, err = s.db.Query(query, namespaceID, cursor, limit)
+	} else {
+		query := `
+			SELECT id, namespace_id, name, folder_id, public,
+				   size_bytes, last_push_at, created_at, updated_at
+			FROM repos
+			WHERE namespace_id = ? AND name > ?
+			ORDER BY name
+		`
+		rows, err = s.db.Query(query, namespaceID, cursor)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("query repos: %w", err)
 	}
@@ -590,15 +603,28 @@ func (s *SQLiteStore) scanFolder(row *sql.Row) (*Folder, error) {
 }
 
 // ListFolders lists all folders in a namespace.
-func (s *SQLiteStore) ListFolders(namespaceID string) ([]Folder, error) {
-	query := `
-		SELECT id, namespace_id, name, parent_id, created_at
-		FROM folders
-		WHERE namespace_id = ?
-		ORDER BY name
-	`
+func (s *SQLiteStore) ListFolders(namespaceID, cursor string, limit int) ([]Folder, error) {
+	var rows *sql.Rows
+	var err error
 
-	rows, err := s.db.Query(query, namespaceID)
+	if limit > 0 {
+		query := `
+			SELECT id, namespace_id, name, parent_id, created_at
+			FROM folders
+			WHERE namespace_id = ? AND name > ?
+			ORDER BY name
+			LIMIT ?
+		`
+		rows, err = s.db.Query(query, namespaceID, cursor, limit)
+	} else {
+		query := `
+			SELECT id, namespace_id, name, parent_id, created_at
+			FROM folders
+			WHERE namespace_id = ? AND name > ?
+			ORDER BY name
+		`
+		rows, err = s.db.Query(query, namespaceID, cursor)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("query folders: %w", err)
 	}
@@ -750,15 +776,28 @@ func (s *SQLiteStore) scanLabel(row *sql.Row) (*Label, error) {
 }
 
 // ListLabels lists all labels in a namespace.
-func (s *SQLiteStore) ListLabels(namespaceID string) ([]Label, error) {
-	query := `
-		SELECT id, namespace_id, name, color, created_at
-		FROM labels
-		WHERE namespace_id = ?
-		ORDER BY name
-	`
+func (s *SQLiteStore) ListLabels(namespaceID, cursor string, limit int) ([]Label, error) {
+	var rows *sql.Rows
+	var err error
 
-	rows, err := s.db.Query(query, namespaceID)
+	if limit > 0 {
+		query := `
+			SELECT id, namespace_id, name, color, created_at
+			FROM labels
+			WHERE namespace_id = ? AND name > ?
+			ORDER BY name
+			LIMIT ?
+		`
+		rows, err = s.db.Query(query, namespaceID, cursor, limit)
+	} else {
+		query := `
+			SELECT id, namespace_id, name, color, created_at
+			FROM labels
+			WHERE namespace_id = ? AND name > ?
+			ORDER BY name
+		`
+		rows, err = s.db.Query(query, namespaceID, cursor)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("query labels: %w", err)
 	}

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -71,4 +72,17 @@ func SafeNamespacePath(dataDir, namespaceID string) (string, error) {
 	}
 
 	return cleanPath, nil
+}
+
+// parseLimit parses a limit string and returns a valid limit between 1-100.
+// Returns 0 if empty (meaning unlimited), or defaultVal if parsing fails or value is out of range.
+func parseLimit(limitStr string, defaultVal int) int {
+	if limitStr == "" {
+		return 0
+	}
+	limit, err := strconv.Atoi(limitStr)
+	if err != nil || limit < 1 || limit > 100 {
+		return defaultVal
+	}
+	return limit
 }
