@@ -10,7 +10,8 @@ import (
 type NodeKind int
 
 const (
-	NodeFolder NodeKind = iota
+	NodeRoot NodeKind = iota
+	NodeFolder
 	NodeRepo
 )
 
@@ -28,8 +29,15 @@ type TreeNode struct {
 }
 
 func BuildTree(folders []client.Folder, repos []client.Repo) []*TreeNode {
+	root := &TreeNode{
+		Kind:     NodeRoot,
+		Name:     "Repositories",
+		ID:       "",
+		Children: []*TreeNode{},
+		Expanded: true,
+	}
+
 	folderMap := make(map[string]*TreeNode)
-	var roots []*TreeNode
 
 	for i := range folders {
 		f := &folders[i]
@@ -52,7 +60,7 @@ func BuildTree(folders []client.Folder, repos []client.Repo) []*TreeNode {
 				return
 			}
 		}
-		roots = append(roots, node)
+		root.Children = append(root.Children, node)
 	}
 
 	for _, f := range folders {
@@ -70,14 +78,14 @@ func BuildTree(folders []client.Folder, repos []client.Repo) []*TreeNode {
 		attachNode(node, r.FolderID)
 	}
 
-	sortNodes(roots)
+	sortNodes(root.Children)
 	for _, node := range folderMap {
 		sortNodes(node.Children)
 	}
 
-	setDepths(roots, 0)
+	setDepths([]*TreeNode{root}, 0)
 
-	return roots
+	return []*TreeNode{root}
 }
 
 func sortNodes(nodes []*TreeNode) {
@@ -92,7 +100,7 @@ func sortNodes(nodes []*TreeNode) {
 func setDepths(nodes []*TreeNode, depth int) {
 	for _, node := range nodes {
 		node.Depth = depth
-		if node.Kind == NodeFolder {
+		if node.Kind == NodeFolder || node.Kind == NodeRoot {
 			setDepths(node.Children, depth+1)
 		}
 	}
@@ -102,7 +110,7 @@ func FlattenTree(nodes []*TreeNode) []*TreeNode {
 	var result []*TreeNode
 	for _, node := range nodes {
 		result = append(result, node)
-		if node.Kind == NodeFolder && node.Expanded {
+		if (node.Kind == NodeFolder || node.Kind == NodeRoot) && node.Expanded {
 			result = append(result, FlattenTree(node.Children)...)
 		}
 	}

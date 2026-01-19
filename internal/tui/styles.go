@@ -39,6 +39,13 @@ var (
 	StyleFolderIcon = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("12"))
 
+	StyleRootName = lipgloss.NewStyle().
+			Bold(true).
+			Foreground(lipgloss.Color("5"))
+
+	StyleRootIcon = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("5"))
+
 	StyleCursor = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("12"))
 

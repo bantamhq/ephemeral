@@ -189,7 +189,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, m.keys.Select):
 		if m.cursor < len(m.flatTree) {
 			node := m.flatTree[m.cursor]
-			if node.Kind == NodeFolder {
+			if node.Kind == NodeFolder || node.Kind == NodeRoot {
 				node.Expanded = !node.Expanded
 				m.flatTree = FlattenTree(m.tree)
 				m.clampCursor()
@@ -247,6 +247,7 @@ func (m Model) openCreateFolder() (tea.Model, tea.Cmd) {
 	node := m.selectedNode()
 	if node != nil {
 		switch node.Kind {
+		case NodeRoot:
 		case NodeFolder:
 			parentID = &node.ID
 		case NodeRepo:
@@ -277,7 +278,7 @@ func (m Model) openRename() (tea.Model, tea.Cmd) {
 
 func (m Model) openDelete() (tea.Model, tea.Cmd) {
 	node := m.selectedNode()
-	if node == nil {
+	if node == nil || node.Kind == NodeRoot {
 		return m, nil
 	}
 
@@ -651,14 +652,22 @@ func (m Model) renderNode(node *TreeNode, selected bool) string {
 	indent := strings.Repeat("  ", node.Depth)
 
 	var icon, name, badge string
-	if node.Kind == NodeFolder {
+	switch node.Kind {
+	case NodeRoot:
+		if node.Expanded {
+			icon = StyleRootIcon.Render("▼ ")
+		} else {
+			icon = StyleRootIcon.Render("▶ ")
+		}
+		name = StyleRootName.Render(node.Name)
+	case NodeFolder:
 		if node.Expanded {
 			icon = StyleFolderIcon.Render("▼ ")
 		} else {
 			icon = StyleFolderIcon.Render("▶ ")
 		}
-		name = StyleFolderName.Render(node.Name + "/")
-	} else {
+		name = StyleFolderName.Render(node.Name)
+	case NodeRepo:
 		icon = StyleRepoIcon.Render("  ")
 		name = StyleRepoName.Render(node.Name)
 		if node.Repo != nil && node.Repo.Public {
