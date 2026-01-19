@@ -8,6 +8,7 @@ type KeyMap struct {
 	Select     key.Binding
 	Quit       key.Binding
 	NewFolder  key.Binding
+	ToggleAll  key.Binding
 	Rename     key.Binding
 	Delete     key.Binding
 	Visibility key.Binding
@@ -37,6 +38,10 @@ var DefaultKeyMap = KeyMap{
 		key.WithKeys("n"),
 		key.WithHelp("n", "new folder"),
 	),
+	ToggleAll: key.NewBinding(
+		key.WithKeys("e"),
+		key.WithHelp("e", "expand/collapse all"),
+	),
 	Rename: key.NewBinding(
 		key.WithKeys("r"),
 		key.WithHelp("r", "rename"),
@@ -63,8 +68,12 @@ var DefaultKeyMap = KeyMap{
 	),
 }
 
-func (k KeyMap) ShortHelp(nodeKind *NodeKind) string {
-	base := "q quit  j/k navigate  n new folder"
+func (k KeyMap) ShortHelp(nodeKind *NodeKind, moveMode bool) string {
+	if moveMode {
+		return "q cancel  j/k navigate  m/enter confirm move"
+	}
+
+	base := "q quit  j/k navigate  e expand/collapse  n new folder"
 	if nodeKind == nil {
 		return base
 	}

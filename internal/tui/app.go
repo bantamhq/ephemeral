@@ -26,7 +26,6 @@ const (
 	modalDeleteRepo
 	modalDeleteFolder
 	modalToggleVisibility
-	modalMoveRepo
 	modalCloneDir
 )
 
@@ -42,11 +41,12 @@ type Model struct {
 	loading  bool
 	err      error
 
-	modal        modalState
-	dialog       DialogModel
-	folderPicker FolderPickerModel
-	actionTarget *TreeNode
-	statusMsg    string
+	modal           modalState
+	dialog          DialogModel
+	actionTarget    *TreeNode
+	movingRepo      *TreeNode
+	expandAfterLoad bool
+	statusMsg       string
 
 	spinner spinner.Model
 	width   int
@@ -99,6 +99,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.loading = false
 		m.folders = msg.folders
 		m.tree = BuildTree(msg.folders, msg.repos)
+		if m.expandAfterLoad {
+			m.setAllFoldersExpanded(m.tree, true)
+			m.expandAfterLoad = false
+		}
 		m.flatTree = FlattenTree(m.tree)
 		return m, nil
 
@@ -119,14 +123,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleDialogSubmit(msg)
 
 	case DialogCancelMsg:
-		m.modal = modalNone
-		m.actionTarget = nil
-		return m, nil
-
-	case FolderSelectedMsg:
-		return m.handleFolderSelected(msg)
-
-	case FolderPickerCancelMsg:
 		m.modal = modalNone
 		m.actionTarget = nil
 		return m, nil
@@ -170,6 +166,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	m.statusMsg = ""
 
+	if m.movingRepo != nil {
+		return m.handleMoveMode(msg)
+	}
+
 	switch {
 	case key.Matches(msg, m.keys.Quit):
 		return m, tea.Quit
@@ -189,7 +189,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, m.keys.Select):
 		if m.cursor < len(m.flatTree) {
 			node := m.flatTree[m.cursor]
-			if node.Kind == NodeFolder || node.Kind == NodeRoot {
+			if node.Kind == NodeFolder {
 				node.Expanded = !node.Expanded
 				m.flatTree = FlattenTree(m.tree)
 				m.clampCursor()
@@ -199,6 +199,12 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case key.Matches(msg, m.keys.NewFolder):
 		return m.openCreateFolder()
+
+	case key.Matches(msg, m.keys.ToggleAll):
+		m.toggleAllFolders()
+		m.flatTree = FlattenTree(m.tree)
+		m.clampCursor()
+		return m, nil
 
 	case key.Matches(msg, m.keys.Rename):
 		return m.openRename()
@@ -210,7 +216,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.openToggleVisibility()
 
 	case key.Matches(msg, m.keys.Move):
-		return m.openMove()
+		return m.startMove()
 
 	case key.Matches(msg, m.keys.Clone):
 		return m.executeClone("")
@@ -222,17 +228,41 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m Model) handleModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch m.modal {
-	case modalMoveRepo:
-		var cmd tea.Cmd
-		m.folderPicker, cmd = m.folderPicker.Update(msg)
-		return m, cmd
-	default:
-		var cmd tea.Cmd
-		m.dialog, cmd = m.dialog.Update(msg)
-		return m, cmd
+func (m Model) handleMoveMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch {
+	case key.Matches(msg, m.keys.Quit):
+		m.movingRepo = nil
+		m.statusMsg = "Move cancelled"
+		return m, nil
+
+	case key.Matches(msg, m.keys.Up):
+		m.moveCursorToFolder(-1)
+		return m, nil
+
+	case key.Matches(msg, m.keys.Down):
+		m.moveCursorToFolder(1)
+		return m, nil
+
+	case key.Matches(msg, m.keys.Select), key.Matches(msg, m.keys.Move):
+		return m.confirmMove()
 	}
+
+	return m, nil
+}
+
+func (m *Model) moveCursorToFolder(direction int) {
+	for i := m.cursor + direction; i >= 0 && i < len(m.flatTree); i += direction {
+		if m.flatTree[i].IsContainer() {
+			m.cursor = i
+			return
+		}
+	}
+}
+
+func (m Model) handleModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	var cmd tea.Cmd
+	m.dialog, cmd = m.dialog.Update(msg)
+	return m, cmd
 }
 
 func (m Model) selectedNode() *TreeNode {
@@ -319,20 +349,57 @@ func (m Model) openToggleVisibility() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m Model) openMove() (tea.Model, tea.Cmd) {
+func (m Model) startMove() (tea.Model, tea.Cmd) {
 	node := m.selectedNode()
 	if node == nil || node.Kind != NodeRepo {
 		return m, nil
 	}
 
-	m.modal = modalMoveRepo
-	m.folderPicker = NewFolderPicker(
-		fmt.Sprintf("Move '%s' to:", node.Name),
-		m.folders,
-		nil,
-	)
-	m.actionTarget = node
+	m.movingRepo = node
+	m.statusMsg = "Moving " + node.Name + " - select destination folder"
+	m.setAllFoldersExpanded(m.tree, true)
+	m.flatTree = FlattenTree(m.tree)
+	m.selectContainingFolder(node)
 	return m, nil
+}
+
+func (m *Model) selectContainingFolder(repo *TreeNode) {
+	if repo.Repo == nil || repo.Repo.FolderID == nil {
+		m.cursor = 0
+		return
+	}
+
+	folderID := *repo.Repo.FolderID
+	for i, node := range m.flatTree {
+		if node.Kind == NodeFolder && node.ID == folderID {
+			m.cursor = i
+			return
+		}
+	}
+	m.cursor = 0
+}
+
+func (m Model) confirmMove() (tea.Model, tea.Cmd) {
+	target := m.selectedNode()
+	if target == nil {
+		return m, nil
+	}
+
+	var folderID *string
+	switch target.Kind {
+	case NodeRoot:
+		// Move to root (no folder)
+	case NodeFolder:
+		folderID = &target.ID
+	default:
+		m.statusMsg = "Select a folder as the destination"
+		return m, nil
+	}
+
+	repoID := m.movingRepo.ID
+	m.movingRepo = nil
+	m.expandAfterLoad = true
+	return m, m.moveRepo(repoID, folderID)
 }
 
 func (m Model) openCloneDir() (tea.Model, tea.Cmd) {
@@ -399,18 +466,6 @@ func (m Model) handleDialogSubmit(msg DialogSubmitMsg) (tea.Model, tea.Cmd) {
 	}
 
 	return m, nil
-}
-
-func (m Model) handleFolderSelected(msg FolderSelectedMsg) (tea.Model, tea.Cmd) {
-	target := m.actionTarget
-	m.modal = modalNone
-	m.actionTarget = nil
-
-	if target == nil {
-		return m, nil
-	}
-
-	return m, m.moveRepo(target.ID, msg.FolderID)
 }
 
 func (m Model) createFolder(name string, parentID *string) tea.Cmd {
@@ -536,6 +591,34 @@ func (m *Model) clampCursor() {
 	}
 }
 
+func (m *Model) toggleAllFolders() {
+	expand := m.hasCollapsedFolder(m.tree)
+	m.setAllFoldersExpanded(m.tree, expand)
+}
+
+func (m *Model) hasCollapsedFolder(nodes []*TreeNode) bool {
+	for _, node := range nodes {
+		if node.Kind == NodeFolder && !node.Expanded {
+			return true
+		}
+		if node.IsContainer() && m.hasCollapsedFolder(node.Children) {
+			return true
+		}
+	}
+	return false
+}
+
+func (m *Model) setAllFoldersExpanded(nodes []*TreeNode, expanded bool) {
+	for _, node := range nodes {
+		if node.Kind == NodeFolder {
+			node.Expanded = expanded
+		}
+		if node.IsContainer() {
+			m.setAllFoldersExpanded(node.Children, expanded)
+		}
+	}
+}
+
 func (m Model) loadData() tea.Cmd {
 	return func() tea.Msg {
 		folders, _, err := m.client.ListFolders("", 0)
@@ -581,46 +664,11 @@ func (m Model) View() string {
 }
 
 func (m Model) overlayModal(background string) string {
-	var modalContent string
-	if m.modal == modalMoveRepo {
-		modalContent = m.folderPicker.View()
-	} else {
-		modalContent = m.dialog.View()
-	}
-
-	return overlay.Composite(modalContent, background, overlay.Center, overlay.Center, 0, 0)
+	return overlay.Composite(m.dialog.View(), background, overlay.Center, overlay.Center, 0, 0)
 }
 
 func (m Model) headerView() string {
-	title := fmt.Sprintf("ephemeral · %s · %s", m.namespace, m.server)
-
-	var stats string
-	if !m.loading {
-		repoCount := m.countRepos()
-		stats = fmt.Sprintf("%d repos", repoCount)
-	}
-
-	leftWidth := lipgloss.Width(title)
-	rightWidth := lipgloss.Width(stats)
-	padding := m.width - leftWidth - rightWidth - 2
-
-	if padding < 1 {
-		padding = 1
-	}
-
-	header := title + strings.Repeat(" ", padding) + stats
-
-	return StyleHeader.Width(m.width).Render(header)
-}
-
-func (m Model) countRepos() int {
-	count := 0
-	for _, node := range m.flatTree {
-		if node.Kind == NodeRepo {
-			count++
-		}
-	}
-	return count
+	return StyleHeader.Width(m.width).Render(m.namespace)
 }
 
 func (m Model) loadingView() string {
@@ -650,41 +698,57 @@ func (m Model) treeView() string {
 
 func (m Model) renderNode(node *TreeNode, selected bool) string {
 	indent := strings.Repeat("  ", node.Depth)
+	isMoving := m.movingRepo != nil && m.movingRepo.ID == node.ID
 
 	var icon, name, badge string
 	switch node.Kind {
 	case NodeRoot:
-		if node.Expanded {
-			icon = StyleRootIcon.Render("▼ ")
-		} else {
-			icon = StyleRootIcon.Render("▶ ")
-		}
-		name = StyleRootName.Render(node.Name)
+		icon = "◆ "
+		name = node.Name
 	case NodeFolder:
 		if node.Expanded {
-			icon = StyleFolderIcon.Render("▼ ")
+			icon = "▼ "
 		} else {
-			icon = StyleFolderIcon.Render("▶ ")
+			icon = "▶ "
 		}
-		name = StyleFolderName.Render(node.Name)
+		name = node.Name
 	case NodeRepo:
-		icon = StyleRepoIcon.Render("  ")
-		name = StyleRepoName.Render(node.Name)
+		icon = "  "
+		name = node.Name
 		if node.Repo != nil && node.Repo.Public {
-			badge = StylePublicBadge.Render(" [public]")
+			badge = " [public]"
+		}
+		if isMoving {
+			badge = " [moving]"
 		}
 	}
 
-	cursor := "  "
 	if selected {
-		cursor = StyleCursor.Render("> ")
-	}
-
-	line := cursor + indent + icon + name + badge
-	if selected {
+		line := "> " + indent + icon + name + badge
 		return StyleSelected.Width(m.width).Render(line)
 	}
-	return line
+
+	if isMoving {
+		line := "  " + indent + icon + name + badge
+		return StyleMoving.Render(line)
+	}
+
+	switch node.Kind {
+	case NodeRoot:
+		icon = StyleRootIcon.Render(icon)
+		name = StyleRootName.Render(name)
+	case NodeFolder:
+		icon = StyleFolderIcon.Render(icon)
+		name = StyleFolderName.Render(name)
+	case NodeRepo:
+		icon = StyleRepoIcon.Render(icon)
+		name = StyleRepoName.Render(name)
+		if badge != "" {
+			badge = StylePublicBadge.Render(badge)
+		}
+	}
+
+	return "  " + indent + icon + name + badge
 }
 
 func (m Model) footerView() string {
@@ -693,7 +757,7 @@ func (m Model) footerView() string {
 		nodeKind = &node.Kind
 	}
 
-	help := m.keys.ShortHelp(nodeKind)
+	help := m.keys.ShortHelp(nodeKind, m.movingRepo != nil)
 	footer := "\n" + help
 
 	if m.statusMsg != "" {

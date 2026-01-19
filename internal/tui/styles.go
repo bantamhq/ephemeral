@@ -11,7 +11,9 @@ var (
 			Foreground(lipgloss.Color("8"))
 
 	StyleSelected = lipgloss.NewStyle().
-			Background(lipgloss.Color("236"))
+			Background(lipgloss.Color("141")).
+			Foreground(lipgloss.Color("232")).
+			Bold(true)
 
 	StyleHeader = lipgloss.NewStyle().
 			Bold(true).
@@ -46,9 +48,6 @@ var (
 	StyleRootIcon = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("5"))
 
-	StyleCursor = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("12"))
-
 	StyleDialogBox = lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(lipgloss.Color("62")).
@@ -78,6 +77,10 @@ var (
 			Foreground(lipgloss.Color("10"))
 
 	StyleStatusMsg = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("11")).
+			Italic(true)
+
+	StyleMoving = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("11")).
 			Italic(true)
 )

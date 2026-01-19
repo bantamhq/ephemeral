@@ -28,6 +28,10 @@ type TreeNode struct {
 	Folder *client.Folder
 }
 
+func (n *TreeNode) IsContainer() bool {
+	return n.Kind == NodeFolder || n.Kind == NodeRoot
+}
+
 func BuildTree(folders []client.Folder, repos []client.Repo) []*TreeNode {
 	root := &TreeNode{
 		Kind:     NodeRoot,
@@ -47,7 +51,7 @@ func BuildTree(folders []client.Folder, repos []client.Repo) []*TreeNode {
 			ID:       f.ID,
 			ParentID: f.ParentID,
 			Children: []*TreeNode{},
-			Expanded: true,
+			Expanded: false,
 			Folder:   f,
 		}
 		folderMap[f.ID] = node
@@ -100,7 +104,7 @@ func sortNodes(nodes []*TreeNode) {
 func setDepths(nodes []*TreeNode, depth int) {
 	for _, node := range nodes {
 		node.Depth = depth
-		if node.Kind == NodeFolder || node.Kind == NodeRoot {
+		if node.IsContainer() {
 			setDepths(node.Children, depth+1)
 		}
 	}
@@ -110,7 +114,7 @@ func FlattenTree(nodes []*TreeNode) []*TreeNode {
 	var result []*TreeNode
 	for _, node := range nodes {
 		result = append(result, node)
-		if (node.Kind == NodeFolder || node.Kind == NodeRoot) && node.Expanded {
+		if node.IsContainer() && node.Expanded {
 			result = append(result, FlattenTree(node.Children)...)
 		}
 	}
