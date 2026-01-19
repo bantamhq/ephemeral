@@ -83,7 +83,7 @@ func runTUI(cmd *cobra.Command, args []string) error {
 }
 
 func runServe(cmd *cobra.Command, args []string) error {
-	config, err := loadConfig("config.toml")
+	config, err := loadConfig("server.toml")
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}

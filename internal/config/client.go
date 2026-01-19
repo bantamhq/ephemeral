@@ -19,12 +19,21 @@ type Context struct {
 	Namespace string `toml:"namespace"`
 }
 
+const globalConfigPath = ".config/ephemeral/config.toml"
+
 func configPath() (string, error) {
+	// Check EPHEMERAL_CONFIG env var first
+	if envPath := os.Getenv("EPHEMERAL_CONFIG"); envPath != "" {
+		return envPath, nil
+	}
+
+	// Default to global config
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("get home dir: %w", err)
 	}
-	return filepath.Join(home, ".config", "ephemeral", "config.toml"), nil
+
+	return filepath.Join(home, globalConfigPath), nil
 }
 
 func Load() (*ClientConfig, error) {
@@ -33,45 +42,28 @@ func Load() (*ClientConfig, error) {
 		return nil, err
 	}
 
-	config := &ClientConfig{
-		Contexts: make(map[string]Context),
-	}
-
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		return nil, fmt.Errorf("config file not found at %s", path)
+	}
+
+	config := &ClientConfig{
+		Contexts: make(map[string]Context),
 	}
 
 	if _, err := toml.DecodeFile(path, config); err != nil {
 		return nil, fmt.Errorf("decode config: %w", err)
 	}
 
-	config.applyEnvOverrides()
-
 	return config, nil
 }
 
-func (c *ClientConfig) applyEnvOverrides() {
-	ctx, ok := c.Contexts[c.CurrentContext]
-	if !ok {
-		return
-	}
-
-	if server := os.Getenv("EPHEMERAL_SERVER"); server != "" {
-		ctx.Server = server
-	}
-
-	if token := os.Getenv("EPHEMERAL_TOKEN"); token != "" {
-		ctx.Token = token
-	}
-
-	c.Contexts[c.CurrentContext] = ctx
-}
-
 func (c *ClientConfig) Save() error {
-	path, err := configPath()
+	home, err := os.UserHomeDir()
 	if err != nil {
-		return err
+		return fmt.Errorf("get home dir: %w", err)
 	}
+
+	path := filepath.Join(home, globalConfigPath)
 
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return fmt.Errorf("create config dir: %w", err)

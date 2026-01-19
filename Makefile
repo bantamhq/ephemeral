@@ -1,4 +1,4 @@
-.PHONY: build run clean test test-api test-repos test-tokens test-namespaces test-folders test-labels test-content workspace-setup workspace-run
+.PHONY: build run clean test test-api test-repos test-tokens test-namespaces test-folders test-labels test-content workspace-setup dev dev-tui seed watch
 
 # Build the binary
 build:
@@ -10,7 +10,7 @@ run: build
 
 # Clean build artifacts and test data
 clean:
-	rm -rf workspace/ephemeral workspace/data
+	rm -rf workspace/ephemeral workspace/data workspace/client.toml
 
 # Full clean (including test repos)
 clean-all:
@@ -19,12 +19,16 @@ clean-all:
 # Setup workspace for first time
 workspace-setup:
 	mkdir -p workspace
-	cp config.example.toml workspace/config.toml
-	@echo "Workspace created. Edit workspace/config.toml if needed."
+	@test -f workspace/server.toml || cp server.example.toml workspace/server.toml
 
-# Build and run from workspace
-workspace-run: workspace-setup build
-	cd workspace && ./ephemeral serve
+# Development environment: clean, build, capture token, create config, seed, run server
+# Ctrl+C to stop. Run TUI in another terminal: make dev-tui
+dev: clean workspace-setup build
+	@./scripts/dev-setup.sh
+
+# Run TUI with dev config
+dev-tui:
+	@cd workspace && EPHEMERAL_CONFIG=./client.toml ./ephemeral
 
 # Run unit tests
 test:
@@ -58,7 +62,7 @@ test-content:
 # Seed test data (server must be running)
 # Usage: make seed TOKEN=eph_xxx
 seed:
-	@cd workspace && ./seed.sh $(TOKEN)
+	@./scripts/seed.sh $(TOKEN)
 
 # Development mode - rebuild and run on changes (requires entr)
 watch:
