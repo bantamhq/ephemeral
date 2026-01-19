@@ -5,6 +5,8 @@ import "github.com/charmbracelet/bubbles/key"
 type KeyMap struct {
 	Up         key.Binding
 	Down       key.Binding
+	Left       key.Binding
+	Right      key.Binding
 	Select     key.Binding
 	Quit       key.Binding
 	NewFolder  key.Binding
@@ -25,6 +27,14 @@ var DefaultKeyMap = KeyMap{
 	Down: key.NewBinding(
 		key.WithKeys("down", "j"),
 		key.WithHelp("j/down", "down"),
+	),
+	Left: key.NewBinding(
+		key.WithKeys("left", "h"),
+		key.WithHelp("h/left", "collapse"),
+	),
+	Right: key.NewBinding(
+		key.WithKeys("right", "l"),
+		key.WithHelp("l/right", "expand"),
 	),
 	Select: key.NewBinding(
 		key.WithKeys("enter"),
@@ -70,10 +80,10 @@ var DefaultKeyMap = KeyMap{
 
 func (k KeyMap) ShortHelp(nodeKind *NodeKind, moveMode bool) string {
 	if moveMode {
-		return "q cancel  j/k navigate  m/enter confirm move"
+		return "q cancel  j/k navigate  h/l expand/collapse  m/enter confirm"
 	}
 
-	base := "q quit  j/k navigate  e expand/collapse  n new folder"
+	base := "q quit  j/k navigate  h/l expand/collapse  n new folder"
 	if nodeKind == nil {
 		return base
 	}

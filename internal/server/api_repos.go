@@ -215,7 +215,11 @@ func (s *Server) handleUpdateRepo(w http.ResponseWriter, r *http.Request) {
 		repo.Public = *req.Public
 	}
 	if req.FolderID != nil {
-		repo.FolderID = req.FolderID
+		if *req.FolderID == "" {
+			repo.FolderID = nil
+		} else {
+			repo.FolderID = req.FolderID
+		}
 	}
 
 	if nameChanged {

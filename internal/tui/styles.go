@@ -83,4 +83,8 @@ var (
 	StyleMoving = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("11")).
 			Italic(true)
+
+	StyleRecentlyMoved = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("11")).
+				Bold(true)
 )

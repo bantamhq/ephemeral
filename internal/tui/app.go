@@ -41,12 +41,15 @@ type Model struct {
 	loading  bool
 	err      error
 
-	modal           modalState
-	dialog          DialogModel
-	actionTarget    *TreeNode
-	movingRepo      *TreeNode
-	expandAfterLoad bool
-	statusMsg       string
+	modal            modalState
+	dialog           DialogModel
+	actionTarget     *TreeNode
+	movingRepo        *TreeNode
+	preMoveExpanded   map[string]bool
+	moveTargetID      string
+	moveToRoot        bool
+	recentlyMovedID   string
+	statusMsg         string
 
 	spinner spinner.Model
 	width   int
@@ -99,11 +102,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.loading = false
 		m.folders = msg.folders
 		m.tree = BuildTree(msg.folders, msg.repos)
-		if m.expandAfterLoad {
-			m.setAllFoldersExpanded(m.tree, true)
-			m.expandAfterLoad = false
+		if m.preMoveExpanded != nil {
+			m.restoreFolderStates(m.tree)
+			if m.moveTargetID != "" {
+				m.expandFolderAndAncestors(m.tree, m.moveTargetID)
+			}
+			m.preMoveExpanded = nil
 		}
 		m.flatTree = FlattenTree(m.tree)
+		if m.moveTargetID != "" || m.moveToRoot {
+			m.selectFolderByID(m.moveTargetID)
+			m.moveTargetID = ""
+			m.moveToRoot = false
+		}
 		return m, nil
 
 	case errMsg:
@@ -165,6 +176,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	m.statusMsg = ""
+	m.recentlyMovedID = ""
 
 	if m.movingRepo != nil {
 		return m.handleMoveMode(msg)
@@ -186,15 +198,12 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
-	case key.Matches(msg, m.keys.Select):
-		if m.cursor < len(m.flatTree) {
-			node := m.flatTree[m.cursor]
-			if node.Kind == NodeFolder {
-				node.Expanded = !node.Expanded
-				m.flatTree = FlattenTree(m.tree)
-				m.clampCursor()
-			}
-		}
+	case key.Matches(msg, m.keys.Left):
+		m.setFolderExpanded(false)
+		return m, nil
+
+	case key.Matches(msg, m.keys.Right):
+		m.setFolderExpanded(true)
 		return m, nil
 
 	case key.Matches(msg, m.keys.NewFolder):
@@ -232,6 +241,10 @@ func (m Model) handleMoveMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case key.Matches(msg, m.keys.Quit):
 		m.movingRepo = nil
+		m.restoreFolderStates(m.tree)
+		m.preMoveExpanded = nil
+		m.flatTree = FlattenTree(m.tree)
+		m.clampCursor()
 		m.statusMsg = "Move cancelled"
 		return m, nil
 
@@ -241,6 +254,14 @@ func (m Model) handleMoveMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case key.Matches(msg, m.keys.Down):
 		m.moveCursorToFolder(1)
+		return m, nil
+
+	case key.Matches(msg, m.keys.Left):
+		m.setFolderExpanded(false)
+		return m, nil
+
+	case key.Matches(msg, m.keys.Right):
+		m.setFolderExpanded(true)
 		return m, nil
 
 	case key.Matches(msg, m.keys.Select), key.Matches(msg, m.keys.Move):
@@ -256,6 +277,17 @@ func (m *Model) moveCursorToFolder(direction int) {
 			m.cursor = i
 			return
 		}
+	}
+}
+
+func (m *Model) setFolderExpanded(expanded bool) {
+	if m.cursor >= len(m.flatTree) {
+		return
+	}
+	node := m.flatTree[m.cursor]
+	if node.Kind == NodeFolder && node.Expanded != expanded {
+		node.Expanded = expanded
+		m.flatTree = FlattenTree(m.tree)
 	}
 }
 
@@ -357,7 +389,7 @@ func (m Model) startMove() (tea.Model, tea.Cmd) {
 
 	m.movingRepo = node
 	m.statusMsg = "Moving " + node.Name + " - select destination folder"
-	m.setAllFoldersExpanded(m.tree, true)
+	m.preMoveExpanded = m.saveFolderStates(m.tree)
 	m.flatTree = FlattenTree(m.tree)
 	m.selectContainingFolder(node)
 	return m, nil
@@ -388,17 +420,20 @@ func (m Model) confirmMove() (tea.Model, tea.Cmd) {
 	var folderID *string
 	switch target.Kind {
 	case NodeRoot:
-		// Move to root (no folder)
+		m.moveToRoot = true
+		m.moveTargetID = ""
 	case NodeFolder:
 		folderID = &target.ID
+		m.moveTargetID = target.ID
+		m.moveToRoot = false
 	default:
 		m.statusMsg = "Select a folder as the destination"
 		return m, nil
 	}
 
 	repoID := m.movingRepo.ID
+	m.recentlyMovedID = repoID
 	m.movingRepo = nil
-	m.expandAfterLoad = true
 	return m, m.moveRepo(repoID, folderID)
 }
 
@@ -518,7 +553,7 @@ func (m Model) updateRepoVisibility(id string, public bool) tea.Cmd {
 
 func (m Model) moveRepo(id string, folderID *string) tea.Cmd {
 	return func() tea.Msg {
-		var fid string
+		fid := ""
 		if folderID != nil {
 			fid = *folderID
 		}
@@ -619,6 +654,71 @@ func (m *Model) setAllFoldersExpanded(nodes []*TreeNode, expanded bool) {
 	}
 }
 
+func (m *Model) saveFolderStates(nodes []*TreeNode) map[string]bool {
+	states := make(map[string]bool)
+	m.collectFolderStates(nodes, states)
+	return states
+}
+
+func (m *Model) collectFolderStates(nodes []*TreeNode, states map[string]bool) {
+	for _, node := range nodes {
+		if node.Kind == NodeFolder {
+			states[node.ID] = node.Expanded
+		}
+		if node.IsContainer() {
+			m.collectFolderStates(node.Children, states)
+		}
+	}
+}
+
+func (m *Model) restoreFolderStates(nodes []*TreeNode) {
+	if m.preMoveExpanded == nil {
+		return
+	}
+	for _, node := range nodes {
+		if node.Kind == NodeFolder {
+			if expanded, ok := m.preMoveExpanded[node.ID]; ok {
+				node.Expanded = expanded
+			}
+		}
+		if node.IsContainer() {
+			m.restoreFolderStates(node.Children)
+		}
+	}
+}
+
+func (m *Model) expandFolderAndAncestors(nodes []*TreeNode, id string) bool {
+	for _, node := range nodes {
+		if node.Kind == NodeFolder && node.ID == id {
+			node.Expanded = true
+			return true
+		}
+		if node.IsContainer() {
+			if m.expandFolderAndAncestors(node.Children, id) {
+				if node.Kind == NodeFolder {
+					node.Expanded = true
+				}
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (m *Model) selectFolderByID(id string) {
+	if id == "" {
+		m.cursor = 0
+		return
+	}
+	for i, node := range m.flatTree {
+		if node.Kind == NodeFolder && node.ID == id {
+			m.cursor = i
+			return
+		}
+	}
+	m.cursor = 0
+}
+
 func (m Model) loadData() tea.Cmd {
 	return func() tea.Msg {
 		folders, _, err := m.client.ListFolders("", 0)
@@ -699,6 +799,7 @@ func (m Model) treeView() string {
 func (m Model) renderNode(node *TreeNode, selected bool) string {
 	indent := strings.Repeat("  ", node.Depth)
 	isMoving := m.movingRepo != nil && m.movingRepo.ID == node.ID
+	isRecentlyMoved := m.recentlyMovedID != "" && m.recentlyMovedID == node.ID
 
 	var icon, name, badge string
 	switch node.Kind {
@@ -706,10 +807,18 @@ func (m Model) renderNode(node *TreeNode, selected bool) string {
 		icon = "◆ "
 		name = node.Name
 	case NodeFolder:
-		if node.Expanded {
-			icon = "▼ "
+		if len(node.Children) == 0 {
+			if node.Expanded {
+				icon = "▽ "
+			} else {
+				icon = "▷ "
+			}
 		} else {
-			icon = "▶ "
+			if node.Expanded {
+				icon = "▼ "
+			} else {
+				icon = "▶ "
+			}
 		}
 		name = node.Name
 	case NodeRepo:
@@ -731,6 +840,11 @@ func (m Model) renderNode(node *TreeNode, selected bool) string {
 	if isMoving {
 		line := "  " + indent + icon + name + badge
 		return StyleMoving.Render(line)
+	}
+
+	if isRecentlyMoved {
+		line := "  " + indent + icon + name + badge
+		return StyleRecentlyMoved.Render(line)
 	}
 
 	switch node.Kind {
