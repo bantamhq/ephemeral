@@ -45,6 +45,10 @@ var (
 	StyleRootIcon = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("5"))
 
+	StyleColumnHeader = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("5")).
+				Faint(true)
+
 	StyleDialogBox = lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(lipgloss.Color("62")).

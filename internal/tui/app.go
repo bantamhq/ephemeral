@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/spinner"
@@ -870,64 +871,104 @@ func (m Model) renderNode(node *TreeNode, selected bool) string {
 	isRecentlyMoved := m.recentlyMovedID != "" && m.recentlyMovedID == node.ID
 	isEditing := m.editingNode != nil && m.editingNode.ID == node.ID
 
-	var icon, name, badge string
-	switch node.Kind {
-	case NodeRoot:
-		icon = "◆ "
-		name = node.Name
-	case NodeFolder:
-		if len(node.Children) == 0 {
-			if node.Expanded {
-				icon = "▽ "
-			} else {
-				icon = "▷ "
-			}
-		} else {
-			if node.Expanded {
-				icon = "▼ "
-			} else {
-				icon = "▶ "
-			}
-		}
-		name = node.Name
-	case NodeRepo:
-		name = node.Name
-		if isMoving {
-			badge = " [moving]"
-		}
-	}
+	icon, name, badge, details := m.nodeContent(node, isMoving)
 
 	if isEditing {
 		line := indent + icon + m.editText + "█"
 		return StyleEditing.Width(m.width).Render(line)
 	}
 
-	line := indent + icon + name + badge
+	left := indent + icon + name + badge
 
 	if selected {
-		return StyleSelected.Width(m.width).Render(line)
+		return StyleSelected.Width(m.width).Render(m.renderWithDetails(left, details))
 	}
 
 	if isMoving {
-		return StyleMoving.Render(line)
+		return StyleMoving.Render(left)
 	}
 
 	if isRecentlyMoved {
-		return StyleRecentlyMoved.Render(line)
+		return StyleRecentlyMoved.Width(m.width).Render(m.renderWithDetails(left, details))
 	}
 
+	icon, name, details = m.styledNodeContent(node, icon, name, details)
+	left = indent + icon + name + badge
+	return m.renderWithDetails(left, details)
+}
+
+func (m Model) nodeContent(node *TreeNode, isMoving bool) (icon, name, badge, details string) {
+	name = node.Name
+
+	switch node.Kind {
+	case NodeRoot:
+		icon = "◆ "
+		details = "last push  repo size"
+
+	case NodeFolder:
+		icon = folderIcon(node.Expanded, len(node.Children) > 0)
+
+	case NodeRepo:
+		if isMoving {
+			badge = " [moving]"
+		} else if node.Repo != nil {
+			details = fmt.Sprintf("%9s  %9s",
+				formatRelativeTime(node.Repo.LastPushAt),
+				formatSize(node.Repo.SizeBytes))
+		}
+	}
+
+	return icon, name, badge, details
+}
+
+func folderIcon(expanded, hasChildren bool) string {
+	if hasChildren {
+		if expanded {
+			return "▼ "
+		}
+		return "▶ "
+	}
+	if expanded {
+		return "▽ "
+	}
+	return "▷ "
+}
+
+func (m Model) styledNodeContent(node *TreeNode, icon, name, details string) (string, string, string) {
 	switch node.Kind {
 	case NodeRoot:
 		icon = StyleRootIcon.Render(icon)
 		name = StyleRootName.Render(name)
+		if details != "" {
+			details = StyleColumnHeader.Render(details)
+		}
 	case NodeFolder:
 		icon = StyleFolderIcon.Render(icon)
 		name = StyleFolderName.Render(name)
 	case NodeRepo:
 		name = StyleRepoName.Render(name)
+		if details != "" {
+			details = StyleSubtle.Render(details)
+		}
+	}
+	return icon, name, details
+}
+
+func (m Model) renderWithDetails(left, details string) string {
+	if details == "" {
+		return left
 	}
 
-	return indent + icon + name + badge
+	leftLen := lipgloss.Width(left)
+	detailsLen := lipgloss.Width(details)
+	padding := 1
+	gap := m.width - leftLen - detailsLen - padding
+
+	if gap < 2 {
+		return left
+	}
+
+	return left + strings.Repeat(" ", gap) + details
 }
 
 func (m Model) footerView() string {
@@ -954,4 +995,47 @@ func Run(c *client.Client, namespace, server string) error {
 
 	_, err := p.Run()
 	return err
+}
+
+func formatSize(bytes int) string {
+	const (
+		kb = 1024
+		mb = kb * 1024
+		gb = mb * 1024
+	)
+
+	switch {
+	case bytes >= gb:
+		return fmt.Sprintf("%.1fG", float64(bytes)/gb)
+	case bytes >= mb:
+		return fmt.Sprintf("%.1fM", float64(bytes)/mb)
+	case bytes >= kb:
+		return fmt.Sprintf("%.1fK", float64(bytes)/kb)
+	default:
+		return fmt.Sprintf("%dB", bytes)
+	}
+}
+
+func formatRelativeTime(t *time.Time) string {
+	if t == nil {
+		return "never"
+	}
+
+	elapsed := time.Since(*t)
+	hours := elapsed.Hours()
+
+	switch {
+	case elapsed < time.Minute:
+		return "now"
+	case elapsed < time.Hour:
+		return fmt.Sprintf("%dm", int(elapsed.Minutes()))
+	case hours < 24:
+		return fmt.Sprintf("%dh", int(hours))
+	case hours < 24*30:
+		return fmt.Sprintf("%dd", int(hours/24))
+	case hours < 24*365:
+		return fmt.Sprintf("%dmo", int(hours/24/30))
+	default:
+		return fmt.Sprintf("%dy", int(hours/24/365))
+	}
 }
