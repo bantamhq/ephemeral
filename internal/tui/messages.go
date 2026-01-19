@@ -6,6 +6,10 @@ type FolderCreatedMsg struct {
 	Folder client.Folder
 }
 
+type FolderUpdatedMsg struct {
+	Folder client.Folder
+}
+
 type RepoUpdatedMsg struct {
 	Repo client.Repo
 }

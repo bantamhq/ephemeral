@@ -251,6 +251,33 @@ func (c *Client) DeleteFolder(id string, force bool) error {
 	return nil
 }
 
+func (c *Client) UpdateFolder(id string, name *string, parentID *string) (*Folder, error) {
+	body := make(map[string]any)
+	if name != nil {
+		body["name"] = *name
+	}
+	if parentID != nil {
+		body["parent_id"] = *parentID
+	}
+
+	resp, err := c.doRequestWithBody(http.MethodPatch, "/api/v1/folders/"+id, body)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, c.decodeError(resp, "update folder")
+	}
+
+	var folder Folder
+	if err := json.NewDecoder(resp.Body).Decode(&folder); err != nil {
+		return nil, fmt.Errorf("decode response: %w", err)
+	}
+
+	return &folder, nil
+}
+
 func (c *Client) UpdateRepo(id string, name *string, public *bool, folderID *string) (*Repo, error) {
 	body := make(map[string]any)
 	if name != nil {

@@ -22,7 +22,6 @@ type modalState int
 const (
 	modalNone modalState = iota
 	modalCreateFolder
-	modalRenameRepo
 	modalDeleteRepo
 	modalDeleteFolder
 	modalToggleVisibility
@@ -50,6 +49,8 @@ type Model struct {
 	moveToRoot        bool
 	recentlyMovedID   string
 	expandAfterLoad   string
+	editingNode       *TreeNode
+	editText          string
 	statusMsg         string
 
 	spinner spinner.Model
@@ -149,6 +150,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.statusMsg = "Folder created: " + msg.Folder.Name
 		return m, m.loadData()
 
+	case FolderUpdatedMsg:
+		m.statusMsg = "Folder updated: " + msg.Folder.Name
+		return m, m.loadData()
+
 	case RepoUpdatedMsg:
 		m.statusMsg = "Repo updated: " + msg.Repo.Name
 		return m, m.loadData()
@@ -184,6 +189,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	m.statusMsg = ""
 	m.recentlyMovedID = ""
+
+	if m.editingNode != nil {
+		return m.handleEditMode(msg)
+	}
 
 	if m.movingRepo != nil {
 		return m.handleMoveMode(msg)
@@ -223,7 +232,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case key.Matches(msg, m.keys.Rename):
-		return m.openRename()
+		return m.startRename()
 
 	case key.Matches(msg, m.keys.Delete):
 		return m.openDelete()
@@ -276,6 +285,47 @@ func (m Model) handleMoveMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	return m, nil
+}
+
+func (m Model) handleEditMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.Type {
+	case tea.KeyEscape:
+		m.editingNode = nil
+		m.editText = ""
+		return m, nil
+
+	case tea.KeyEnter:
+		return m.submitRename()
+
+	case tea.KeyBackspace:
+		if len(m.editText) > 0 {
+			m.editText = m.editText[:len(m.editText)-1]
+		}
+		return m, nil
+
+	case tea.KeyRunes:
+		m.editText += string(msg.Runes)
+		return m, nil
+	}
+
+	return m, nil
+}
+
+func (m Model) submitRename() (tea.Model, tea.Cmd) {
+	newName := m.editText
+	node := m.editingNode
+
+	m.editingNode = nil
+	m.editText = ""
+
+	if newName == "" || newName == node.Name {
+		return m, nil
+	}
+
+	if node.Kind == NodeFolder {
+		return m, m.renameFolder(node.ID, newName)
+	}
+	return m, m.renameRepo(node.ID, newName)
 }
 
 func (m *Model) moveCursorToFolder(direction int) {
@@ -336,17 +386,15 @@ func (m Model) openCreateFolder() (tea.Model, tea.Cmd) {
 	return m, m.dialog.Init()
 }
 
-func (m Model) openRename() (tea.Model, tea.Cmd) {
+func (m Model) startRename() (tea.Model, tea.Cmd) {
 	node := m.selectedNode()
-	if node == nil || node.Kind != NodeRepo {
+	if node == nil || (node.Kind != NodeRepo && node.Kind != NodeFolder) {
 		return m, nil
 	}
 
-	m.modal = modalRenameRepo
-	m.dialog = NewNameInputDialog("Rename Repo", "Enter new name:", node.Name)
-	m.dialog.SetValue(node.Name)
-	m.actionTarget = node
-	return m, m.dialog.Init()
+	m.editingNode = node
+	m.editText = node.Name
+	return m, nil
 }
 
 func (m Model) openDelete() (tea.Model, tea.Cmd) {
@@ -482,12 +530,6 @@ func (m Model) handleDialogSubmit(msg DialogSubmitMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, m.createFolder(msg.Value, parentID)
 
-	case modalRenameRepo:
-		if msg.Value == "" || target == nil {
-			return m, nil
-		}
-		return m, m.renameRepo(target.ID, msg.Value)
-
 	case modalDeleteRepo:
 		if target == nil {
 			return m, nil
@@ -534,6 +576,16 @@ func (m Model) renameRepo(id, name string) tea.Cmd {
 			return ActionErrorMsg{Operation: "rename repo", Err: err}
 		}
 		return RepoUpdatedMsg{Repo: *repo}
+	}
+}
+
+func (m Model) renameFolder(id, name string) tea.Cmd {
+	return func() tea.Msg {
+		folder, err := m.client.UpdateFolder(id, &name, nil)
+		if err != nil {
+			return ActionErrorMsg{Operation: "rename folder", Err: err}
+		}
+		return FolderUpdatedMsg{Folder: *folder}
 	}
 }
 
@@ -816,6 +868,7 @@ func (m Model) renderNode(node *TreeNode, selected bool) string {
 	indent := strings.Repeat("  ", node.Depth)
 	isMoving := m.movingRepo != nil && m.movingRepo.ID == node.ID
 	isRecentlyMoved := m.recentlyMovedID != "" && m.recentlyMovedID == node.ID
+	isEditing := m.editingNode != nil && m.editingNode.ID == node.ID
 
 	var icon, name, badge string
 	switch node.Kind {
@@ -842,6 +895,11 @@ func (m Model) renderNode(node *TreeNode, selected bool) string {
 		if isMoving {
 			badge = " [moving]"
 		}
+	}
+
+	if isEditing {
+		line := indent + icon + m.editText + "█"
+		return StyleEditing.Width(m.width).Render(line)
 	}
 
 	line := indent + icon + name + badge

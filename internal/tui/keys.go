@@ -92,7 +92,7 @@ func (k KeyMap) ShortHelp(nodeKind *NodeKind, moveMode bool) string {
 	case NodeRepo:
 		return base + "  r rename  d delete  v visibility  m move  c/C clone"
 	case NodeFolder:
-		return base + "  d delete"
+		return base + "  r rename  d delete"
 	default:
 		return base
 	}

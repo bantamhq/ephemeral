@@ -81,4 +81,9 @@ var (
 	StyleRecentlyMoved = lipgloss.NewStyle().
 				Foreground(lipgloss.Color("11")).
 				Bold(true)
+
+	StyleEditing = lipgloss.NewStyle().
+			Background(lipgloss.Color("236")).
+			Foreground(lipgloss.Color("255")).
+			Bold(true)
 )
