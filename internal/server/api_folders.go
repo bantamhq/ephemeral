@@ -5,16 +5,14 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
 	"ephemeral/internal/store"
 )
 
 func (s *Server) handleListFolders(w http.ResponseWriter, r *http.Request) {
-	token := GetTokenFromContext(r.Context())
+	token := s.requireAuth(w, r)
 	if token == nil {
-		JSONError(w, http.StatusUnauthorized, "Authentication required")
 		return
 	}
 
@@ -33,9 +31,11 @@ type createFolderRequest struct {
 }
 
 func (s *Server) handleCreateFolder(w http.ResponseWriter, r *http.Request) {
-	token := GetTokenFromContext(r.Context())
-	if !HasScope(token, store.ScopeRepos) {
-		JSONError(w, http.StatusForbidden, "Insufficient permissions")
+	token := s.requireAuth(w, r)
+	if token == nil {
+		return
+	}
+	if !s.requireScope(w, token, store.ScopeRepos) {
 		return
 	}
 
@@ -83,25 +83,13 @@ func (s *Server) handleCreateFolder(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleGetFolder(w http.ResponseWriter, r *http.Request) {
-	token := GetTokenFromContext(r.Context())
+	token := s.requireAuth(w, r)
 	if token == nil {
-		JSONError(w, http.StatusUnauthorized, "Authentication required")
 		return
 	}
 
-	id := chi.URLParam(r, "id")
-	folder, err := s.store.GetFolderByID(id)
-	if err != nil {
-		JSONError(w, http.StatusInternalServerError, "Failed to get folder")
-		return
-	}
+	folder := s.requireFolderAccess(w, r, token)
 	if folder == nil {
-		JSONError(w, http.StatusNotFound, "Folder not found")
-		return
-	}
-
-	if folder.NamespaceID != token.NamespaceID && !HasScope(token, store.ScopeAdmin) {
-		JSONError(w, http.StatusForbidden, "Access denied")
 		return
 	}
 
@@ -114,25 +102,16 @@ type updateFolderRequest struct {
 }
 
 func (s *Server) handleUpdateFolder(w http.ResponseWriter, r *http.Request) {
-	token := GetTokenFromContext(r.Context())
-	if !HasScope(token, store.ScopeRepos) {
-		JSONError(w, http.StatusForbidden, "Insufficient permissions")
+	token := s.requireAuth(w, r)
+	if token == nil {
+		return
+	}
+	if !s.requireScope(w, token, store.ScopeRepos) {
 		return
 	}
 
-	id := chi.URLParam(r, "id")
-	folder, err := s.store.GetFolderByID(id)
-	if err != nil {
-		JSONError(w, http.StatusInternalServerError, "Failed to get folder")
-		return
-	}
+	folder := s.requireFolderAccess(w, r, token)
 	if folder == nil {
-		JSONError(w, http.StatusNotFound, "Folder not found")
-		return
-	}
-
-	if folder.NamespaceID != token.NamespaceID && !HasScope(token, store.ScopeAdmin) {
-		JSONError(w, http.StatusForbidden, "Access denied")
 		return
 	}
 
@@ -150,6 +129,26 @@ func (s *Server) handleUpdateFolder(w http.ResponseWriter, r *http.Request) {
 			JSONError(w, http.StatusBadRequest, "Folder cannot be its own parent")
 			return
 		}
+
+		parent, err := s.store.GetFolderByID(*req.ParentID)
+		if err != nil {
+			JSONError(w, http.StatusInternalServerError, "Failed to check parent folder")
+			return
+		}
+		if parent == nil {
+			JSONError(w, http.StatusBadRequest, "Parent folder not found")
+			return
+		}
+		if parent.NamespaceID != folder.NamespaceID {
+			JSONError(w, http.StatusBadRequest, "Parent folder not in same namespace")
+			return
+		}
+
+		if s.isFolderDescendant(folder.ID, *req.ParentID) {
+			JSONError(w, http.StatusBadRequest, "Cannot set parent to a descendant folder (would create cycle)")
+			return
+		}
+
 		folder.ParentID = req.ParentID
 	}
 
@@ -161,32 +160,46 @@ func (s *Server) handleUpdateFolder(w http.ResponseWriter, r *http.Request) {
 	JSON(w, http.StatusOK, folder)
 }
 
+func (s *Server) isFolderDescendant(ancestorID, potentialDescendantID string) bool {
+	visited := make(map[string]bool)
+
+	for current := potentialDescendantID; current != ""; {
+		if visited[current] {
+			return false
+		}
+		visited[current] = true
+
+		folder, err := s.store.GetFolderByID(current)
+		if err != nil || folder == nil || folder.ParentID == nil {
+			return false
+		}
+
+		if *folder.ParentID == ancestorID {
+			return true
+		}
+		current = *folder.ParentID
+	}
+
+	return false
+}
+
 func (s *Server) handleDeleteFolder(w http.ResponseWriter, r *http.Request) {
-	token := GetTokenFromContext(r.Context())
-	if !HasScope(token, store.ScopeRepos) {
-		JSONError(w, http.StatusForbidden, "Insufficient permissions")
+	token := s.requireAuth(w, r)
+	if token == nil {
+		return
+	}
+	if !s.requireScope(w, token, store.ScopeRepos) {
 		return
 	}
 
-	id := chi.URLParam(r, "id")
-	folder, err := s.store.GetFolderByID(id)
-	if err != nil {
-		JSONError(w, http.StatusInternalServerError, "Failed to get folder")
-		return
-	}
+	folder := s.requireFolderAccess(w, r, token)
 	if folder == nil {
-		JSONError(w, http.StatusNotFound, "Folder not found")
-		return
-	}
-
-	if folder.NamespaceID != token.NamespaceID && !HasScope(token, store.ScopeAdmin) {
-		JSONError(w, http.StatusForbidden, "Access denied")
 		return
 	}
 
 	force := r.URL.Query().Get("force") == "true"
 	if !force {
-		repos, subfolders, err := s.store.CountFolderContents(id)
+		repos, subfolders, err := s.store.CountFolderContents(folder.ID)
 		if err != nil {
 			JSONError(w, http.StatusInternalServerError, "Failed to check folder contents")
 			return
@@ -197,7 +210,7 @@ func (s *Server) handleDeleteFolder(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if err := s.store.DeleteFolder(id); err != nil {
+	if err := s.store.DeleteFolder(folder.ID); err != nil {
 		JSONError(w, http.StatusInternalServerError, "Failed to delete folder")
 		return
 	}

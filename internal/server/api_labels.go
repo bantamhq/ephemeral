@@ -12,9 +12,8 @@ import (
 )
 
 func (s *Server) handleListLabels(w http.ResponseWriter, r *http.Request) {
-	token := GetTokenFromContext(r.Context())
+	token := s.requireAuth(w, r)
 	if token == nil {
-		JSONError(w, http.StatusUnauthorized, "Authentication required")
 		return
 	}
 
@@ -33,9 +32,11 @@ type createLabelRequest struct {
 }
 
 func (s *Server) handleCreateLabel(w http.ResponseWriter, r *http.Request) {
-	token := GetTokenFromContext(r.Context())
-	if !HasScope(token, store.ScopeRepos) {
-		JSONError(w, http.StatusForbidden, "Insufficient permissions")
+	token := s.requireAuth(w, r)
+	if token == nil {
+		return
+	}
+	if !s.requireScope(w, token, store.ScopeRepos) {
 		return
 	}
 
@@ -77,25 +78,13 @@ func (s *Server) handleCreateLabel(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleGetLabel(w http.ResponseWriter, r *http.Request) {
-	token := GetTokenFromContext(r.Context())
+	token := s.requireAuth(w, r)
 	if token == nil {
-		JSONError(w, http.StatusUnauthorized, "Authentication required")
 		return
 	}
 
-	id := chi.URLParam(r, "id")
-	label, err := s.store.GetLabelByID(id)
-	if err != nil {
-		JSONError(w, http.StatusInternalServerError, "Failed to get label")
-		return
-	}
+	label := s.requireLabelAccess(w, r, token)
 	if label == nil {
-		JSONError(w, http.StatusNotFound, "Label not found")
-		return
-	}
-
-	if label.NamespaceID != token.NamespaceID && !HasScope(token, store.ScopeAdmin) {
-		JSONError(w, http.StatusForbidden, "Access denied")
 		return
 	}
 
@@ -108,25 +97,16 @@ type updateLabelRequest struct {
 }
 
 func (s *Server) handleUpdateLabel(w http.ResponseWriter, r *http.Request) {
-	token := GetTokenFromContext(r.Context())
-	if !HasScope(token, store.ScopeRepos) {
-		JSONError(w, http.StatusForbidden, "Insufficient permissions")
+	token := s.requireAuth(w, r)
+	if token == nil {
+		return
+	}
+	if !s.requireScope(w, token, store.ScopeRepos) {
 		return
 	}
 
-	id := chi.URLParam(r, "id")
-	label, err := s.store.GetLabelByID(id)
-	if err != nil {
-		JSONError(w, http.StatusInternalServerError, "Failed to get label")
-		return
-	}
+	label := s.requireLabelAccess(w, r, token)
 	if label == nil {
-		JSONError(w, http.StatusNotFound, "Label not found")
-		return
-	}
-
-	if label.NamespaceID != token.NamespaceID && !HasScope(token, store.ScopeAdmin) {
-		JSONError(w, http.StatusForbidden, "Access denied")
 		return
 	}
 
@@ -152,29 +132,20 @@ func (s *Server) handleUpdateLabel(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDeleteLabel(w http.ResponseWriter, r *http.Request) {
-	token := GetTokenFromContext(r.Context())
-	if !HasScope(token, store.ScopeRepos) {
-		JSONError(w, http.StatusForbidden, "Insufficient permissions")
+	token := s.requireAuth(w, r)
+	if token == nil {
+		return
+	}
+	if !s.requireScope(w, token, store.ScopeRepos) {
 		return
 	}
 
-	id := chi.URLParam(r, "id")
-	label, err := s.store.GetLabelByID(id)
-	if err != nil {
-		JSONError(w, http.StatusInternalServerError, "Failed to get label")
-		return
-	}
+	label := s.requireLabelAccess(w, r, token)
 	if label == nil {
-		JSONError(w, http.StatusNotFound, "Label not found")
 		return
 	}
 
-	if label.NamespaceID != token.NamespaceID && !HasScope(token, store.ScopeAdmin) {
-		JSONError(w, http.StatusForbidden, "Access denied")
-		return
-	}
-
-	if err := s.store.DeleteLabel(id); err != nil {
+	if err := s.store.DeleteLabel(label.ID); err != nil {
 		JSONError(w, http.StatusInternalServerError, "Failed to delete label")
 		return
 	}
@@ -187,25 +158,16 @@ type addRepoLabelsRequest struct {
 }
 
 func (s *Server) handleAddRepoLabels(w http.ResponseWriter, r *http.Request) {
-	token := GetTokenFromContext(r.Context())
-	if !HasScope(token, store.ScopeRepos) {
-		JSONError(w, http.StatusForbidden, "Insufficient permissions")
+	token := s.requireAuth(w, r)
+	if token == nil {
+		return
+	}
+	if !s.requireScope(w, token, store.ScopeRepos) {
 		return
 	}
 
-	repoID := chi.URLParam(r, "id")
-	repo, err := s.store.GetRepoByID(repoID)
-	if err != nil {
-		JSONError(w, http.StatusInternalServerError, "Failed to get repo")
-		return
-	}
+	repo := s.requireRepoAccess(w, r, token)
 	if repo == nil {
-		JSONError(w, http.StatusNotFound, "Repository not found")
-		return
-	}
-
-	if repo.NamespaceID != token.NamespaceID && !HasScope(token, store.ScopeAdmin) {
-		JSONError(w, http.StatusForbidden, "Access denied")
 		return
 	}
 
@@ -230,13 +192,13 @@ func (s *Server) handleAddRepoLabels(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		if err := s.store.AddRepoLabel(repoID, labelID); err != nil {
+		if err := s.store.AddRepoLabel(repo.ID, labelID); err != nil {
 			JSONError(w, http.StatusInternalServerError, "Failed to add label")
 			return
 		}
 	}
 
-	labels, err := s.store.ListRepoLabels(repoID)
+	labels, err := s.store.ListRepoLabels(repo.ID)
 	if err != nil {
 		JSONError(w, http.StatusInternalServerError, "Failed to list repo labels")
 		return
@@ -246,31 +208,22 @@ func (s *Server) handleAddRepoLabels(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleRemoveRepoLabel(w http.ResponseWriter, r *http.Request) {
-	token := GetTokenFromContext(r.Context())
-	if !HasScope(token, store.ScopeRepos) {
-		JSONError(w, http.StatusForbidden, "Insufficient permissions")
+	token := s.requireAuth(w, r)
+	if token == nil {
+		return
+	}
+	if !s.requireScope(w, token, store.ScopeRepos) {
 		return
 	}
 
-	repoID := chi.URLParam(r, "id")
+	repo := s.requireRepoAccess(w, r, token)
+	if repo == nil {
+		return
+	}
+
 	labelID := chi.URLParam(r, "labelID")
 
-	repo, err := s.store.GetRepoByID(repoID)
-	if err != nil {
-		JSONError(w, http.StatusInternalServerError, "Failed to get repo")
-		return
-	}
-	if repo == nil {
-		JSONError(w, http.StatusNotFound, "Repository not found")
-		return
-	}
-
-	if repo.NamespaceID != token.NamespaceID && !HasScope(token, store.ScopeAdmin) {
-		JSONError(w, http.StatusForbidden, "Access denied")
-		return
-	}
-
-	if err := s.store.RemoveRepoLabel(repoID, labelID); err != nil {
+	if err := s.store.RemoveRepoLabel(repo.ID, labelID); err != nil {
 		JSONError(w, http.StatusInternalServerError, "Failed to remove label")
 		return
 	}
@@ -279,29 +232,17 @@ func (s *Server) handleRemoveRepoLabel(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleListRepoLabels(w http.ResponseWriter, r *http.Request) {
-	token := GetTokenFromContext(r.Context())
+	token := s.requireAuth(w, r)
 	if token == nil {
-		JSONError(w, http.StatusUnauthorized, "Authentication required")
 		return
 	}
 
-	repoID := chi.URLParam(r, "id")
-	repo, err := s.store.GetRepoByID(repoID)
-	if err != nil {
-		JSONError(w, http.StatusInternalServerError, "Failed to get repo")
-		return
-	}
+	repo := s.requireRepoAccess(w, r, token)
 	if repo == nil {
-		JSONError(w, http.StatusNotFound, "Repository not found")
 		return
 	}
 
-	if repo.NamespaceID != token.NamespaceID && !HasScope(token, store.ScopeAdmin) {
-		JSONError(w, http.StatusForbidden, "Access denied")
-		return
-	}
-
-	labels, err := s.store.ListRepoLabels(repoID)
+	labels, err := s.store.ListRepoLabels(repo.ID)
 	if err != nil {
 		JSONError(w, http.StatusInternalServerError, "Failed to list repo labels")
 		return

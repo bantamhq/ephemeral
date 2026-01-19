@@ -37,7 +37,7 @@ cd "$PROJECT_ROOT"
 go build -o "$TEST_DIR/ephemeral" ./cmd/ephemeral
 
 # Create config
-cat > "$TEST_DIR/config.toml" << EOF
+cat > "$TEST_DIR/server.toml" << EOF
 [server]
 port = 18080
 host = "127.0.0.1"

@@ -15,6 +15,16 @@ type contextKey string
 
 const tokenContextKey contextKey = "token"
 
+// authError represents an authentication error with an associated HTTP status code.
+type authError struct {
+	message string
+	status  int
+}
+
+func (e *authError) Error() string {
+	return e.message
+}
+
 // AuthMiddleware validates token authentication via HTTP Basic Auth.
 // Username must be "x-token" and password is the token value.
 func AuthMiddleware(st store.Store) func(http.Handler) http.Handler {
@@ -29,7 +39,14 @@ func AuthMiddleware(st store.Store) func(http.Handler) http.Handler {
 
 			token, err := validateBasicAuth(st, r)
 			if err != nil {
-				http.Error(w, err.Error(), http.StatusUnauthorized)
+				if authErr, ok := err.(*authError); ok {
+					if authErr.status == http.StatusUnauthorized {
+						w.Header().Set("WWW-Authenticate", `Basic realm="Ephemeral"`)
+					}
+					http.Error(w, authErr.message, authErr.status)
+				} else {
+					http.Error(w, "Internal server error", http.StatusInternalServerError)
+				}
 				return
 			}
 
@@ -44,7 +61,7 @@ func validateBasicAuth(st store.Store, r *http.Request) (*store.Token, error) {
 	username, password, _ := r.BasicAuth()
 
 	if username != "x-token" {
-		return nil, fmt.Errorf("invalid credentials")
+		return nil, &authError{"Invalid credentials", http.StatusUnauthorized}
 	}
 
 	hasher := sha256.New()
@@ -53,14 +70,14 @@ func validateBasicAuth(st store.Store, r *http.Request) (*store.Token, error) {
 
 	token, err := st.GetTokenByHash(tokenHash)
 	if err != nil {
-		return nil, fmt.Errorf("internal server error")
+		return nil, &authError{"Internal server error", http.StatusInternalServerError}
 	}
 	if token == nil {
-		return nil, fmt.Errorf("invalid token")
+		return nil, &authError{"Invalid token", http.StatusUnauthorized}
 	}
 
 	if token.ExpiresAt != nil && token.ExpiresAt.Before(time.Now()) {
-		return nil, fmt.Errorf("token expired")
+		return nil, &authError{"Token expired", http.StatusUnauthorized}
 	}
 
 	return token, nil
@@ -103,7 +120,14 @@ func OptionalAuthMiddleware(st store.Store) func(http.Handler) http.Handler {
 
 			token, err := validateBasicAuth(st, r)
 			if err != nil {
-				http.Error(w, err.Error(), http.StatusUnauthorized)
+				if authErr, ok := err.(*authError); ok {
+					if authErr.status == http.StatusUnauthorized {
+						w.Header().Set("WWW-Authenticate", `Basic realm="Ephemeral"`)
+					}
+					http.Error(w, authErr.message, authErr.status)
+				} else {
+					http.Error(w, "Internal server error", http.StatusInternalServerError)
+				}
 				return
 			}
 

@@ -141,7 +141,6 @@ func resolveRef(repo *git.Repository, refStr string) (*plumbing.Hash, error) {
 		refStr = "HEAD"
 	}
 
-	// Try as a full SHA first
 	if len(refStr) == 40 {
 		hash := plumbing.NewHash(refStr)
 		_, err := repo.CommitObject(hash)
@@ -150,18 +149,15 @@ func resolveRef(repo *git.Repository, refStr string) (*plumbing.Hash, error) {
 		}
 	}
 
-	// Try as branch
 	ref, err := repo.Reference(plumbing.NewBranchReferenceName(refStr), true)
 	if err == nil {
 		hash := ref.Hash()
 		return &hash, nil
 	}
 
-	// Try as tag
 	ref, err = repo.Reference(plumbing.NewTagReferenceName(refStr), true)
 	if err == nil {
 		hash := ref.Hash()
-		// Check if it's an annotated tag
 		tagObj, err := repo.TagObject(hash)
 		if err == nil {
 			commitHash := tagObj.Target
@@ -170,7 +166,6 @@ func resolveRef(repo *git.Repository, refStr string) (*plumbing.Hash, error) {
 		return &hash, nil
 	}
 
-	// Try as HEAD
 	if refStr == "HEAD" {
 		ref, err := repo.Head()
 		if err != nil {
@@ -205,14 +200,12 @@ func (s *Server) handleListRefs(w http.ResponseWriter, r *http.Request) {
 
 	var refs []RefResponse
 
-	// Get HEAD to determine default branch
 	headRef, err := gitRepo.Head()
 	var defaultBranch string
 	if err == nil {
 		defaultBranch = headRef.Name().Short()
 	}
 
-	// List branches
 	branchIter, err := gitRepo.Branches()
 	if err == nil {
 		branchIter.ForEach(func(ref *plumbing.Reference) error {
@@ -226,13 +219,11 @@ func (s *Server) handleListRefs(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	// List tags
 	tagIter, err := gitRepo.Tags()
 	if err == nil {
 		tagIter.ForEach(func(ref *plumbing.Reference) error {
 			commitSHA := ref.Hash().String()
 
-			// For annotated tags, get the target commit
 			tagObj, err := gitRepo.TagObject(ref.Hash())
 			if err == nil {
 				commitSHA = tagObj.Target.String()
@@ -253,7 +244,6 @@ func (s *Server) handleListRefs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Sort: default branch first, then branches alphabetically, then tags alphabetically
 	sort.Slice(refs, func(i, j int) bool {
 		if refs[i].IsDefault != refs[j].IsDefault {
 			return refs[i].IsDefault
@@ -299,6 +289,11 @@ func (s *Server) handleListCommits(w http.ResponseWriter, r *http.Request) {
 	var startFrom plumbing.Hash
 	if cursor != "" {
 		startFrom = plumbing.NewHash(cursor)
+		// Validate cursor exists
+		if _, err := gitRepo.CommitObject(startFrom); err != nil {
+			JSONError(w, http.StatusBadRequest, "Invalid cursor: commit not found")
+			return
+		}
 	} else {
 		startFrom = *hash
 	}
@@ -309,6 +304,13 @@ func (s *Server) handleListCommits(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer commitIter.Close()
+
+	if cursor != "" {
+		if _, err := commitIter.Next(); err != nil {
+			JSONList(w, []CommitResponse{}, nil, false)
+			return
+		}
+	}
 
 	var commits []CommitResponse
 
@@ -443,7 +445,6 @@ func (s *Server) handleGetTree(w http.ResponseWriter, r *http.Request) {
 		entries = append(entries, resp)
 	}
 
-	// Sort: directories first, then files, both alphabetically
 	sort.Slice(entries, func(i, j int) bool {
 		if entries[i].Type == "dir" && entries[j].Type != "dir" {
 			return true
@@ -499,7 +500,6 @@ func (s *Server) handleGetBlob(w http.ResponseWriter, r *http.Request) {
 
 	file, err := tree.File(pathParam)
 	if err != nil {
-		// Check if path exists but is a directory
 		if _, treeErr := tree.Tree(pathParam); treeErr == nil {
 			JSONError(w, http.StatusBadRequest, "Path is a directory, not a file")
 			return
@@ -572,11 +572,16 @@ func (s *Server) serveRawBlob(w http.ResponseWriter, r *http.Request, blob *obje
 	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("Content-Length", strconv.FormatInt(blob.Size, 10))
 
-	// Re-open reader since detectContentType consumed some bytes
-	reader, _ = blob.Reader()
+	reader, err = blob.Reader()
+	if err != nil {
+		JSONError(w, http.StatusInternalServerError, "Failed to read file")
+		return
+	}
 	defer reader.Close()
 
-	io.Copy(w, reader)
+	if _, err := io.Copy(w, reader); err != nil {
+		fmt.Printf("Error streaming blob: %v\n", err)
+	}
 }
 
 func isBinaryContent(content []byte) bool {

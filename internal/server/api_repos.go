@@ -2,12 +2,12 @@ package server
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
-	"path/filepath"
+	"strconv"
 	"time"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
 	"ephemeral/internal/store"
@@ -16,22 +16,30 @@ import (
 const defaultPageSize = 20
 
 func (s *Server) handleListRepos(w http.ResponseWriter, r *http.Request) {
-	token := GetTokenFromContext(r.Context())
+	token := s.requireAuth(w, r)
 	if token == nil {
-		JSONError(w, http.StatusUnauthorized, "Authentication required")
 		return
 	}
 
 	cursor := r.URL.Query().Get("cursor")
-	repos, err := s.store.ListRepos(token.NamespaceID, cursor, defaultPageSize+1)
+	limitStr := r.URL.Query().Get("limit")
+
+	limit := defaultPageSize
+	if limitStr != "" {
+		if l, err := strconv.Atoi(limitStr); err == nil && l >= 1 && l <= 100 {
+			limit = l
+		}
+	}
+
+	repos, err := s.store.ListRepos(token.NamespaceID, cursor, limit+1)
 	if err != nil {
 		JSONError(w, http.StatusInternalServerError, "Failed to list repos")
 		return
 	}
 
-	hasMore := len(repos) > defaultPageSize
+	hasMore := len(repos) > limit
 	if hasMore {
-		repos = repos[:defaultPageSize]
+		repos = repos[:limit]
 	}
 
 	var nextCursor *string
@@ -49,9 +57,11 @@ type createRepoRequest struct {
 }
 
 func (s *Server) handleCreateRepo(w http.ResponseWriter, r *http.Request) {
-	token := GetTokenFromContext(r.Context())
-	if !HasScope(token, store.ScopeRepos) {
-		JSONError(w, http.StatusForbidden, "Insufficient permissions")
+	token := s.requireAuth(w, r)
+	if token == nil {
+		return
+	}
+	if !s.requireScope(w, token, store.ScopeRepos) {
 		return
 	}
 
@@ -61,8 +71,8 @@ func (s *Server) handleCreateRepo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.Name == "" {
-		JSONError(w, http.StatusBadRequest, "Name is required")
+	if err := ValidateName(req.Name); err != nil {
+		JSONError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -87,13 +97,19 @@ func (s *Server) handleCreateRepo(w http.ResponseWriter, r *http.Request) {
 		UpdatedAt:   now,
 	}
 
+	repoPath, err := SafeRepoPath(s.dataDir, token.NamespaceID, req.Name)
+	if err != nil {
+		JSONError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
 	if err := s.store.CreateRepo(repo); err != nil {
 		JSONError(w, http.StatusInternalServerError, "Failed to create repo")
 		return
 	}
 
-	repoPath := filepath.Join(s.dataDir, "repos", token.NamespaceID, req.Name+".git")
 	if err := initBareRepo(repoPath); err != nil {
+		s.store.DeleteRepo(repo.ID)
 		JSONError(w, http.StatusInternalServerError, "Failed to init bare repo")
 		return
 	}
@@ -102,25 +118,13 @@ func (s *Server) handleCreateRepo(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleGetRepo(w http.ResponseWriter, r *http.Request) {
-	token := GetTokenFromContext(r.Context())
+	token := s.requireAuth(w, r)
 	if token == nil {
-		JSONError(w, http.StatusUnauthorized, "Authentication required")
 		return
 	}
 
-	id := chi.URLParam(r, "id")
-	repo, err := s.store.GetRepoByID(id)
-	if err != nil {
-		JSONError(w, http.StatusInternalServerError, "Failed to get repo")
-		return
-	}
+	repo := s.requireRepoAccess(w, r, token)
 	if repo == nil {
-		JSONError(w, http.StatusNotFound, "Repository not found")
-		return
-	}
-
-	if repo.NamespaceID != token.NamespaceID && !HasScope(token, store.ScopeAdmin) {
-		JSONError(w, http.StatusForbidden, "Access denied")
 		return
 	}
 
@@ -128,35 +132,33 @@ func (s *Server) handleGetRepo(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDeleteRepo(w http.ResponseWriter, r *http.Request) {
-	token := GetTokenFromContext(r.Context())
-	if !HasScope(token, store.ScopeRepos) {
-		JSONError(w, http.StatusForbidden, "Insufficient permissions")
+	token := s.requireAuth(w, r)
+	if token == nil {
+		return
+	}
+	if !s.requireScope(w, token, store.ScopeRepos) {
 		return
 	}
 
-	id := chi.URLParam(r, "id")
-	repo, err := s.store.GetRepoByID(id)
-	if err != nil {
-		JSONError(w, http.StatusInternalServerError, "Failed to get repo")
-		return
-	}
+	repo := s.requireRepoAccess(w, r, token)
 	if repo == nil {
-		JSONError(w, http.StatusNotFound, "Repository not found")
 		return
 	}
 
-	if repo.NamespaceID != token.NamespaceID && !HasScope(token, store.ScopeAdmin) {
-		JSONError(w, http.StatusForbidden, "Access denied")
+	repoPath, err := SafeRepoPath(s.dataDir, repo.NamespaceID, repo.Name)
+	if err != nil {
+		JSONError(w, http.StatusInternalServerError, "Failed to resolve repo path")
 		return
 	}
 
-	if err := s.store.DeleteRepo(id); err != nil {
+	if err := s.store.DeleteRepo(repo.ID); err != nil {
 		JSONError(w, http.StatusInternalServerError, "Failed to delete repo")
 		return
 	}
 
-	repoPath := filepath.Join(s.dataDir, "repos", repo.NamespaceID, repo.Name+".git")
-	os.RemoveAll(repoPath)
+	if err := os.RemoveAll(repoPath); err != nil {
+		fmt.Printf("Warning: failed to remove repo directory %s: %v\n", repoPath, err)
+	}
 
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -168,25 +170,16 @@ type updateRepoRequest struct {
 }
 
 func (s *Server) handleUpdateRepo(w http.ResponseWriter, r *http.Request) {
-	token := GetTokenFromContext(r.Context())
-	if !HasScope(token, store.ScopeRepos) {
-		JSONError(w, http.StatusForbidden, "Insufficient permissions")
+	token := s.requireAuth(w, r)
+	if token == nil {
+		return
+	}
+	if !s.requireScope(w, token, store.ScopeRepos) {
 		return
 	}
 
-	id := chi.URLParam(r, "id")
-	repo, err := s.store.GetRepoByID(id)
-	if err != nil {
-		JSONError(w, http.StatusInternalServerError, "Failed to get repo")
-		return
-	}
+	repo := s.requireRepoAccess(w, r, token)
 	if repo == nil {
-		JSONError(w, http.StatusNotFound, "Repository not found")
-		return
-	}
-
-	if repo.NamespaceID != token.NamespaceID && !HasScope(token, store.ScopeAdmin) {
-		JSONError(w, http.StatusForbidden, "Access denied")
 		return
 	}
 
@@ -197,9 +190,27 @@ func (s *Server) handleUpdateRepo(w http.ResponseWriter, r *http.Request) {
 	}
 
 	oldName := repo.Name
-	if req.Name != nil {
+	nameChanged := req.Name != nil && *req.Name != oldName
+
+	if nameChanged {
+		if err := ValidateName(*req.Name); err != nil {
+			JSONError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+
+		existing, err := s.store.GetRepo(repo.NamespaceID, *req.Name)
+		if err != nil {
+			JSONError(w, http.StatusInternalServerError, "Failed to check existing repo")
+			return
+		}
+		if existing != nil {
+			JSONError(w, http.StatusConflict, "Repository with that name already exists")
+			return
+		}
+
 		repo.Name = *req.Name
 	}
+
 	if req.Public != nil {
 		repo.Public = *req.Public
 	}
@@ -207,16 +218,35 @@ func (s *Server) handleUpdateRepo(w http.ResponseWriter, r *http.Request) {
 		repo.FolderID = req.FolderID
 	}
 
-	if err := s.store.UpdateRepo(repo); err != nil {
-		JSONError(w, http.StatusInternalServerError, "Failed to update repo")
-		return
-	}
+	if nameChanged {
+		if err := s.renameRepoOnDisk(repo.NamespaceID, oldName, *req.Name); err != nil {
+			JSONError(w, http.StatusInternalServerError, "Failed to rename repository on disk")
+			return
+		}
 
-	if req.Name != nil && oldName != *req.Name {
-		oldPath := filepath.Join(s.dataDir, "repos", repo.NamespaceID, oldName+".git")
-		newPath := filepath.Join(s.dataDir, "repos", repo.NamespaceID, *req.Name+".git")
-		os.Rename(oldPath, newPath)
+		if err := s.store.UpdateRepo(repo); err != nil {
+			s.renameRepoOnDisk(repo.NamespaceID, *req.Name, oldName)
+			JSONError(w, http.StatusInternalServerError, "Failed to update repo")
+			return
+		}
+	} else {
+		if err := s.store.UpdateRepo(repo); err != nil {
+			JSONError(w, http.StatusInternalServerError, "Failed to update repo")
+			return
+		}
 	}
 
 	JSON(w, http.StatusOK, repo)
+}
+
+func (s *Server) renameRepoOnDisk(namespaceID, oldName, newName string) error {
+	oldPath, err := SafeRepoPath(s.dataDir, namespaceID, oldName)
+	if err != nil {
+		return err
+	}
+	newPath, err := SafeRepoPath(s.dataDir, namespaceID, newName)
+	if err != nil {
+		return err
+	}
+	return os.Rename(oldPath, newPath)
 }

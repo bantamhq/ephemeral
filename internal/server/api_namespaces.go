@@ -2,9 +2,9 @@ package server
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
-	"path/filepath"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -13,10 +13,27 @@ import (
 	"ephemeral/internal/store"
 )
 
+func (s *Server) handleGetCurrentNamespace(w http.ResponseWriter, r *http.Request) {
+	token := s.requireAuth(w, r)
+	if token == nil {
+		return
+	}
+
+	ns, err := s.store.GetNamespace(token.NamespaceID)
+	if err != nil {
+		JSONError(w, http.StatusInternalServerError, "Failed to get namespace")
+		return
+	}
+	if ns == nil {
+		JSONError(w, http.StatusNotFound, "Namespace not found")
+		return
+	}
+
+	JSON(w, http.StatusOK, ns)
+}
+
 func (s *Server) handleListNamespaces(w http.ResponseWriter, r *http.Request) {
-	token := GetTokenFromContext(r.Context())
-	if !HasScope(token, store.ScopeAdmin) {
-		JSONError(w, http.StatusForbidden, "Admin access required")
+	if s.requireAdmin(w, r) == nil {
 		return
 	}
 
@@ -48,9 +65,7 @@ type createNamespaceRequest struct {
 }
 
 func (s *Server) handleCreateNamespace(w http.ResponseWriter, r *http.Request) {
-	token := GetTokenFromContext(r.Context())
-	if !HasScope(token, store.ScopeAdmin) {
-		JSONError(w, http.StatusForbidden, "Admin access required")
+	if s.requireAdmin(w, r) == nil {
 		return
 	}
 
@@ -60,8 +75,8 @@ func (s *Server) handleCreateNamespace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.Name == "" {
-		JSONError(w, http.StatusBadRequest, "Name is required")
+	if err := ValidateName(req.Name); err != nil {
+		JSONError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -92,9 +107,7 @@ func (s *Server) handleCreateNamespace(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleGetNamespace(w http.ResponseWriter, r *http.Request) {
-	token := GetTokenFromContext(r.Context())
-	if !HasScope(token, store.ScopeAdmin) {
-		JSONError(w, http.StatusForbidden, "Admin access required")
+	if s.requireAdmin(w, r) == nil {
 		return
 	}
 
@@ -113,9 +126,7 @@ func (s *Server) handleGetNamespace(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDeleteNamespace(w http.ResponseWriter, r *http.Request) {
-	token := GetTokenFromContext(r.Context())
-	if !HasScope(token, store.ScopeAdmin) {
-		JSONError(w, http.StatusForbidden, "Admin access required")
+	if s.requireAdmin(w, r) == nil {
 		return
 	}
 
@@ -130,13 +141,20 @@ func (s *Server) handleDeleteNamespace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	reposPath, err := SafeNamespacePath(s.dataDir, ns.ID)
+	if err != nil {
+		JSONError(w, http.StatusInternalServerError, "Failed to resolve namespace path")
+		return
+	}
+
 	if err := s.store.DeleteNamespace(id); err != nil {
 		JSONError(w, http.StatusInternalServerError, "Failed to delete namespace")
 		return
 	}
 
-	reposPath := filepath.Join(s.dataDir, "repos", ns.Name)
-	os.RemoveAll(reposPath)
+	if err := os.RemoveAll(reposPath); err != nil {
+		fmt.Printf("Warning: failed to remove namespace directory %s: %v\n", reposPath, err)
+	}
 
 	w.WriteHeader(http.StatusNoContent)
 }

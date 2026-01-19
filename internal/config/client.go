@@ -58,12 +58,10 @@ func Load() (*ClientConfig, error) {
 }
 
 func (c *ClientConfig) Save() error {
-	home, err := os.UserHomeDir()
+	path, err := configPath()
 	if err != nil {
-		return fmt.Errorf("get home dir: %w", err)
+		return err
 	}
-
-	path := filepath.Join(home, globalConfigPath)
 
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return fmt.Errorf("create config dir: %w", err)

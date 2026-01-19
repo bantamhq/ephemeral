@@ -32,9 +32,24 @@ func NewGitHTTPHandler(st store.Store, dataDir string) *GitHTTPHandler {
 }
 
 func (h *GitHTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	namespace, repoName, err := ExtractRepoPath(r.URL.Path)
+	namespaceName, repoName, err := ExtractRepoPath(r.URL.Path)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	if err := ValidateName(repoName); err != nil {
+		http.Error(w, fmt.Sprintf("Invalid repository name: %v", err), http.StatusBadRequest)
+		return
+	}
+
+	ns, err := h.store.GetNamespaceByName(namespaceName)
+	if err != nil {
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+	if ns == nil {
+		http.Error(w, "Namespace not found", http.StatusNotFound)
 		return
 	}
 
@@ -47,18 +62,18 @@ func (h *GitHTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Authentication required", http.StatusUnauthorized)
 			return
 		}
-		if token.NamespaceID != namespace {
+		if token.NamespaceID != ns.ID {
 			http.Error(w, "Access denied", http.StatusForbidden)
 			return
 		}
 	} else {
-		if token != nil && token.NamespaceID != namespace {
+		if token != nil && token.NamespaceID != ns.ID {
 			http.Error(w, "Access denied", http.StatusForbidden)
 			return
 		}
 
 		if token == nil {
-			repo, err := h.store.GetRepo(namespace, repoName)
+			repo, err := h.store.GetRepo(ns.ID, repoName)
 			if err != nil {
 				http.Error(w, "Internal server error", http.StatusInternalServerError)
 				return
@@ -73,11 +88,11 @@ func (h *GitHTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	switch {
 	case strings.HasSuffix(r.URL.Path, "/info/refs"):
-		h.handleInfoRefs(w, r, namespace, repoName, token)
+		h.handleInfoRefs(w, r, ns.ID, repoName, token)
 	case strings.HasSuffix(r.URL.Path, "/git-upload-pack"):
-		h.handleUploadPack(w, r, namespace, repoName)
+		h.handleUploadPack(w, r, ns.ID, repoName)
 	case strings.HasSuffix(r.URL.Path, "/git-receive-pack"):
-		h.handleReceivePack(w, r, namespace, repoName, token)
+		h.handleReceivePack(w, r, ns.ID, repoName, token)
 	default:
 		http.Error(w, "Not found", http.StatusNotFound)
 	}
@@ -93,7 +108,7 @@ func (h *GitHTTPHandler) isWriteOperation(r *http.Request) bool {
 	return false
 }
 
-func (h *GitHTTPHandler) handleInfoRefs(w http.ResponseWriter, r *http.Request, namespace, repoName string, token *store.Token) {
+func (h *GitHTTPHandler) handleInfoRefs(w http.ResponseWriter, r *http.Request, namespaceID, repoName string, token *store.Token) {
 	service := r.URL.Query().Get("service")
 	isWrite := service == "git-receive-pack"
 
@@ -102,7 +117,7 @@ func (h *GitHTTPHandler) handleInfoRefs(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 
-	repo, err := h.getOrCreateRepo(namespace, repoName, isWrite)
+	repo, err := h.getOrCreateRepo(namespaceID, repoName, isWrite)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to get repository: %v", err), http.StatusInternalServerError)
 		return
@@ -112,7 +127,11 @@ func (h *GitHTTPHandler) handleInfoRefs(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 
-	repoPath := h.getRepoPath(namespace, repoName)
+	repoPath, err := h.getRepoPath(namespaceID, repoName)
+	if err != nil {
+		http.Error(w, "Failed to resolve repository path", http.StatusInternalServerError)
+		return
+	}
 
 	var cmd *exec.Cmd
 	switch service {
@@ -140,8 +159,8 @@ func (h *GitHTTPHandler) handleInfoRefs(w http.ResponseWriter, r *http.Request, 
 	w.Write(output)
 }
 
-func (h *GitHTTPHandler) handleUploadPack(w http.ResponseWriter, r *http.Request, namespace, repoName string) {
-	repo, err := h.store.GetRepo(namespace, repoName)
+func (h *GitHTTPHandler) handleUploadPack(w http.ResponseWriter, r *http.Request, namespaceID, repoName string) {
+	repo, err := h.store.GetRepo(namespaceID, repoName)
 	if err != nil {
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
@@ -151,7 +170,11 @@ func (h *GitHTTPHandler) handleUploadPack(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	repoPath := h.getRepoPath(namespace, repoName)
+	repoPath, err := h.getRepoPath(namespaceID, repoName)
+	if err != nil {
+		http.Error(w, "Failed to resolve repository path", http.StatusInternalServerError)
+		return
+	}
 
 	w.Header().Set("Content-Type", "application/x-git-upload-pack-result")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -165,19 +188,23 @@ func (h *GitHTTPHandler) handleUploadPack(w http.ResponseWriter, r *http.Request
 	}
 }
 
-func (h *GitHTTPHandler) handleReceivePack(w http.ResponseWriter, r *http.Request, namespace, repoName string, token *store.Token) {
+func (h *GitHTTPHandler) handleReceivePack(w http.ResponseWriter, r *http.Request, namespaceID, repoName string, token *store.Token) {
 	if token.Scope == store.ScopeReadOnly {
 		http.Error(w, "Write access denied", http.StatusForbidden)
 		return
 	}
 
-	repo, err := h.getOrCreateRepo(namespace, repoName, true)
+	repo, err := h.getOrCreateRepo(namespaceID, repoName, true)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to get repository: %v", err), http.StatusInternalServerError)
 		return
 	}
 
-	repoPath := h.getRepoPath(namespace, repoName)
+	repoPath, err := h.getRepoPath(namespaceID, repoName)
+	if err != nil {
+		http.Error(w, "Failed to resolve repository path", http.StatusInternalServerError)
+		return
+	}
 
 	bodyReader := h.getRequestBody(r)
 	if closer, ok := bodyReader.(io.Closer); ok && bodyReader != r.Body {
@@ -214,7 +241,6 @@ func (h *GitHTTPHandler) handleReceivePack(w http.ResponseWriter, r *http.Reques
 	io.Copy(w, stdout)
 
 	if err := cmd.Wait(); err != nil {
-		// Non-zero exit may be normal for rejected pushes
 		fmt.Printf("git-receive-pack error: %v\n", err)
 	}
 
@@ -234,8 +260,8 @@ func (h *GitHTTPHandler) getRequestBody(r *http.Request) io.Reader {
 }
 
 // getOrCreateRepo gets a repo, optionally creating it if autoCreate is true.
-func (h *GitHTTPHandler) getOrCreateRepo(namespace, repoName string, autoCreate bool) (*store.Repo, error) {
-	repo, err := h.store.GetRepo(namespace, repoName)
+func (h *GitHTTPHandler) getOrCreateRepo(namespaceID, repoName string, autoCreate bool) (*store.Repo, error) {
+	repo, err := h.store.GetRepo(namespaceID, repoName)
 	if err != nil {
 		return nil, fmt.Errorf("get repo: %w", err)
 	}
@@ -244,14 +270,23 @@ func (h *GitHTTPHandler) getOrCreateRepo(namespace, repoName string, autoCreate 
 		return repo, nil
 	}
 
-	return h.createRepo(namespace, repoName)
+	return h.createRepo(namespaceID, repoName)
 }
 
-func (h *GitHTTPHandler) createRepo(namespace, repoName string) (*store.Repo, error) {
+func (h *GitHTTPHandler) createRepo(namespaceID, repoName string) (*store.Repo, error) {
+	if err := ValidateName(repoName); err != nil {
+		return nil, fmt.Errorf("invalid repo name: %w", err)
+	}
+
+	repoPath, err := h.getRepoPath(namespaceID, repoName)
+	if err != nil {
+		return nil, fmt.Errorf("resolve repo path: %w", err)
+	}
+
 	now := time.Now()
 	repo := &store.Repo{
 		ID:          uuid.New().String(),
-		NamespaceID: namespace,
+		NamespaceID: namespaceID,
 		Name:        repoName,
 		Public:      false,
 		SizeBytes:   0,
@@ -263,17 +298,17 @@ func (h *GitHTTPHandler) createRepo(namespace, repoName string) (*store.Repo, er
 		return nil, fmt.Errorf("save repo: %w", err)
 	}
 
-	repoPath := h.getRepoPath(namespace, repoName)
 	if err := initBareRepo(repoPath); err != nil {
-		return nil, err
+		h.store.DeleteRepo(repo.ID)
+		return nil, fmt.Errorf("init bare repo: %w", err)
 	}
 
-	fmt.Printf("Created new repository: %s/%s\n", namespace, repoName)
+	fmt.Printf("Created new repository: %s/%s\n", namespaceID, repoName)
 	return repo, nil
 }
 
-func (h *GitHTTPHandler) getRepoPath(namespace, repoName string) string {
-	return filepath.Join(h.dataDir, "repos", namespace, repoName+".git")
+func (h *GitHTTPHandler) getRepoPath(namespaceID, repoName string) (string, error) {
+	return SafeRepoPath(h.dataDir, namespaceID, repoName)
 }
 
 // initBareRepo creates and initializes a bare git repository with main as the default branch.

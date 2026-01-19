@@ -20,7 +20,6 @@ func NewSQLiteStore(dbPath string) (*SQLiteStore, error) {
 		return nil, fmt.Errorf("open database: %w", err)
 	}
 
-	// SQLite only supports one writer at a time
 	db.SetMaxOpenConns(1)
 	db.SetMaxIdleConns(1)
 
@@ -290,7 +289,7 @@ func (s *SQLiteStore) ListNamespaces(cursor string, limit int) ([]Namespace, err
 	return namespaces, rows.Err()
 }
 
-// DeleteNamespace deletes a namespace and cascades to repos and tokens.
+// DeleteNamespace deletes a namespace and cascades to all related data.
 func (s *SQLiteStore) DeleteNamespace(id string) error {
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -298,14 +297,35 @@ func (s *SQLiteStore) DeleteNamespace(id string) error {
 	}
 	defer tx.Rollback()
 
+	// Delete repo_labels for repos in this namespace
+	if _, err := tx.Exec(`
+		DELETE FROM repo_labels
+		WHERE repo_id IN (SELECT id FROM repos WHERE namespace_id = ?)
+	`, id); err != nil {
+		return fmt.Errorf("delete repo labels: %w", err)
+	}
+
+	// Delete labels in this namespace
+	if _, err := tx.Exec("DELETE FROM labels WHERE namespace_id = ?", id); err != nil {
+		return fmt.Errorf("delete labels: %w", err)
+	}
+
+	// Delete folders in this namespace
+	if _, err := tx.Exec("DELETE FROM folders WHERE namespace_id = ?", id); err != nil {
+		return fmt.Errorf("delete folders: %w", err)
+	}
+
+	// Delete tokens in this namespace
 	if _, err := tx.Exec("DELETE FROM tokens WHERE namespace_id = ?", id); err != nil {
 		return fmt.Errorf("delete tokens: %w", err)
 	}
 
+	// Delete repos in this namespace
 	if _, err := tx.Exec("DELETE FROM repos WHERE namespace_id = ?", id); err != nil {
 		return fmt.Errorf("delete repos: %w", err)
 	}
 
+	// Finally delete the namespace itself
 	if _, err := tx.Exec("DELETE FROM namespaces WHERE id = ?", id); err != nil {
 		return fmt.Errorf("delete namespace: %w", err)
 	}

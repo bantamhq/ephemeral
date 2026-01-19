@@ -3,6 +3,7 @@ package server
 import (
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -82,7 +83,13 @@ func (s *Server) setupRoutes() {
 			r.Delete("/tokens/{id}", s.handleDeleteToken)
 		})
 
-		// Namespaces - requires auth
+		// Current namespace - requires auth (any scope)
+		r.Group(func(r chi.Router) {
+			r.Use(AuthMiddleware(s.store))
+			r.Get("/namespace", s.handleGetCurrentNamespace)
+		})
+
+		// Namespaces admin - requires admin scope
 		r.Group(func(r chi.Router) {
 			r.Use(AuthMiddleware(s.store))
 			r.Get("/namespaces", s.handleListNamespaces)
@@ -112,5 +119,15 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func (s *Server) Start(host string, port int) error {
 	addr := fmt.Sprintf("%s:%d", host, port)
 	fmt.Printf("Starting server on %s\n", addr)
-	return http.ListenAndServe(addr, s)
+
+	server := &http.Server{
+		Addr:              addr,
+		Handler:           s,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      60 * time.Second,
+		IdleTimeout:       120 * time.Second,
+	}
+
+	return server.ListenAndServe()
 }

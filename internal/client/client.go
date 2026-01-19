@@ -115,7 +115,7 @@ func (c *Client) ListRepos(cursor string, limit int) ([]Repo, bool, error) {
 }
 
 func (c *Client) GetNamespaceInfo() (*Namespace, error) {
-	resp, err := c.doRequest(http.MethodGet, "/api/v1/namespaces")
+	resp, err := c.doRequest(http.MethodGet, "/api/v1/namespace")
 	if err != nil {
 		return nil, err
 	}
@@ -129,19 +129,10 @@ func (c *Client) GetNamespaceInfo() (*Namespace, error) {
 		return nil, fmt.Errorf("get namespace: %s", errResp.Error)
 	}
 
-	var listResp listResponse
-	if err := json.NewDecoder(resp.Body).Decode(&listResp); err != nil {
-		return nil, fmt.Errorf("decode response: %w", err)
+	var ns Namespace
+	if err := json.NewDecoder(resp.Body).Decode(&ns); err != nil {
+		return nil, fmt.Errorf("decode namespace: %w", err)
 	}
 
-	var namespaces []Namespace
-	if err := json.Unmarshal(listResp.Data, &namespaces); err != nil {
-		return nil, fmt.Errorf("decode namespaces: %w", err)
-	}
-
-	if len(namespaces) == 0 {
-		return nil, fmt.Errorf("no namespaces found")
-	}
-
-	return &namespaces[0], nil
+	return &ns, nil
 }
