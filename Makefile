@@ -1,4 +1,4 @@
-.PHONY: build run clean test test-content test-repos-tokens test-integration workspace-setup workspace-run
+.PHONY: build run clean test test-api test-repos test-tokens test-namespaces test-folders test-labels test-content workspace-setup workspace-run
 
 # Build the binary
 build:
@@ -30,19 +30,35 @@ workspace-run: workspace-setup build
 test:
 	go test ./...
 
-# Run Content API integration tests (server must be running)
-# Usage: make test-content TOKEN=eph_xxx
+# Run all API integration tests (self-contained: builds, starts server, runs tests, cleans up)
+# Usage: make test-api
+test-api:
+	@./tests/api/run_all.sh
+
+# Individual API test suites (server must be running)
+# Usage: make test-repos TOKEN=eph_xxx
+test-repos:
+	@./tests/api/repos.sh $(TOKEN)
+
+test-tokens:
+	@./tests/api/tokens.sh $(TOKEN)
+
+test-namespaces:
+	@./tests/api/namespaces.sh $(TOKEN)
+
+test-folders:
+	@./tests/api/folders.sh $(TOKEN)
+
+test-labels:
+	@./tests/api/labels.sh $(TOKEN)
+
 test-content:
-	@./tests/content_api_test.sh $(TOKEN)
+	@./tests/api/content.sh $(TOKEN)
 
-# Run Repos & Tokens API integration tests (server must be running)
-# Usage: make test-repos-tokens TOKEN=eph_xxx
-test-repos-tokens:
-	@./tests/repos_tokens_api_test.sh $(TOKEN)
-
-# Run all integration tests (server must be running)
-# Usage: make test-integration TOKEN=eph_xxx
-test-integration: test-repos-tokens test-content
+# Seed test data (server must be running)
+# Usage: make seed TOKEN=eph_xxx
+seed:
+	@cd workspace && ./seed.sh $(TOKEN)
 
 # Development mode - rebuild and run on changes (requires entr)
 watch:
