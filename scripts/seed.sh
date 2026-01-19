@@ -14,7 +14,7 @@ if [ -z "$TOKEN" ]; then
 fi
 
 API="$BASE_URL/api/v1"
-AUTH="x-token:$TOKEN"
+AUTH_HEADER="Authorization: Bearer $TOKEN"
 
 echo "Seeding data at $BASE_URL..."
 
@@ -25,9 +25,9 @@ api() {
     local data=$3
 
     if [ -n "$data" ]; then
-        curl -s -X "$method" -u "$AUTH" -H "Content-Type: application/json" -d "$data" "$API$path"
+        curl -s -X "$method" -H "$AUTH_HEADER" -H "Content-Type: application/json" -d "$data" "$API$path"
     else
-        curl -s -X "$method" -u "$AUTH" "$API$path"
+        curl -s -X "$method" -H "$AUTH_HEADER" "$API$path"
     fi
 }
 

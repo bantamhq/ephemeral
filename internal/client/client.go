@@ -62,7 +62,7 @@ func (c *Client) doRequest(method, path string) (*http.Response, error) {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
 
-	req.SetBasicAuth("x-token", c.token)
+	req.Header.Set("Authorization", "Bearer "+c.token)
 	req.Header.Set("Accept", "application/json")
 
 	resp, err := c.http.Do(req)

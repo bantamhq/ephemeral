@@ -112,11 +112,11 @@ REPOS_TOKEN_ID=$(get_id "$RESPONSE")
 track_token "$REPOS_TOKEN_ID"
 
 # repos scope cannot list namespaces
-RESPONSE=$(curl -s -u "x-token:$REPOS_TOKEN" "$API/namespaces")
+RESPONSE=$(auth_curl_with "$REPOS_TOKEN" "$API/namespaces")
 expect_contains "$RESPONSE" "Admin access required\|Forbidden" "repos cannot list namespaces"
 
 # repos scope cannot create namespaces
-RESPONSE=$(curl -s -u "x-token:$REPOS_TOKEN" -X POST \
+RESPONSE=$(auth_curl_with "$REPOS_TOKEN" -X POST \
     -H "Content-Type: application/json" \
     -d '{"name":"should-fail"}' \
     "$API/namespaces")

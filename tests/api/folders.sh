@@ -171,11 +171,11 @@ RO_TOKEN_ID=$(get_id "$RESPONSE")
 track_token "$RO_TOKEN_ID"
 
 # read-only can list folders
-RESPONSE=$(curl -s -u "x-token:$RO_TOKEN" "$API/folders")
+RESPONSE=$(auth_curl_with "$RO_TOKEN" "$API/folders")
 expect_contains "$RESPONSE" '"data"' "read-only can list folders"
 
 # read-only cannot create folders
-RESPONSE=$(curl -s -u "x-token:$RO_TOKEN" -X POST \
+RESPONSE=$(auth_curl_with "$RO_TOKEN" -X POST \
     -H "Content-Type: application/json" \
     -d '{"name":"should-fail"}' \
     "$API/folders")

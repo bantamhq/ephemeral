@@ -37,7 +37,7 @@ func (s *Server) setupRoutes() {
 
 	s.router.Route("/api/v1", func(r chi.Router) {
 		r.Group(func(r chi.Router) {
-			r.Use(AuthMiddleware(s.store))
+			r.Use(BearerAuthMiddleware(s.store))
 
 			// Repos
 			r.Get("/repos", s.handleListRepos)
@@ -68,7 +68,7 @@ func (s *Server) setupRoutes() {
 
 		// Content API - supports anonymous access for public repos
 		r.Group(func(r chi.Router) {
-			r.Use(OptionalAuthMiddleware(s.store))
+			r.Use(OptionalBearerAuthMiddleware(s.store))
 			r.Get("/repos/{id}/refs", s.handleListRefs)
 			r.Get("/repos/{id}/commits", s.handleListCommits)
 			r.Get("/repos/{id}/tree/{ref}/*", s.handleGetTree)
@@ -77,7 +77,7 @@ func (s *Server) setupRoutes() {
 
 		// Tokens - requires auth
 		r.Group(func(r chi.Router) {
-			r.Use(AuthMiddleware(s.store))
+			r.Use(BearerAuthMiddleware(s.store))
 			r.Get("/tokens", s.handleListTokens)
 			r.Post("/tokens", s.handleCreateToken)
 			r.Delete("/tokens/{id}", s.handleDeleteToken)
@@ -85,13 +85,13 @@ func (s *Server) setupRoutes() {
 
 		// Current namespace - requires auth (any scope)
 		r.Group(func(r chi.Router) {
-			r.Use(AuthMiddleware(s.store))
+			r.Use(BearerAuthMiddleware(s.store))
 			r.Get("/namespace", s.handleGetCurrentNamespace)
 		})
 
 		// Namespaces admin - requires admin scope
 		r.Group(func(r chi.Router) {
-			r.Use(AuthMiddleware(s.store))
+			r.Use(BearerAuthMiddleware(s.store))
 			r.Get("/namespaces", s.handleListNamespaces)
 			r.Post("/namespaces", s.handleCreateNamespace)
 			r.Get("/namespaces/{id}", s.handleGetNamespace)

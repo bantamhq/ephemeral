@@ -84,7 +84,7 @@ if [ -n "$REPOS_TOKEN_ID" ]; then
 fi
 
 # repos scope cannot create tokens
-RESPONSE=$(curl -s -u "x-token:$REPOS_TOKEN" -X POST \
+RESPONSE=$(auth_curl_with "$REPOS_TOKEN" -X POST \
     -H "Content-Type: application/json" \
     -d '{"name":"should-fail","scope":"read-only"}' \
     "$API/tokens")
@@ -92,7 +92,7 @@ RESPONSE=$(curl -s -u "x-token:$REPOS_TOKEN" -X POST \
 expect_contains "$RESPONSE" "Insufficient permissions\|Forbidden" "repos cannot create tokens"
 
 # repos scope can create repos
-RESPONSE=$(curl -s -u "x-token:$REPOS_TOKEN" -X POST \
+RESPONSE=$(auth_curl_with "$REPOS_TOKEN" -X POST \
     -H "Content-Type: application/json" \
     -d '{"name":"repos-scope-created","public":false}' \
     "$API/repos")
@@ -117,7 +117,7 @@ if [ -n "$RO_TOKEN_ID" ]; then
 fi
 
 # read-only cannot create repos
-RESPONSE=$(curl -s -u "x-token:$RO_TOKEN" -X POST \
+RESPONSE=$(auth_curl_with "$RO_TOKEN" -X POST \
     -H "Content-Type: application/json" \
     -d '{"name":"should-fail","public":false}' \
     "$API/repos")
@@ -125,7 +125,7 @@ RESPONSE=$(curl -s -u "x-token:$RO_TOKEN" -X POST \
 expect_contains "$RESPONSE" "Insufficient permissions\|Forbidden" "read-only cannot create repos"
 
 # read-only can list repos
-RESPONSE=$(curl -s -u "x-token:$RO_TOKEN" "$API/repos")
+RESPONSE=$(auth_curl_with "$RO_TOKEN" "$API/repos")
 expect_contains "$RESPONSE" '"data"' "read-only can list repos"
 
 ###############################################################################
@@ -165,7 +165,7 @@ SELF_TOKEN_ID=$(get_id "$RESPONSE")
 track_token "$SELF_TOKEN_ID"
 
 # Try to delete self
-RESPONSE=$(curl -s -u "x-token:$SELF_TOKEN" -X DELETE "$API/tokens/$SELF_TOKEN_ID")
+RESPONSE=$(auth_curl_with "$SELF_TOKEN" -X DELETE "$API/tokens/$SELF_TOKEN_ID")
 expect_contains "$RESPONSE" "Cannot delete current token" "self-delete prevented"
 
 ###############################################################################

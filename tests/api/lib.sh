@@ -44,7 +44,14 @@ info() {
 }
 
 auth_curl() {
-    curl -s -u "x-token:$TOKEN" "$@"
+    curl -s -H "Authorization: Bearer $TOKEN" "$@"
+}
+
+# auth_curl_with takes a token as first arg, rest are passed to curl
+auth_curl_with() {
+    local token="$1"
+    shift
+    curl -s -H "Authorization: Bearer $token" "$@"
 }
 
 anon_curl() {

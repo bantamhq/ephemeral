@@ -25,6 +25,18 @@ func (e *authError) Error() string {
 	return e.message
 }
 
+// writeAuthError writes an authentication error response with appropriate headers.
+func writeAuthError(w http.ResponseWriter, err error, realm string) {
+	if authErr, ok := err.(*authError); ok {
+		if authErr.status == http.StatusUnauthorized {
+			w.Header().Set("WWW-Authenticate", fmt.Sprintf(`%s realm="Ephemeral"`, realm))
+		}
+		http.Error(w, authErr.message, authErr.status)
+		return
+	}
+	http.Error(w, "Internal server error", http.StatusInternalServerError)
+}
+
 // AuthMiddleware validates token authentication via HTTP Basic Auth.
 // Username must be "x-token" and password is the token value.
 func AuthMiddleware(st store.Store) func(http.Handler) http.Handler {
@@ -39,14 +51,7 @@ func AuthMiddleware(st store.Store) func(http.Handler) http.Handler {
 
 			token, err := validateBasicAuth(st, r)
 			if err != nil {
-				if authErr, ok := err.(*authError); ok {
-					if authErr.status == http.StatusUnauthorized {
-						w.Header().Set("WWW-Authenticate", `Basic realm="Ephemeral"`)
-					}
-					http.Error(w, authErr.message, authErr.status)
-				} else {
-					http.Error(w, "Internal server error", http.StatusInternalServerError)
-				}
+				writeAuthError(w, err, "Basic")
 				return
 			}
 
@@ -56,16 +61,32 @@ func AuthMiddleware(st store.Store) func(http.Handler) http.Handler {
 	}
 }
 
-// validateBasicAuth extracts and validates the token from HTTP Basic Auth.
-func validateBasicAuth(st store.Store, r *http.Request) (*store.Token, error) {
-	username, password, _ := r.BasicAuth()
+// BearerAuthMiddleware validates token authentication via Bearer token header.
+func BearerAuthMiddleware(st store.Store) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			token, err := validateBearerToken(st, r)
+			if err != nil {
+				writeAuthError(w, err, "Bearer")
+				return
+			}
 
-	if username != "x-token" {
-		return nil, &authError{"Invalid credentials", http.StatusUnauthorized}
+			if token == nil {
+				w.Header().Set("WWW-Authenticate", `Bearer realm="Ephemeral"`)
+				http.Error(w, "Authentication required", http.StatusUnauthorized)
+				return
+			}
+
+			ctx := context.WithValue(r.Context(), tokenContextKey, token)
+			next.ServeHTTP(w, r.WithContext(ctx))
+		})
 	}
+}
 
+// lookupToken hashes the raw token and validates it against the store.
+func lookupToken(st store.Store, rawToken string) (*store.Token, error) {
 	hasher := sha256.New()
-	hasher.Write([]byte(password))
+	hasher.Write([]byte(rawToken))
 	tokenHash := fmt.Sprintf("%x", hasher.Sum(nil))
 
 	token, err := st.GetTokenByHash(tokenHash)
@@ -81,6 +102,32 @@ func validateBasicAuth(st store.Store, r *http.Request) (*store.Token, error) {
 	}
 
 	return token, nil
+}
+
+// validateBearerToken extracts and validates a token from the Bearer Auth header.
+func validateBearerToken(st store.Store, r *http.Request) (*store.Token, error) {
+	authHeader := r.Header.Get("Authorization")
+	if authHeader == "" {
+		return nil, nil
+	}
+
+	if !strings.HasPrefix(authHeader, "Bearer ") {
+		return nil, &authError{"Invalid authorization scheme, Bearer required", http.StatusUnauthorized}
+	}
+
+	rawToken := strings.TrimPrefix(authHeader, "Bearer ")
+	return lookupToken(st, rawToken)
+}
+
+// validateBasicAuth extracts and validates a token from HTTP Basic Auth.
+func validateBasicAuth(st store.Store, r *http.Request) (*store.Token, error) {
+	username, password, _ := r.BasicAuth()
+
+	if username != "x-token" {
+		return nil, &authError{"Invalid credentials", http.StatusUnauthorized}
+	}
+
+	return lookupToken(st, password)
 }
 
 // GetTokenFromContext retrieves the token from the request context.
@@ -108,7 +155,29 @@ func ExtractRepoPath(path string) (namespace, repo string, err error) {
 	return parts[0], parts[1], nil
 }
 
-// OptionalAuthMiddleware sets token if provided, continues without if not.
+// OptionalBearerAuthMiddleware sets token context if a valid Bearer token is provided.
+// Continues without authentication if no token is present.
+func OptionalBearerAuthMiddleware(st store.Store) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			token, err := validateBearerToken(st, r)
+			if err != nil {
+				writeAuthError(w, err, "Bearer")
+				return
+			}
+
+			if token != nil {
+				ctx := context.WithValue(r.Context(), tokenContextKey, token)
+				r = r.WithContext(ctx)
+			}
+
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+// OptionalAuthMiddleware sets token context if valid Basic Auth credentials are provided.
+// Continues without authentication if no credentials are present.
 func OptionalAuthMiddleware(st store.Store) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -120,14 +189,7 @@ func OptionalAuthMiddleware(st store.Store) func(http.Handler) http.Handler {
 
 			token, err := validateBasicAuth(st, r)
 			if err != nil {
-				if authErr, ok := err.(*authError); ok {
-					if authErr.status == http.StatusUnauthorized {
-						w.Header().Set("WWW-Authenticate", `Basic realm="Ephemeral"`)
-					}
-					http.Error(w, authErr.message, authErr.status)
-				} else {
-					http.Error(w, "Internal server error", http.StatusInternalServerError)
-				}
+				writeAuthError(w, err, "Basic")
 				return
 			}
 

@@ -183,11 +183,11 @@ RO_TOKEN_ID=$(get_id "$RESPONSE")
 track_token "$RO_TOKEN_ID"
 
 # read-only can list labels
-RESPONSE=$(curl -s -u "x-token:$RO_TOKEN" "$API/labels")
+RESPONSE=$(auth_curl_with "$RO_TOKEN" "$API/labels")
 expect_contains "$RESPONSE" '"data"' "read-only can list labels"
 
 # read-only cannot create labels
-RESPONSE=$(curl -s -u "x-token:$RO_TOKEN" -X POST \
+RESPONSE=$(auth_curl_with "$RO_TOKEN" -X POST \
     -H "Content-Type: application/json" \
     -d '{"name":"should-fail"}' \
     "$API/labels")
