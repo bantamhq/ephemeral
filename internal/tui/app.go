@@ -49,6 +49,7 @@ type Model struct {
 	moveTargetID      string
 	moveToRoot        bool
 	recentlyMovedID   string
+	expandAfterLoad   string
 	statusMsg         string
 
 	spinner spinner.Model
@@ -109,11 +110,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.preMoveExpanded = nil
 		}
+		if m.expandAfterLoad != "" {
+			m.expandFolderAndAncestors(m.tree, m.expandAfterLoad)
+			m.expandAfterLoad = ""
+		}
 		m.flatTree = FlattenTree(m.tree)
 		if m.moveTargetID != "" || m.moveToRoot {
 			m.selectFolderByID(m.moveTargetID)
 			m.moveTargetID = ""
 			m.moveToRoot = false
+		} else if m.cursor == 0 && len(m.flatTree) > 1 {
+			m.cursor = 1
 		}
 		return m, nil
 
@@ -285,10 +292,14 @@ func (m *Model) setFolderExpanded(expanded bool) {
 		return
 	}
 	node := m.flatTree[m.cursor]
-	if node.Kind == NodeFolder && node.Expanded != expanded {
-		node.Expanded = expanded
-		m.flatTree = FlattenTree(m.tree)
+	if node.Kind != NodeFolder || node.Expanded == expanded {
+		return
 	}
+	if !expanded && len(node.Children) == 0 {
+		return
+	}
+	node.Expanded = expanded
+	m.flatTree = FlattenTree(m.tree)
 }
 
 func (m Model) handleModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -466,6 +477,9 @@ func (m Model) handleDialogSubmit(msg DialogSubmitMsg) (tea.Model, tea.Cmd) {
 		if target != nil {
 			parentID = target.ParentID
 		}
+		if parentID != nil {
+			m.expandAfterLoad = *parentID
+		}
 		return m, m.createFolder(msg.Value, parentID)
 
 	case modalRenameRepo:
@@ -633,7 +647,7 @@ func (m *Model) toggleAllFolders() {
 
 func (m *Model) hasCollapsedFolder(nodes []*TreeNode) bool {
 	for _, node := range nodes {
-		if node.Kind == NodeFolder && !node.Expanded {
+		if node.Kind == NodeFolder && !node.Expanded && len(node.Children) > 0 {
 			return true
 		}
 		if node.IsContainer() && m.hasCollapsedFolder(node.Children) {
@@ -646,7 +660,9 @@ func (m *Model) hasCollapsedFolder(nodes []*TreeNode) bool {
 func (m *Model) setAllFoldersExpanded(nodes []*TreeNode, expanded bool) {
 	for _, node := range nodes {
 		if node.Kind == NodeFolder {
-			node.Expanded = expanded
+			if expanded || len(node.Children) > 0 {
+				node.Expanded = expanded
+			}
 		}
 		if node.IsContainer() {
 			m.setAllFoldersExpanded(node.Children, expanded)
@@ -822,28 +838,23 @@ func (m Model) renderNode(node *TreeNode, selected bool) string {
 		}
 		name = node.Name
 	case NodeRepo:
-		icon = "  "
 		name = node.Name
-		if node.Repo != nil && node.Repo.Public {
-			badge = " [public]"
-		}
 		if isMoving {
 			badge = " [moving]"
 		}
 	}
 
+	line := indent + icon + name + badge
+
 	if selected {
-		line := "> " + indent + icon + name + badge
 		return StyleSelected.Width(m.width).Render(line)
 	}
 
 	if isMoving {
-		line := "  " + indent + icon + name + badge
 		return StyleMoving.Render(line)
 	}
 
 	if isRecentlyMoved {
-		line := "  " + indent + icon + name + badge
 		return StyleRecentlyMoved.Render(line)
 	}
 
@@ -855,14 +866,10 @@ func (m Model) renderNode(node *TreeNode, selected bool) string {
 		icon = StyleFolderIcon.Render(icon)
 		name = StyleFolderName.Render(name)
 	case NodeRepo:
-		icon = StyleRepoIcon.Render(icon)
 		name = StyleRepoName.Render(name)
-		if badge != "" {
-			badge = StylePublicBadge.Render(badge)
-		}
 	}
 
-	return "  " + indent + icon + name + badge
+	return indent + icon + name + badge
 }
 
 func (m Model) footerView() string {

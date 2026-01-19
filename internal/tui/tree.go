@@ -85,6 +85,9 @@ func BuildTree(folders []client.Folder, repos []client.Repo) []*TreeNode {
 	sortNodes(root.Children)
 	for _, node := range folderMap {
 		sortNodes(node.Children)
+		if len(node.Children) == 0 {
+			node.Expanded = true
+		}
 	}
 
 	setDepths([]*TreeNode{root}, 0)

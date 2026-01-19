@@ -31,9 +31,6 @@ var (
 	StyleRepoName = lipgloss.NewStyle().
 			Bold(true)
 
-	StyleRepoIcon = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("8"))
-
 	StyleFolderName = lipgloss.NewStyle().
 			Bold(true).
 			Foreground(lipgloss.Color("12"))
@@ -72,9 +69,6 @@ var (
 	StylePickerSelected = lipgloss.NewStyle().
 				Foreground(lipgloss.Color("12")).
 				Bold(true)
-
-	StylePublicBadge = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("10"))
 
 	StyleStatusMsg = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("11")).
