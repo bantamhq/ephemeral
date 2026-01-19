@@ -97,7 +97,7 @@ func (h *GitHTTPHandler) handleInfoRefs(w http.ResponseWriter, r *http.Request, 
 	service := r.URL.Query().Get("service")
 	isWrite := service == "git-receive-pack"
 
-	if isWrite && token.Scope == store.ScopeReadOnly {
+	if isWrite && token != nil && token.Scope == store.ScopeReadOnly {
 		http.Error(w, "Write access denied", http.StatusForbidden)
 		return
 	}
@@ -264,12 +264,8 @@ func (h *GitHTTPHandler) createRepo(namespace, repoName string) (*store.Repo, er
 	}
 
 	repoPath := h.getRepoPath(namespace, repoName)
-	if err := os.MkdirAll(filepath.Dir(repoPath), 0755); err != nil {
-		return nil, fmt.Errorf("create repo directory: %w", err)
-	}
-
-	if _, err := git.PlainInit(repoPath, true); err != nil {
-		return nil, fmt.Errorf("init bare repo: %w", err)
+	if err := initBareRepo(repoPath); err != nil {
+		return nil, err
 	}
 
 	fmt.Printf("Created new repository: %s/%s\n", namespace, repoName)
@@ -278,4 +274,22 @@ func (h *GitHTTPHandler) createRepo(namespace, repoName string) (*store.Repo, er
 
 func (h *GitHTTPHandler) getRepoPath(namespace, repoName string) string {
 	return filepath.Join(h.dataDir, "repos", namespace, repoName+".git")
+}
+
+// initBareRepo creates and initializes a bare git repository with main as the default branch.
+func initBareRepo(repoPath string) error {
+	if err := os.MkdirAll(filepath.Dir(repoPath), 0755); err != nil {
+		return fmt.Errorf("create repo directory: %w", err)
+	}
+
+	if _, err := git.PlainInit(repoPath, true); err != nil {
+		return fmt.Errorf("init bare repo: %w", err)
+	}
+
+	headPath := filepath.Join(repoPath, "HEAD")
+	if err := os.WriteFile(headPath, []byte("ref: refs/heads/main\n"), 0644); err != nil {
+		return fmt.Errorf("set default branch: %w", err)
+	}
+
+	return nil
 }

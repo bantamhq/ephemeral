@@ -1,4 +1,4 @@
-.PHONY: build run clean test workspace-setup workspace-run
+.PHONY: build run clean test test-content test-repos-tokens test-integration workspace-setup workspace-run
 
 # Build the binary
 build:
@@ -26,9 +26,23 @@ workspace-setup:
 workspace-run: workspace-setup build
 	cd workspace && ./ephemeral serve
 
-# Run tests (when we add them)
+# Run unit tests
 test:
 	go test ./...
+
+# Run Content API integration tests (server must be running)
+# Usage: make test-content TOKEN=eph_xxx
+test-content:
+	@./tests/content_api_test.sh $(TOKEN)
+
+# Run Repos & Tokens API integration tests (server must be running)
+# Usage: make test-repos-tokens TOKEN=eph_xxx
+test-repos-tokens:
+	@./tests/repos_tokens_api_test.sh $(TOKEN)
+
+# Run all integration tests (server must be running)
+# Usage: make test-integration TOKEN=eph_xxx
+test-integration: test-repos-tokens test-content
 
 # Development mode - rebuild and run on changes (requires entr)
 watch:

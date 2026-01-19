@@ -35,27 +35,40 @@ func (s *Server) setupRoutes() {
 	s.router.Get("/health", s.handleHealth)
 
 	s.router.Route("/api/v1", func(r chi.Router) {
-		r.Use(AuthMiddleware(s.store))
-
-		r.Route("/repos", func(r chi.Router) {
-			r.Get("/", s.handleListRepos)
-			r.Post("/", s.handleCreateRepo)
-			r.Get("/{id}", s.handleGetRepo)
-			r.Delete("/{id}", s.handleDeleteRepo)
-			r.Patch("/{id}", s.handleUpdateRepo)
+		// Repos CRUD - requires auth
+		r.Group(func(r chi.Router) {
+			r.Use(AuthMiddleware(s.store))
+			r.Get("/repos", s.handleListRepos)
+			r.Post("/repos", s.handleCreateRepo)
+			r.Get("/repos/{id}", s.handleGetRepo)
+			r.Delete("/repos/{id}", s.handleDeleteRepo)
+			r.Patch("/repos/{id}", s.handleUpdateRepo)
 		})
 
-		r.Route("/tokens", func(r chi.Router) {
-			r.Get("/", s.handleListTokens)
-			r.Post("/", s.handleCreateToken)
-			r.Delete("/{id}", s.handleDeleteToken)
+		// Content API - supports anonymous access for public repos
+		r.Group(func(r chi.Router) {
+			r.Use(OptionalAuthMiddleware(s.store))
+			r.Get("/repos/{id}/refs", s.handleListRefs)
+			r.Get("/repos/{id}/commits", s.handleListCommits)
+			r.Get("/repos/{id}/tree/{ref}/*", s.handleGetTree)
+			r.Get("/repos/{id}/blob/{ref}/*", s.handleGetBlob)
 		})
 
-		r.Route("/namespaces", func(r chi.Router) {
-			r.Get("/", s.handleListNamespaces)
-			r.Post("/", s.handleCreateNamespace)
-			r.Get("/{id}", s.handleGetNamespace)
-			r.Delete("/{id}", s.handleDeleteNamespace)
+		// Tokens - requires auth
+		r.Group(func(r chi.Router) {
+			r.Use(AuthMiddleware(s.store))
+			r.Get("/tokens", s.handleListTokens)
+			r.Post("/tokens", s.handleCreateToken)
+			r.Delete("/tokens/{id}", s.handleDeleteToken)
+		})
+
+		// Namespaces - requires auth
+		r.Group(func(r chi.Router) {
+			r.Use(AuthMiddleware(s.store))
+			r.Get("/namespaces", s.handleListNamespaces)
+			r.Post("/namespaces", s.handleCreateNamespace)
+			r.Get("/namespaces/{id}", s.handleGetNamespace)
+			r.Delete("/namespaces/{id}", s.handleDeleteNamespace)
 		})
 	})
 

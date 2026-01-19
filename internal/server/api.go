@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/go-git/go-git/v5"
 	"github.com/google/uuid"
 
 	"ephemeral/internal/store"
@@ -100,12 +99,7 @@ func (s *Server) handleCreateRepo(w http.ResponseWriter, r *http.Request) {
 	}
 
 	repoPath := filepath.Join(s.dataDir, "repos", token.NamespaceID, req.Name+".git")
-	if err := os.MkdirAll(filepath.Dir(repoPath), 0755); err != nil {
-		JSONError(w, http.StatusInternalServerError, "Failed to create repo directory")
-		return
-	}
-
-	if _, err := git.PlainInit(repoPath, true); err != nil {
+	if err := initBareRepo(repoPath); err != nil {
 		JSONError(w, http.StatusInternalServerError, "Failed to init bare repo")
 		return
 	}
@@ -330,7 +324,11 @@ func (s *Server) handleCreateToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rawToken := fmt.Sprintf("eph_%s_%s", token.NamespaceID[:8], uuid.New().String()[:16])
+	nsPrefix := token.NamespaceID
+	if len(nsPrefix) > 8 {
+		nsPrefix = nsPrefix[:8]
+	}
+	rawToken := fmt.Sprintf("eph_%s_%s", nsPrefix, uuid.New().String()[:16])
 	hasher := sha256.New()
 	hasher.Write([]byte(rawToken))
 	tokenHash := fmt.Sprintf("%x", hasher.Sum(nil))
