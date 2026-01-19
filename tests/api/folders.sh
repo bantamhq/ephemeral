@@ -79,22 +79,6 @@ expect_contains "$RESPONSE" '"web"' "contains web folder"
 expect_contains "$RESPONSE" '"mobile"' "contains mobile folder"
 
 ###############################################################################
-section "Tree"
-###############################################################################
-
-RESPONSE=$(auth_curl "$API/folders/tree")
-expect_contains "$RESPONSE" '"projects"' "tree contains projects"
-expect_contains "$RESPONSE" '"children"' "tree has children array"
-
-# Check nested structure
-CHILDREN_COUNT=$(echo "$RESPONSE" | jq '[.data[] | select(.name=="projects")] | .[0].children | length' 2>/dev/null || echo "")
-if [ "$CHILDREN_COUNT" = "2" ]; then
-    pass "tree has 2 children under projects"
-else
-    fail "tree has 2 children under projects" "2" "${CHILDREN_COUNT:-<empty>}"
-fi
-
-###############################################################################
 section "Get"
 ###############################################################################
 

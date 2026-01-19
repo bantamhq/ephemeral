@@ -52,7 +52,6 @@ func (s *Server) setupRoutes() {
 
 			// Folders
 			r.Get("/folders", s.handleListFolders)
-			r.Get("/folders/tree", s.handleGetFolderTree)
 			r.Post("/folders", s.handleCreateFolder)
 			r.Get("/folders/{id}", s.handleGetFolder)
 			r.Patch("/folders/{id}", s.handleUpdateFolder)
