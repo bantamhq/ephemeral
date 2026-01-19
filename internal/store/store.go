@@ -34,6 +34,28 @@ type Store interface {
 	DeleteRepo(id string) error
 	UpdateRepoLastPush(id string, pushTime time.Time) error
 
+	// Folder operations
+	CreateFolder(folder *Folder) error
+	GetFolderByID(id string) (*Folder, error)
+	ListFolders(namespaceID string) ([]Folder, error)
+	UpdateFolder(folder *Folder) error
+	DeleteFolder(id string) error
+	CountFolderContents(id string) (repos int, subfolders int, err error)
+
+	// Label operations
+	CreateLabel(label *Label) error
+	GetLabelByID(id string) (*Label, error)
+	GetLabelByName(namespaceID, name string) (*Label, error)
+	ListLabels(namespaceID string) ([]Label, error)
+	UpdateLabel(label *Label) error
+	DeleteLabel(id string) error
+
+	// Repo-Label operations
+	AddRepoLabel(repoID, labelID string) error
+	RemoveRepoLabel(repoID, labelID string) error
+	ListRepoLabels(repoID string) ([]Label, error)
+	ListLabelRepos(labelID string) ([]Repo, error)
+
 	// Namespace operations
 	CreateNamespace(ns *Namespace) error
 	GetNamespace(id string) (*Namespace, error)
@@ -86,7 +108,7 @@ type Folder struct {
 	CreatedAt   time.Time
 }
 
-type Tag struct {
+type Label struct {
 	ID          string
 	NamespaceID string
 	Name        string

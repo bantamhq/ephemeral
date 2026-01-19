@@ -35,14 +35,35 @@ func (s *Server) setupRoutes() {
 	s.router.Get("/health", s.handleHealth)
 
 	s.router.Route("/api/v1", func(r chi.Router) {
-		// Repos CRUD - requires auth
 		r.Group(func(r chi.Router) {
 			r.Use(AuthMiddleware(s.store))
+
+			// Repos
 			r.Get("/repos", s.handleListRepos)
 			r.Post("/repos", s.handleCreateRepo)
 			r.Get("/repos/{id}", s.handleGetRepo)
 			r.Delete("/repos/{id}", s.handleDeleteRepo)
 			r.Patch("/repos/{id}", s.handleUpdateRepo)
+
+			// Repo labels
+			r.Get("/repos/{id}/labels", s.handleListRepoLabels)
+			r.Post("/repos/{id}/labels", s.handleAddRepoLabels)
+			r.Delete("/repos/{id}/labels/{labelID}", s.handleRemoveRepoLabel)
+
+			// Folders
+			r.Get("/folders", s.handleListFolders)
+			r.Get("/folders/tree", s.handleGetFolderTree)
+			r.Post("/folders", s.handleCreateFolder)
+			r.Get("/folders/{id}", s.handleGetFolder)
+			r.Patch("/folders/{id}", s.handleUpdateFolder)
+			r.Delete("/folders/{id}", s.handleDeleteFolder)
+
+			// Labels
+			r.Get("/labels", s.handleListLabels)
+			r.Post("/labels", s.handleCreateLabel)
+			r.Get("/labels/{id}", s.handleGetLabel)
+			r.Patch("/labels/{id}", s.handleUpdateLabel)
+			r.Delete("/labels/{id}", s.handleDeleteLabel)
 		})
 
 		// Content API - supports anonymous access for public repos

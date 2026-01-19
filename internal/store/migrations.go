@@ -89,8 +89,8 @@ func (s *SQLiteStore) createSchema() error {
 		UNIQUE(namespace_id, name)
 	);
 
-	-- Tags for labeling repos
-	CREATE TABLE IF NOT EXISTS tags (
+	-- Labels for categorizing repos
+	CREATE TABLE IF NOT EXISTS labels (
 		id TEXT PRIMARY KEY,
 		namespace_id TEXT NOT NULL REFERENCES namespaces(id),
 		name TEXT NOT NULL,
@@ -100,11 +100,11 @@ func (s *SQLiteStore) createSchema() error {
 		UNIQUE(namespace_id, name)
 	);
 
-	-- Many-to-many relationship between repos and tags
-	CREATE TABLE IF NOT EXISTS repo_tags (
+	-- Many-to-many relationship between repos and labels
+	CREATE TABLE IF NOT EXISTS repo_labels (
 		repo_id TEXT REFERENCES repos(id) ON DELETE CASCADE,
-		tag_id TEXT REFERENCES tags(id) ON DELETE CASCADE,
-		PRIMARY KEY (repo_id, tag_id)
+		label_id TEXT REFERENCES labels(id) ON DELETE CASCADE,
+		PRIMARY KEY (repo_id, label_id)
 	);
 
 	-- Create indexes
@@ -112,7 +112,7 @@ func (s *SQLiteStore) createSchema() error {
 	CREATE INDEX IF NOT EXISTS idx_tokens_hash ON tokens(token_hash);
 	CREATE INDEX IF NOT EXISTS idx_repos_folder ON repos(folder_id);
 	CREATE INDEX IF NOT EXISTS idx_folders_parent ON folders(parent_id);
-	CREATE INDEX IF NOT EXISTS idx_tags_namespace ON tags(namespace_id);
+	CREATE INDEX IF NOT EXISTS idx_labels_namespace ON labels(namespace_id);
 	`
 
 	_, err := s.db.Exec(schema)
