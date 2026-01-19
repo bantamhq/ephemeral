@@ -9,11 +9,13 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/spf13/cobra"
 
+	"ephemeral/internal/client"
+	"ephemeral/internal/config"
 	"ephemeral/internal/server"
 	"ephemeral/internal/store"
+	"ephemeral/internal/tui"
 )
 
-// Config represents the server configuration
 type Config struct {
 	Server struct {
 		Port int    `toml:"port"`
@@ -29,6 +31,7 @@ func main() {
 		Use:   "ephemeral",
 		Short: "A minimal, terminal-native git hosting service",
 		Long:  `Ephemeral is a minimal git hosting service with a terminal-first approach.`,
+		RunE:  runTUI,
 	}
 
 	serveCmd := &cobra.Command{
@@ -43,6 +46,40 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+func runTUI(cmd *cobra.Command, args []string) error {
+	cfg, err := config.Load()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "Configuration not found.")
+		fmt.Fprintln(os.Stderr, "")
+		fmt.Fprintln(os.Stderr, "Create a config file at ~/.config/ephemeral/config.toml:")
+		fmt.Fprintln(os.Stderr, "")
+		fmt.Fprintln(os.Stderr, `  current_context = "default"`)
+		fmt.Fprintln(os.Stderr, "")
+		fmt.Fprintln(os.Stderr, "  [contexts.default]")
+		fmt.Fprintln(os.Stderr, `  server = "http://localhost:8080"`)
+		fmt.Fprintln(os.Stderr, `  token = "eph_xxx"  # your token from 'ephemeral serve'`)
+		fmt.Fprintln(os.Stderr, `  namespace = "default"`)
+		return fmt.Errorf("config not found: %w", err)
+	}
+
+	ctx := cfg.Current()
+	if ctx == nil {
+		return fmt.Errorf("no current context configured")
+	}
+
+	if ctx.Server == "" {
+		return fmt.Errorf("server not configured in context")
+	}
+
+	if ctx.Token == "" {
+		return fmt.Errorf("token not configured in context")
+	}
+
+	c := client.New(ctx.Server, ctx.Token)
+
+	return tui.Run(c, ctx.Namespace, ctx.Server)
 }
 
 func runServe(cmd *cobra.Command, args []string) error {
