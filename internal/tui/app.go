@@ -55,7 +55,10 @@ type Model struct {
 
 	filteredRepos []client.Repo
 
-	repoNextCursor  string
+	repoFilter        string
+	repoFilterFocused bool
+
+	repoNextCursor string
 	repoHasMore     bool
 	repoLoadingMore bool
 
@@ -228,11 +231,19 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleEditMode(msg)
 	}
 
+	if m.repoFilterFocused {
+		return m.handleFilterInput(msg)
+	}
+
 	switch {
 	case key.Matches(msg, m.keys.Quit):
 		return m, tea.Quit
 
 	case key.Matches(msg, m.keys.Up):
+		if m.focusedColumn == columnRepos && m.repoCursor == 0 {
+			m.repoFilterFocused = true
+			return m, nil
+		}
 		m.moveCursor(-1)
 		return m, nil
 
@@ -250,16 +261,16 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case key.Matches(msg, m.keys.Right):
-		if m.focusedColumn == columnFolders && len(m.filteredRepos) > 0 {
+		if m.focusedColumn == columnFolders {
 			m.focusedColumn = columnRepos
+			m.repoFilterFocused = true
 		}
 		return m, nil
 
 	case key.Matches(msg, m.keys.Enter):
-		if m.focusedColumn == columnFolders && len(m.filteredRepos) > 0 {
+		if m.focusedColumn == columnFolders {
 			m.focusedColumn = columnRepos
-			m.repoCursor = 0
-			m.repoScroll = 0
+			m.repoFilterFocused = true
 		}
 		return m, nil
 
@@ -286,6 +297,52 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	return m, nil
+}
+
+func (m Model) handleFilterInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.Type {
+	case tea.KeyEscape:
+		m.repoFilter = ""
+		m.repoFilterFocused = false
+		m.focusedColumn = columnFolders
+		m.filterRepos()
+		m.resetRepoCursor()
+		return m, nil
+
+	case tea.KeyDown, tea.KeyEnter:
+		if len(m.filteredRepos) > 0 {
+			m.repoFilterFocused = false
+			m.resetRepoCursor()
+		}
+		return m, nil
+
+	case tea.KeyLeft:
+		m.focusedColumn = columnFolders
+		m.repoFilterFocused = false
+		return m, nil
+
+	case tea.KeyBackspace:
+		if len(m.repoFilter) == 0 {
+			return m, nil
+		}
+		m.repoFilter = m.repoFilter[:len(m.repoFilter)-1]
+		m.filterRepos()
+		m.resetRepoCursor()
+		return m, nil
+
+	case tea.KeyRunes:
+		m.repoFilter += string(msg.Runes)
+		m.filterRepos()
+		m.resetRepoCursor()
+		return m, nil
+	}
+
+	return m, nil
+}
+
+func (m *Model) resetRepoCursor() {
+	m.repoCursor = 0
+	m.repoScroll = 0
 }
 
 func (m Model) handleEditMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -361,9 +418,9 @@ func (m *Model) moveCursor(delta int) {
 			m.folderCursor = maxFolder
 		}
 		m.syncFolderScroll()
+		m.repoFilter = ""
 		m.filterRepos()
-		m.repoCursor = 0
-		m.repoScroll = 0
+		m.resetRepoCursor()
 
 	case columnRepos:
 		m.repoCursor += delta
@@ -418,30 +475,41 @@ func (m *Model) maybeLoadMoreRepos() tea.Cmd {
 }
 
 func (m *Model) filterRepos() {
+	var baseRepos []client.Repo
+
 	if m.folderCursor == 0 {
-		m.filteredRepos = m.repos
-		return
-	}
+		baseRepos = m.repos
+	} else {
+		folderIdx := m.folderCursor - 1
+		if folderIdx >= len(m.folders) {
+			m.filteredRepos = nil
+			return
+		}
 
-	folderIdx := m.folderCursor - 1
-	if folderIdx >= len(m.folders) {
-		m.filteredRepos = nil
-		return
-	}
-
-	selectedFolder := m.folders[folderIdx]
-	var filtered []client.Repo
-
-	for _, repo := range m.repos {
-		folders := m.repoFolders[repo.ID]
-		for _, f := range folders {
-			if f.ID == selectedFolder.ID {
-				filtered = append(filtered, repo)
-				break
+		selectedFolder := m.folders[folderIdx]
+		for _, repo := range m.repos {
+			folders := m.repoFolders[repo.ID]
+			for _, f := range folders {
+				if f.ID == selectedFolder.ID {
+					baseRepos = append(baseRepos, repo)
+					break
+				}
 			}
 		}
 	}
 
+	if m.repoFilter == "" {
+		m.filteredRepos = baseRepos
+		return
+	}
+
+	filterLower := strings.ToLower(m.repoFilter)
+	var filtered []client.Repo
+	for _, repo := range baseRepos {
+		if strings.Contains(strings.ToLower(repo.Name), filterLower) {
+			filtered = append(filtered, repo)
+		}
+	}
 	m.filteredRepos = filtered
 }
 
@@ -1009,7 +1077,10 @@ func (m Model) renderRepoColumn(width, height int) string {
 	var b strings.Builder
 
 	b.WriteString(StyleHeader.Width(width).Render(" Repositories"))
-	b.WriteString("\n\n")
+	b.WriteString("\n")
+
+	b.WriteString(m.renderFilterInput())
+	b.WriteString("\n")
 
 	if len(m.filteredRepos) == 0 {
 		b.WriteString(StyleMetaText.Render("  No repositories"))
@@ -1017,7 +1088,7 @@ func (m Model) renderRepoColumn(width, height int) string {
 		return lipgloss.NewStyle().Width(width).Height(height).Render(b.String())
 	}
 
-	viewportHeight := (height - 2) / 3
+	viewportHeight := (height - 4) / 3
 	startIdx := m.repoScroll
 	if startIdx < 0 {
 		startIdx = 0
@@ -1030,7 +1101,7 @@ func (m Model) renderRepoColumn(width, height int) string {
 	for i := startIdx; i < endIdx; i++ {
 		repo := m.filteredRepos[i]
 		isEditing := m.editingRepo != nil && m.editingRepo.ID == repo.ID
-		isFocused := i == m.repoCursor && m.focusedColumn == columnRepos
+		isFocused := i == m.repoCursor && m.focusedColumn == columnRepos && !m.repoFilterFocused
 
 		meta := formatRepoMeta(repo)
 		maxNameWidth := width - 3
@@ -1042,11 +1113,25 @@ func (m Model) renderRepoColumn(width, height int) string {
 	return lipgloss.NewStyle().Width(width).Height(height).Render(b.String())
 }
 
+func (m Model) renderFilterInput() string {
+	prefix := StyleFilterLabel.Render("  Filter: ")
+	isFocused := m.repoFilterFocused && m.focusedColumn == columnRepos
+
+	var text string
+	if isFocused {
+		text = m.repoFilter + "█"
+	} else {
+		text = m.repoFilter
+	}
+
+	return "\n" + prefix + StyleFilterInput.Render(text) + "\n"
+}
+
 func (m Model) renderDetailColumn(width, height int) string {
 	var b strings.Builder
 
 	repo := m.selectedRepo()
-	if repo != nil && m.focusedColumn == columnRepos {
+	if repo != nil && m.focusedColumn == columnRepos && !m.repoFilterFocused {
 		name := truncateWithEllipsis(repo.Name, width-2)
 		b.WriteString(StyleHeader.Width(width).Render(" " + name))
 	} else {
