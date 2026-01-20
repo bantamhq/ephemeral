@@ -84,10 +84,12 @@ var (
 				Reverse(true)
 
 	StyleTabActive = lipgloss.NewStyle().
-			Background(colorPrimary).
-			Foreground(colorTextOnPrimary).
+			Foreground(colorPrimary).
 			Bold(true)
 
 	StyleTabInactive = lipgloss.NewStyle().
+				Foreground(colorTextMuted)
+
+	StyleContainerBorder = lipgloss.NewStyle().
 				Foreground(colorTextMuted)
 )

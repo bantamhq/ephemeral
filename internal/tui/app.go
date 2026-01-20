@@ -12,6 +12,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/spinner"
+	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/lipgloss"
@@ -34,7 +35,7 @@ const (
 type detailTab int
 
 const (
-	tabInfo detailTab = iota
+	tabReadme detailTab = iota
 	tabActivity
 	tabFiles
 )
@@ -71,12 +72,12 @@ type Model struct {
 	dialog       DialogModel
 	folderPicker FolderPickerModel
 
-	detailTab       detailTab
-	detailScroll    int
-	detailLoading   bool
-	detailCache     map[string]*RepoDetail
-	currentDetail   *RepoDetail
-	lastLoadedRepo  string
+	detailTab      detailTab
+	detailViewport viewport.Model
+	detailLoading  bool
+	detailCache    map[string]*RepoDetail
+	currentDetail  *RepoDetail
+	lastLoadedRepo string
 
 	loading   bool
 	err       error
@@ -94,14 +95,15 @@ func NewModel(c *client.Client, namespace, server string) Model {
 	s.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("205"))
 
 	return Model{
-		client:      c,
-		namespace:   namespace,
-		server:      server,
-		loading:     true,
-		spinner:     s,
-		keys:        DefaultKeyMap,
-		repoFolders: make(map[string][]client.Folder),
-		detailCache: make(map[string]*RepoDetail),
+		client:         c,
+		namespace:      namespace,
+		server:         server,
+		loading:        true,
+		spinner:        s,
+		keys:           DefaultKeyMap,
+		repoFolders:    make(map[string][]client.Folder),
+		detailCache:    make(map[string]*RepoDetail),
+		detailViewport: viewport.New(0, 0),
 	}
 }
 
@@ -120,6 +122,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+		m.updateViewportSize()
+		m.setViewportContent()
 		return m, nil
 
 	case dataLoadedMsg:
@@ -251,6 +255,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.detailCache[msg.RepoID] = detail
 		m.currentDetail = detail
+		m.detailViewport.GotoTop()
+		m.setViewportContent()
 		return m, nil
 	}
 
@@ -270,21 +276,20 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case key.Matches(msg, m.keys.Tab):
 		m.detailTab = (m.detailTab + 1) % 3
-		m.detailScroll = 0
+		m.detailViewport.GotoTop()
+		m.setViewportContent()
 		return m, nil
 
 	case key.Matches(msg, m.keys.Escape):
 		if m.focusedColumn == columnDetail {
 			m.focusedColumn = columnRepos
-			m.detailScroll = 0
+			m.detailViewport.GotoTop()
 		}
 		return m, nil
 
 	case key.Matches(msg, m.keys.Up):
 		if m.focusedColumn == columnDetail {
-			if m.detailScroll > 0 {
-				m.detailScroll--
-			}
+			m.detailViewport.LineUp(1)
 			return m, nil
 		}
 		m.moveCursor(-1)
@@ -292,7 +297,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case key.Matches(msg, m.keys.Down):
 		if m.focusedColumn == columnDetail {
-			m.detailScroll++
+			m.detailViewport.LineDown(1)
 			return m, nil
 		}
 		m.moveCursor(1)
@@ -304,7 +309,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, m.keys.Left):
 		if m.focusedColumn == columnDetail {
 			m.focusedColumn = columnRepos
-			m.detailScroll = 0
+			m.detailViewport.GotoTop()
 		} else if m.focusedColumn == columnRepos {
 			m.focusedColumn = columnFolders
 		}
@@ -316,7 +321,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, m.maybeLoadDetail()
 		} else if m.focusedColumn == columnRepos {
 			m.focusedColumn = columnDetail
-			m.detailScroll = 0
+			m.detailViewport.GotoTop()
 			return m, m.maybeLoadDetail()
 		}
 		return m, nil
@@ -327,7 +332,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, m.maybeLoadDetail()
 		} else if m.focusedColumn == columnRepos {
 			m.focusedColumn = columnDetail
-			m.detailScroll = 0
+			m.detailViewport.GotoTop()
 			return m, m.maybeLoadDetail()
 		}
 		return m, nil
@@ -939,6 +944,7 @@ func (m *Model) maybeLoadDetail() tea.Cmd {
 	repo := m.selectedRepo()
 	if repo == nil {
 		m.currentDetail = nil
+		m.setViewportContent()
 		return nil
 	}
 
@@ -949,6 +955,8 @@ func (m *Model) maybeLoadDetail() tea.Cmd {
 	if cached, ok := m.detailCache[repo.ID]; ok {
 		m.currentDetail = cached
 		m.lastLoadedRepo = repo.ID
+		m.detailViewport.GotoTop()
+		m.setViewportContent()
 		return nil
 	}
 
@@ -1010,6 +1018,112 @@ const headerHeight = 1
 
 func (m Model) mainHeight() int {
 	return m.height - footerHeight - headerHeight
+}
+
+func (m *Model) updateViewportSize() {
+	contentWidth := max(m.width-6, 30)
+	folderWidth := max(contentWidth/4, 10)
+	repoWidth := max(contentWidth/4, 10)
+	detailWidth := max(contentWidth-folderWidth-repoWidth, 10)
+
+	viewportHeight := m.mainHeight() - 6
+	if viewportHeight < 1 {
+		viewportHeight = 1
+	}
+
+	m.detailViewport.Width = detailWidth - 2
+	m.detailViewport.Height = viewportHeight
+}
+
+func (m *Model) setViewportContent() {
+	if m.currentDetail == nil {
+		m.detailViewport.SetContent("")
+		return
+	}
+
+	width := m.detailViewport.Width
+
+	var content string
+	switch m.detailTab {
+	case tabReadme:
+		content = m.getReadmeContent(width)
+	case tabActivity:
+		content = m.getActivityContent(width)
+	case tabFiles:
+		content = m.getFilesContent(width)
+	}
+
+	m.detailViewport.SetContent(content)
+}
+
+func (m Model) getReadmeContent(width int) string {
+	if m.currentDetail == nil || m.currentDetail.Readme == nil {
+		return " " + StyleMetaText.Render("No README found")
+	}
+
+	return m.renderReadme(*m.currentDetail.Readme, m.currentDetail.ReadmeFilename, width)
+}
+
+func (m Model) getActivityContent(width int) string {
+	if m.currentDetail == nil || len(m.currentDetail.Commits) == 0 {
+		return " " + StyleMetaText.Render("No commits")
+	}
+
+	var lines []string
+	for _, commit := range m.currentDetail.Commits {
+		shortSHA := commit.SHA
+		if len(shortSHA) > 7 {
+			shortSHA = shortSHA[:7]
+		}
+
+		message := strings.Split(commit.Message, "\n")[0]
+		maxMsgLen := width - 12
+		if maxMsgLen < 10 {
+			maxMsgLen = 10
+		}
+		if len(message) > maxMsgLen {
+			message = message[:maxMsgLen-1] + "…"
+		}
+
+		timeAgo := formatRelativeTime(&commit.Author.Date)
+
+		lines = append(lines, " "+StyleMetaText.Render(shortSHA)+" "+message)
+		lines = append(lines, " "+StyleMetaText.Render(fmt.Sprintf("  %s • %s", commit.Author.Name, timeAgo)))
+		lines = append(lines, "")
+	}
+
+	return strings.Join(lines, "\n")
+}
+
+func (m Model) getFilesContent(width int) string {
+	if m.currentDetail == nil || len(m.currentDetail.Tree) == 0 {
+		return " " + StyleMetaText.Render("No files")
+	}
+
+	var lines []string
+	for _, entry := range m.currentDetail.Tree {
+		icon := "[f]"
+		if entry.Type == "dir" {
+			icon = "[d]"
+		}
+
+		name := entry.Name
+		maxNameLen := width - 16
+		if maxNameLen < 5 {
+			maxNameLen = 5
+		}
+		if len(name) > maxNameLen {
+			name = name[:maxNameLen-1] + "…"
+		}
+
+		line := " " + icon + " " + name
+		if entry.Size != nil {
+			line = m.rightAlignInWidth(line, formatSize(int(*entry.Size)), width-1)
+		}
+		lines = append(lines, line)
+	}
+
+	return strings.Join(lines, "\n")
 }
 
 func (m Model) View() string {
@@ -1188,185 +1302,109 @@ func (m Model) renderRepoColumn(width, height int) string {
 }
 
 func (m Model) renderDetailColumn(width, height int) string {
-	var b strings.Builder
+	emptyColumn := lipgloss.NewStyle().Width(width).Height(height).Render(
+		StyleHeader.Width(width).Render(""),
+	)
 
 	if m.focusedColumn == columnFolders {
-		b.WriteString(StyleHeader.Width(width).Render(""))
-		return lipgloss.NewStyle().Width(width).Height(height).Render(b.String())
+		return emptyColumn
 	}
 
 	repo := m.selectedRepo()
 	if repo == nil {
-		b.WriteString(StyleHeader.Width(width).Render(""))
-		return lipgloss.NewStyle().Width(width).Height(height).Render(b.String())
+		return emptyColumn
 	}
 
+	var b strings.Builder
 	name := truncateWithEllipsis(repo.Name, width-2)
 	b.WriteString(StyleHeader.Width(width).Render(" " + name))
 	b.WriteString("\n")
 
-	b.WriteString(m.renderDetailTabs(width))
-	b.WriteString("\n")
+	staticInfo := m.renderStaticInfo(repo, width)
+	b.WriteString(staticInfo)
 
-	contentHeight := height - 3
-	if m.detailLoading {
-		b.WriteString(StyleMetaText.Render("  Loading..."))
-	} else if m.currentDetail == nil {
-		b.WriteString(StyleMetaText.Render("  No data"))
-	} else {
-		var content string
-		switch m.detailTab {
-		case tabInfo:
-			content = m.renderInfoTab(width, contentHeight)
-		case tabActivity:
-			content = m.renderActivityTab(width, contentHeight)
-		case tabFiles:
-			content = m.renderFilesTab(width, contentHeight)
-		}
-		b.WriteString(content)
-	}
+	tabbedContainer := m.renderTabbedContainer(width, height-3-strings.Count(staticInfo, "\n"))
+	b.WriteString(tabbedContainer)
 
 	return lipgloss.NewStyle().Width(width).Height(height).Render(b.String())
 }
 
-func (m Model) renderDetailTabs(width int) string {
-	tabs := []string{"Info", "Activity", "Files"}
-	var parts []string
+func (m Model) renderStaticInfo(repo *client.Repo, width int) string {
+	folders := m.repoFolders[repo.ID]
+	if len(folders) == 0 {
+		return "\n"
+	}
+
+	var folderNames []string
+	for _, f := range folders {
+		folderNames = append(folderNames, f.Name)
+	}
+
+	foldersLine := " " + StyleMetaText.Render("Folders: ") + strings.Join(folderNames, ", ")
+	if lipgloss.Width(foldersLine) > width-1 {
+		foldersLine = truncateWithEllipsis(foldersLine, width-1)
+	}
+
+	return foldersLine + "\n\n"
+}
+
+func (m Model) renderTabbedContainer(width, height int) string {
+	if height < 3 {
+		height = 3
+	}
+
+	tabs := []string{"Readme", "Activity", "Files"}
+	border := StyleContainerBorder
+
+	var tabRow strings.Builder
+	var borderRow strings.Builder
+
+	borderPosAfterPadding := 0
 
 	for i, tab := range tabs {
-		if detailTab(i) == m.detailTab {
-			parts = append(parts, StyleTabActive.Render(" "+tab+" "))
+		isActive := detailTab(i) == m.detailTab
+		tabWidth := lipgloss.Width(tab)
+
+		if isActive {
+			tabRow.WriteString(" " + StyleTabActive.Render(tab) + " ")
+			borderRow.WriteString(border.Render(strings.Repeat("─", borderPosAfterPadding+1)))
+			borderRow.WriteString(StyleTabActive.Render(strings.Repeat("─", tabWidth)))
+			borderPosAfterPadding = 1
 		} else {
-			parts = append(parts, StyleTabInactive.Render(" "+tab+" "))
+			tabRow.WriteString(" " + StyleTabInactive.Render(tab) + " ")
+			borderPosAfterPadding += tabWidth + 2
 		}
 	}
 
-	return "  " + strings.Join(parts, " ")
+	remainingBorder := width - lipgloss.Width(borderRow.String())
+	if remainingBorder > 0 {
+		borderRow.WriteString(border.Render(strings.Repeat("─", remainingBorder)))
+	}
+
+	contentHeight := height - 2
+	if contentHeight < 1 {
+		contentHeight = 1
+	}
+
+	var content string
+	if m.detailLoading {
+		content = " " + StyleMetaText.Render("Loading...")
+	} else if m.currentDetail == nil {
+		content = " " + StyleMetaText.Render("No data")
+	} else {
+		content = m.detailViewport.View()
+	}
+
+	var result strings.Builder
+	result.WriteString(tabRow.String())
+	result.WriteString("\n")
+	result.WriteString(borderRow.String())
+	result.WriteString("\n")
+	result.WriteString(content)
+
+	return result.String()
 }
 
-func (m Model) renderInfoTab(width, height int) string {
-	if m.currentDetail == nil {
-		return ""
-	}
-
-	var lines []string
-
-	repo := m.selectedRepo()
-	if repo != nil {
-		visibility := "private"
-		if repo.Public {
-			visibility = "public"
-		}
-		lines = append(lines, StyleMetaText.Render("  Visibility: ")+visibility)
-
-		cloneURL := m.buildCloneURL(repo.Name)
-		lines = append(lines, StyleMetaText.Render("  Clone: ")+truncateWithEllipsis(cloneURL, width-10))
-
-		if m.currentDetail.DefaultRef != "" {
-			lines = append(lines, StyleMetaText.Render("  Branch: ")+m.currentDetail.DefaultRef)
-		}
-
-		lines = append(lines, "")
-
-		if folders := m.repoFolders[repo.ID]; len(folders) > 0 {
-			var folderNames []string
-			for _, f := range folders {
-				folderNames = append(folderNames, f.Name)
-			}
-			lines = append(lines, StyleMetaText.Render("  Folders: ")+strings.Join(folderNames, ", "))
-			lines = append(lines, "")
-		}
-	}
-
-	if m.currentDetail.Readme != nil {
-		lines = append(lines, StyleMetaText.Render("  README"))
-		lines = append(lines, "")
-
-		content := m.renderReadme(*m.currentDetail.Readme, m.currentDetail.ReadmeFilename, width-4)
-		for _, line := range strings.Split(content, "\n") {
-			lines = append(lines, "  "+line)
-		}
-	}
-
-	return m.renderScrolledContent(lines, height)
-}
-
-func (m Model) renderActivityTab(width, height int) string {
-	if m.currentDetail == nil || len(m.currentDetail.Commits) == 0 {
-		return StyleMetaText.Render("  No commits")
-	}
-
-	var lines []string
-	for _, commit := range m.currentDetail.Commits {
-		shortSHA := commit.SHA
-		if len(shortSHA) > 7 {
-			shortSHA = shortSHA[:7]
-		}
-
-		message := strings.Split(commit.Message, "\n")[0]
-		maxMsgLen := width - 12
-		if len(message) > maxMsgLen {
-			message = message[:maxMsgLen-1] + "…"
-		}
-
-		timeAgo := formatRelativeTime(&commit.Author.Date)
-
-		lines = append(lines, StyleMetaText.Render("  "+shortSHA)+" "+message)
-		lines = append(lines, StyleMetaText.Render(fmt.Sprintf("    %s • %s", commit.Author.Name, timeAgo)))
-		lines = append(lines, "")
-	}
-
-	return m.renderScrolledContent(lines, height)
-}
-
-func (m Model) renderFilesTab(width, height int) string {
-	if m.currentDetail == nil || len(m.currentDetail.Tree) == 0 {
-		return StyleMetaText.Render("  No files")
-	}
-
-	var lines []string
-	for _, entry := range m.currentDetail.Tree {
-		icon := "[f]"
-		if entry.Type == "dir" {
-			icon = "[d]"
-		}
-
-		name := entry.Name
-		maxNameLen := width - 16
-		if len(name) > maxNameLen {
-			name = name[:maxNameLen-1] + "…"
-		}
-
-		line := "  " + icon + " " + name
-		if entry.Size != nil {
-			line = m.rightAlignInWidth(line, formatSize(int(*entry.Size)), width-2)
-		}
-		lines = append(lines, line)
-	}
-
-	return m.renderScrolledContent(lines, height)
-}
-
-func (m Model) renderScrolledContent(lines []string, height int) string {
-	if len(lines) == 0 {
-		return ""
-	}
-
-	start := m.detailScroll
-	if start >= len(lines) {
-		start = len(lines) - 1
-	}
-	if start < 0 {
-		start = 0
-	}
-
-	end := start + height
-	if end > len(lines) {
-		end = len(lines)
-	}
-
-	return strings.Join(lines[start:end], "\n")
-}
 
 func (m Model) renderReadme(content, filename string, width int) string {
 	if !strings.HasSuffix(strings.ToLower(filename), ".md") {
@@ -1386,7 +1424,7 @@ func (m Model) renderReadme(content, filename string, width int) string {
 		return content
 	}
 
-	return rendered
+	return strings.TrimSpace(rendered)
 }
 
 func (m Model) renderRepoItem(name, meta string, maxNameWidth, width int, isEditing, isFocused bool) string {
