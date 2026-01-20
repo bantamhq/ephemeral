@@ -3,6 +3,7 @@ package server
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -71,6 +72,7 @@ func (s *Server) handleCreateFolder(w http.ResponseWriter, r *http.Request) {
 		JSONError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	req.Name = strings.ToLower(req.Name)
 
 	existing, err := s.store.GetFolderByName(token.NamespaceID, req.Name)
 	if err != nil {
@@ -142,6 +144,8 @@ func (s *Server) handleUpdateFolder(w http.ResponseWriter, r *http.Request) {
 			JSONError(w, http.StatusBadRequest, err.Error())
 			return
 		}
+		lowered := strings.ToLower(*req.Name)
+		req.Name = &lowered
 
 		if *req.Name != folder.Name {
 			existing, err := s.store.GetFolderByName(folder.NamespaceID, *req.Name)

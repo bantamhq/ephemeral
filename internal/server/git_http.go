@@ -277,6 +277,7 @@ func (h *GitHTTPHandler) getRequestBody(w http.ResponseWriter, r *http.Request) 
 
 // getOrCreateRepo gets a repo, optionally creating it if autoCreate is true.
 func (h *GitHTTPHandler) getOrCreateRepo(namespaceID, repoName string, autoCreate bool) (*store.Repo, error) {
+	repoName = strings.ToLower(repoName)
 	repo, err := h.store.GetRepo(namespaceID, repoName)
 	if err != nil {
 		return nil, fmt.Errorf("get repo: %w", err)
@@ -293,6 +294,7 @@ func (h *GitHTTPHandler) createRepo(namespaceID, repoName string) (*store.Repo, 
 	if err := ValidateName(repoName); err != nil {
 		return nil, fmt.Errorf("invalid repo name: %w", err)
 	}
+	repoName = strings.ToLower(repoName)
 
 	repoPath, err := h.getRepoPath(namespaceID, repoName)
 	if err != nil {

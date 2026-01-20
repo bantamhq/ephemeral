@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -91,6 +92,7 @@ func (s *Server) handleCreateRepo(w http.ResponseWriter, r *http.Request) {
 		JSONError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	req.Name = strings.ToLower(req.Name)
 
 	existing, err := s.store.GetRepo(token.NamespaceID, req.Name)
 	if err != nil {
@@ -205,13 +207,15 @@ func (s *Server) handleUpdateRepo(w http.ResponseWriter, r *http.Request) {
 	}
 
 	oldName := repo.Name
-	nameChanged := req.Name != nil && *req.Name != oldName
+	nameChanged := req.Name != nil && strings.ToLower(*req.Name) != oldName
 
 	if nameChanged {
 		if err := ValidateName(*req.Name); err != nil {
 			JSONError(w, http.StatusBadRequest, err.Error())
 			return
 		}
+		lowered := strings.ToLower(*req.Name)
+		req.Name = &lowered
 
 		existing, err := s.store.GetRepo(repo.NamespaceID, *req.Name)
 		if err != nil {
