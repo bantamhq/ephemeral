@@ -3,40 +3,37 @@ package tui
 import "github.com/charmbracelet/bubbles/key"
 
 type KeyMap struct {
-	Up         key.Binding
-	Down       key.Binding
-	Left       key.Binding
-	Right      key.Binding
-	Select     key.Binding
-	Quit       key.Binding
-	NewFolder  key.Binding
-	ToggleAll  key.Binding
-	Rename     key.Binding
-	Delete     key.Binding
-	Visibility key.Binding
-	Move       key.Binding
-	Clone      key.Binding
-	CloneDir   key.Binding
+	Up        key.Binding
+	Down      key.Binding
+	Left      key.Binding
+	Right     key.Binding
+	Enter     key.Binding
+	Quit      key.Binding
+	NewFolder key.Binding
+	Rename    key.Binding
+	Delete    key.Binding
+	Clone     key.Binding
+	CloneDir  key.Binding
 }
 
 var DefaultKeyMap = KeyMap{
 	Up: key.NewBinding(
 		key.WithKeys("up", "k"),
-		key.WithHelp("k/up", "up"),
+		key.WithHelp("k/↑", "up"),
 	),
 	Down: key.NewBinding(
 		key.WithKeys("down", "j"),
-		key.WithHelp("j/down", "down"),
+		key.WithHelp("j/↓", "down"),
 	),
 	Left: key.NewBinding(
 		key.WithKeys("left", "h"),
-		key.WithHelp("h/left", "collapse"),
+		key.WithHelp("h/←", "left column"),
 	),
 	Right: key.NewBinding(
 		key.WithKeys("right", "l"),
-		key.WithHelp("l/right", "expand"),
+		key.WithHelp("l/→", "right column"),
 	),
-	Select: key.NewBinding(
+	Enter: key.NewBinding(
 		key.WithKeys("enter"),
 		key.WithHelp("enter", "select"),
 	),
@@ -48,10 +45,6 @@ var DefaultKeyMap = KeyMap{
 		key.WithKeys("n"),
 		key.WithHelp("n", "new folder"),
 	),
-	ToggleAll: key.NewBinding(
-		key.WithKeys("e"),
-		key.WithHelp("e", "expand/collapse all"),
-	),
 	Rename: key.NewBinding(
 		key.WithKeys("r"),
 		key.WithHelp("r", "rename"),
@@ -59,14 +52,6 @@ var DefaultKeyMap = KeyMap{
 	Delete: key.NewBinding(
 		key.WithKeys("d"),
 		key.WithHelp("d", "delete"),
-	),
-	Visibility: key.NewBinding(
-		key.WithKeys("v"),
-		key.WithHelp("v", "visibility"),
-	),
-	Move: key.NewBinding(
-		key.WithKeys("m"),
-		key.WithHelp("m", "move"),
 	),
 	Clone: key.NewBinding(
 		key.WithKeys("c"),
@@ -78,22 +63,21 @@ var DefaultKeyMap = KeyMap{
 	),
 }
 
-func (k KeyMap) ShortHelp(nodeKind *NodeKind, moveMode bool) string {
-	if moveMode {
-		return "q cancel  j/k navigate  h/l expand/collapse  m/enter confirm"
+type contextualHelp struct {
+	inFolderColumn bool
+	inRepoColumn   bool
+}
+
+func (k KeyMap) ShortHelp(ctx contextualHelp) string {
+	base := "q quit • j/k navigate • h/l columns • n new folder"
+
+	if ctx.inFolderColumn {
+		return base + " • r rename • d delete"
 	}
 
-	base := "q quit  j/k navigate  h/l expand/collapse  n new folder"
-	if nodeKind == nil {
-		return base
+	if ctx.inRepoColumn {
+		return base + " • r rename • d delete • c clone"
 	}
 
-	switch *nodeKind {
-	case NodeRepo:
-		return base + "  r rename  d delete  v visibility  m move  c/C clone"
-	case NodeFolder:
-		return base + "  r rename  d delete"
-	default:
-		return base
-	}
+	return base
 }

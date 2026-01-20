@@ -2,6 +2,16 @@ package tui
 
 import "ephemeral/internal/client"
 
+type dataLoadedMsg struct {
+	folders     []client.Folder
+	repos       []client.Repo
+	repoFolders map[string][]client.Folder
+}
+
+type errMsg struct {
+	err error
+}
+
 type FolderCreatedMsg struct {
 	Folder client.Folder
 }

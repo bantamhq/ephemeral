@@ -3,47 +3,41 @@ package tui
 import "github.com/charmbracelet/lipgloss"
 
 var (
-	StyleTitle = lipgloss.NewStyle().
-			Bold(true).
-			Foreground(lipgloss.Color("12"))
-
-	StyleSubtle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("8"))
-
 	StyleSelected = lipgloss.NewStyle().
-			Background(lipgloss.Color("141")).
-			Foreground(lipgloss.Color("232")).
+			Background(lipgloss.Color("62")).
+			Foreground(lipgloss.Color("230")).
 			Bold(true)
 
 	StyleHeader = lipgloss.NewStyle().
 			Bold(true).
-			Padding(0, 1).
-			Background(lipgloss.Color("62")).
-			Foreground(lipgloss.Color("230"))
+			Foreground(lipgloss.Color("230")).
+			Background(lipgloss.Color("62"))
+
+	StyleSubtle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("243"))
 
 	StyleError = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("9"))
 
-	StyleRepoName = lipgloss.NewStyle().
+	StyleStatusMsg = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("11")).
+			Italic(true)
+
+	StyleEditing = lipgloss.NewStyle().
+			Background(lipgloss.Color("236")).
+			Foreground(lipgloss.Color("255")).
 			Bold(true)
 
-	StyleFolderName = lipgloss.NewStyle().
-			Bold(true).
-			Foreground(lipgloss.Color("12"))
+	StyleFooterNamespace = lipgloss.NewStyle().
+				Background(lipgloss.Color("62")).
+				Foreground(lipgloss.Color("230")).
+				Bold(true).
+				Padding(0, 1)
 
-	StyleFolderIcon = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("12"))
-
-	StyleRootName = lipgloss.NewStyle().
-			Bold(true).
-			Foreground(lipgloss.Color("5"))
-
-	StyleRootIcon = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("5"))
-
-	StyleColumnHeader = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("5")).
-				Faint(true)
+	StyleFooterHelp = lipgloss.NewStyle().
+			Background(lipgloss.Color("237")).
+			Foreground(lipgloss.Color("243")).
+			PaddingLeft(1)
 
 	StyleDialogBox = lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
@@ -63,38 +57,10 @@ var (
 					Bold(true)
 
 	StyleDialogHint = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("8")).
-			Italic(true)
-
-	StylePickerSelected = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("12")).
-				Bold(true)
-
-	StyleStatusMsg = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("11")).
-			Italic(true)
-
-	StyleMoving = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("11")).
-			Italic(true)
-
-	StyleRecentlyMoved = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("11")).
-				Bold(true)
-
-	StyleEditing = lipgloss.NewStyle().
-			Background(lipgloss.Color("236")).
-			Foreground(lipgloss.Color("255")).
-			Bold(true)
-
-	StyleFooterNamespace = lipgloss.NewStyle().
-				Background(lipgloss.Color("62")).
-				Foreground(lipgloss.Color("230")).
-				Bold(true).
-				Padding(0, 1)
-
-	StyleFooterHelp = lipgloss.NewStyle().
-			Background(lipgloss.Color("237")).
 			Foreground(lipgloss.Color("243")).
-			PaddingLeft(1)
+			Italic(true)
+
+	StyleMetaText = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("243"))
+
 )

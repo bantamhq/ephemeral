@@ -39,22 +39,14 @@ type DialogModel struct {
 }
 
 func NewInputDialog(title, message, placeholder string) DialogModel {
-	ti := textinput.New()
-	ti.Placeholder = placeholder
-	ti.Focus()
-	ti.CharLimit = 100
-	ti.Width = 30
-
-	return DialogModel{
-		mode:    DialogInput,
-		title:   title,
-		message: message,
-		input:   ti,
-		width:   40,
-	}
+	return newInputDialog(title, message, placeholder, false)
 }
 
 func NewNameInputDialog(title, message, placeholder string) DialogModel {
+	return newInputDialog(title, message, placeholder, true)
+}
+
+func newInputDialog(title, message, placeholder string, filterNameChar bool) DialogModel {
 	ti := textinput.New()
 	ti.Placeholder = placeholder
 	ti.Focus()
@@ -67,7 +59,7 @@ func NewNameInputDialog(title, message, placeholder string) DialogModel {
 		message:        message,
 		input:          ti,
 		width:          40,
-		filterNameChar: true,
+		filterNameChar: filterNameChar,
 	}
 }
 
@@ -136,7 +128,7 @@ func (d DialogModel) Update(msg tea.Msg) (DialogModel, tea.Cmd) {
 func (d DialogModel) View() string {
 	var content strings.Builder
 
-	content.WriteString(StyleTitle.Render(d.title))
+	content.WriteString(StyleHeader.Render(d.title))
 	content.WriteString("\n\n")
 
 	if d.message != "" {

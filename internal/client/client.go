@@ -31,7 +31,6 @@ type Repo struct {
 	ID          string     `json:"id"`
 	NamespaceID string     `json:"namespace_id"`
 	Name        string     `json:"name"`
-	FolderID    *string    `json:"folder_id,omitempty"`
 	Public      bool       `json:"public"`
 	SizeBytes   int        `json:"size_bytes"`
 	LastPushAt  *time.Time `json:"last_push_at,omitempty"`
@@ -50,7 +49,7 @@ type Namespace struct {
 type Folder struct {
 	ID        string    `json:"id"`
 	Name      string    `json:"name"`
-	ParentID  *string   `json:"parent_id,omitempty"`
+	Color     *string   `json:"color,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
 }
 
@@ -69,6 +68,20 @@ func (c *Client) doRequest(method, path string) (*http.Response, error) {
 	return c.doRequestWithBody(method, path, nil)
 }
 
+func buildPaginatedPath(basePath, cursor string, limit int) string {
+	params := url.Values{}
+	if cursor != "" {
+		params.Set("cursor", cursor)
+	}
+	if limit > 0 {
+		params.Set("limit", strconv.Itoa(limit))
+	}
+	if len(params) > 0 {
+		return basePath + "?" + params.Encode()
+	}
+	return basePath
+}
+
 func (c *Client) decodeError(resp *http.Response, operation string) error {
 	var errResp response
 	if err := json.NewDecoder(resp.Body).Decode(&errResp); err != nil {
@@ -81,18 +94,7 @@ func (c *Client) decodeError(resp *http.Response, operation string) error {
 }
 
 func (c *Client) ListRepos(cursor string, limit int) ([]Repo, bool, error) {
-	params := url.Values{}
-	if cursor != "" {
-		params.Set("cursor", cursor)
-	}
-	if limit > 0 {
-		params.Set("limit", strconv.Itoa(limit))
-	}
-
-	path := "/api/v1/repos"
-	if len(params) > 0 {
-		path += "?" + params.Encode()
-	}
+	path := buildPaginatedPath("/api/v1/repos", cursor, limit)
 
 	resp, err := c.doRequest(http.MethodGet, path)
 	if err != nil {
@@ -128,8 +130,13 @@ func (c *Client) GetNamespaceInfo() (*Namespace, error) {
 		return nil, c.decodeError(resp, "get namespace")
 	}
 
+	var dataResp response
+	if err := json.NewDecoder(resp.Body).Decode(&dataResp); err != nil {
+		return nil, fmt.Errorf("decode response: %w", err)
+	}
+
 	var ns Namespace
-	if err := json.NewDecoder(resp.Body).Decode(&ns); err != nil {
+	if err := json.Unmarshal(dataResp.Data, &ns); err != nil {
 		return nil, fmt.Errorf("decode namespace: %w", err)
 	}
 
@@ -137,18 +144,7 @@ func (c *Client) GetNamespaceInfo() (*Namespace, error) {
 }
 
 func (c *Client) ListFolders(cursor string, limit int) ([]Folder, bool, error) {
-	params := url.Values{}
-	if cursor != "" {
-		params.Set("cursor", cursor)
-	}
-	if limit > 0 {
-		params.Set("limit", strconv.Itoa(limit))
-	}
-
-	path := "/api/v1/folders"
-	if len(params) > 0 {
-		path += "?" + params.Encode()
-	}
+	path := buildPaginatedPath("/api/v1/folders", cursor, limit)
 
 	resp, err := c.doRequest(http.MethodGet, path)
 	if err != nil {
@@ -208,11 +204,8 @@ func (c *Client) BaseURL() string {
 	return c.baseURL
 }
 
-func (c *Client) CreateFolder(name string, parentID *string) (*Folder, error) {
+func (c *Client) CreateFolder(name string) (*Folder, error) {
 	body := map[string]any{"name": name}
-	if parentID != nil {
-		body["parent_id"] = *parentID
-	}
 
 	resp, err := c.doRequestWithBody(http.MethodPost, "/api/v1/folders", body)
 	if err != nil {
@@ -224,8 +217,13 @@ func (c *Client) CreateFolder(name string, parentID *string) (*Folder, error) {
 		return nil, c.decodeError(resp, "create folder")
 	}
 
+	var dataResp response
+	if err := json.NewDecoder(resp.Body).Decode(&dataResp); err != nil {
+		return nil, fmt.Errorf("decode response: %w", err)
+	}
+
 	var folder Folder
-	if err := json.NewDecoder(resp.Body).Decode(&folder); err != nil {
+	if err := json.Unmarshal(dataResp.Data, &folder); err != nil {
 		return nil, fmt.Errorf("decode folder: %w", err)
 	}
 
@@ -251,13 +249,10 @@ func (c *Client) DeleteFolder(id string, force bool) error {
 	return nil
 }
 
-func (c *Client) UpdateFolder(id string, name *string, parentID *string) (*Folder, error) {
+func (c *Client) UpdateFolder(id string, name *string) (*Folder, error) {
 	body := make(map[string]any)
 	if name != nil {
 		body["name"] = *name
-	}
-	if parentID != nil {
-		body["parent_id"] = *parentID
 	}
 
 	resp, err := c.doRequestWithBody(http.MethodPatch, "/api/v1/folders/"+id, body)
@@ -270,24 +265,26 @@ func (c *Client) UpdateFolder(id string, name *string, parentID *string) (*Folde
 		return nil, c.decodeError(resp, "update folder")
 	}
 
-	var folder Folder
-	if err := json.NewDecoder(resp.Body).Decode(&folder); err != nil {
+	var dataResp response
+	if err := json.NewDecoder(resp.Body).Decode(&dataResp); err != nil {
 		return nil, fmt.Errorf("decode response: %w", err)
+	}
+
+	var folder Folder
+	if err := json.Unmarshal(dataResp.Data, &folder); err != nil {
+		return nil, fmt.Errorf("decode folder: %w", err)
 	}
 
 	return &folder, nil
 }
 
-func (c *Client) UpdateRepo(id string, name *string, public *bool, folderID *string) (*Repo, error) {
+func (c *Client) UpdateRepo(id string, name *string, public *bool) (*Repo, error) {
 	body := make(map[string]any)
 	if name != nil {
 		body["name"] = *name
 	}
 	if public != nil {
 		body["public"] = *public
-	}
-	if folderID != nil {
-		body["folder_id"] = *folderID
 	}
 
 	resp, err := c.doRequestWithBody(http.MethodPatch, "/api/v1/repos/"+id, body)
@@ -300,8 +297,13 @@ func (c *Client) UpdateRepo(id string, name *string, public *bool, folderID *str
 		return nil, c.decodeError(resp, "update repo")
 	}
 
+	var dataResp response
+	if err := json.NewDecoder(resp.Body).Decode(&dataResp); err != nil {
+		return nil, fmt.Errorf("decode response: %w", err)
+	}
+
 	var repo Repo
-	if err := json.NewDecoder(resp.Body).Decode(&repo); err != nil {
+	if err := json.Unmarshal(dataResp.Data, &repo); err != nil {
 		return nil, fmt.Errorf("decode repo: %w", err)
 	}
 
@@ -317,6 +319,70 @@ func (c *Client) DeleteRepo(id string) error {
 
 	if resp.StatusCode != http.StatusNoContent {
 		return c.decodeError(resp, "delete repo")
+	}
+
+	return nil
+}
+
+func (c *Client) ListRepoFolders(repoID string) ([]Folder, error) {
+	resp, err := c.doRequest(http.MethodGet, "/api/v1/repos/"+repoID+"/folders")
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, c.decodeError(resp, "list repo folders")
+	}
+
+	var dataResp response
+	if err := json.NewDecoder(resp.Body).Decode(&dataResp); err != nil {
+		return nil, fmt.Errorf("decode response: %w", err)
+	}
+
+	var folders []Folder
+	if err := json.Unmarshal(dataResp.Data, &folders); err != nil {
+		return nil, fmt.Errorf("decode folders: %w", err)
+	}
+
+	return folders, nil
+}
+
+func (c *Client) AddRepoFolders(repoID string, folderIDs []string) ([]Folder, error) {
+	body := map[string]any{"folder_ids": folderIDs}
+
+	resp, err := c.doRequestWithBody(http.MethodPost, "/api/v1/repos/"+repoID+"/folders", body)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, c.decodeError(resp, "add repo folders")
+	}
+
+	var dataResp response
+	if err := json.NewDecoder(resp.Body).Decode(&dataResp); err != nil {
+		return nil, fmt.Errorf("decode response: %w", err)
+	}
+
+	var folders []Folder
+	if err := json.Unmarshal(dataResp.Data, &folders); err != nil {
+		return nil, fmt.Errorf("decode folders: %w", err)
+	}
+
+	return folders, nil
+}
+
+func (c *Client) RemoveRepoFolder(repoID, folderID string) error {
+	resp, err := c.doRequest(http.MethodDelete, "/api/v1/repos/"+repoID+"/folders/"+folderID)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNoContent {
+		return c.decodeError(resp, "remove repo folder")
 	}
 
 	return nil

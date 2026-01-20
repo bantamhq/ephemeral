@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -25,8 +26,13 @@ const (
 	modalCreateFolder
 	modalDeleteRepo
 	modalDeleteFolder
-	modalToggleVisibility
 	modalCloneDir
+)
+
+const (
+	columnFolders = 0
+	columnRepos   = 1
+	columnDetails = 2
 )
 
 const footerHeight = 1
@@ -36,40 +42,33 @@ type Model struct {
 	namespace string
 	server    string
 
-	tree     []*TreeNode
-	flatTree []*TreeNode
-	folders  []client.Folder
-	cursor   int
-	loading  bool
-	err      error
+	folders     []client.Folder
+	repos       []client.Repo
+	repoFolders map[string][]client.Folder
 
-	modal            modalState
-	dialog           DialogModel
-	actionTarget     *TreeNode
-	movingRepo        *TreeNode
-	preMoveExpanded   map[string]bool
-	moveTargetID      string
-	moveToRoot        bool
-	recentlyMovedID   string
-	expandAfterLoad   string
-	editingNode       *TreeNode
-	editText          string
-	statusMsg         string
+	focusedColumn int
+	folderCursor  int
+	repoCursor    int
+	folderScroll  int
+	repoScroll    int
 
-	spinner      spinner.Model
-	scrollOffset int
-	width        int
-	height       int
-	keys         KeyMap
-}
+	filteredRepos []client.Repo
 
-type dataLoadedMsg struct {
-	folders []client.Folder
-	repos   []client.Repo
-}
+	editingFolder *client.Folder
+	editingRepo   *client.Repo
+	editText      string
 
-type errMsg struct {
-	err error
+	modal    modalState
+	dialog   DialogModel
+
+	loading   bool
+	err       error
+	statusMsg string
+
+	spinner spinner.Model
+	width   int
+	height  int
+	keys    KeyMap
 }
 
 func NewModel(c *client.Client, namespace, server string) Model {
@@ -78,12 +77,13 @@ func NewModel(c *client.Client, namespace, server string) Model {
 	s.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("205"))
 
 	return Model{
-		client:    c,
-		namespace: namespace,
-		server:    server,
-		loading:   true,
-		spinner:   s,
-		keys:      DefaultKeyMap,
+		client:      c,
+		namespace:   namespace,
+		server:      server,
+		loading:     true,
+		spinner:     s,
+		keys:        DefaultKeyMap,
+		repoFolders: make(map[string][]client.Folder),
 	}
 }
 
@@ -107,27 +107,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case dataLoadedMsg:
 		m.loading = false
 		m.folders = msg.folders
-		m.tree = BuildTree(msg.folders, msg.repos)
-		if m.preMoveExpanded != nil {
-			m.restoreFolderStates(m.tree)
-			if m.moveTargetID != "" {
-				m.expandFolderAndAncestors(m.tree, m.moveTargetID)
-			}
-			m.preMoveExpanded = nil
-		}
-		if m.expandAfterLoad != "" {
-			m.expandFolderAndAncestors(m.tree, m.expandAfterLoad)
-			m.expandAfterLoad = ""
-		}
-		m.flatTree = FlattenTree(m.tree)
-		if m.moveTargetID != "" || m.moveToRoot {
-			m.selectFolderByID(m.moveTargetID)
-			m.moveTargetID = ""
-			m.moveToRoot = false
-		} else if m.cursor == 0 && len(m.flatTree) > 1 {
-			m.cursor = 1
-		}
-		m.syncViewportWithCursor()
+		m.repos = msg.repos
+		m.repoFolders = msg.repoFolders
+		m.filterRepos()
 		return m, nil
 
 	case errMsg:
@@ -148,7 +130,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case DialogCancelMsg:
 		m.modal = modalNone
-		m.actionTarget = nil
 		return m, nil
 
 	case FolderCreatedMsg:
@@ -156,7 +137,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.loadData()
 
 	case FolderUpdatedMsg:
-		m.statusMsg = "Folder updated: " + msg.Folder.Name
+		m.statusMsg = "Folder renamed: " + msg.Folder.Name
 		return m, m.loadData()
 
 	case RepoUpdatedMsg:
@@ -165,10 +146,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case RepoDeletedMsg:
 		m.statusMsg = "Repo deleted"
+		if len(m.filteredRepos) <= 1 {
+			m.focusedColumn = columnFolders
+			m.repoCursor = 0
+		} else if m.repoCursor >= len(m.filteredRepos)-1 {
+			m.repoCursor--
+		}
 		return m, m.loadData()
 
 	case FolderDeletedMsg:
 		m.statusMsg = "Folder deleted"
+		if m.folderCursor > 0 {
+			m.folderCursor--
+		}
 		return m, m.loadData()
 
 	case CloneStartedMsg:
@@ -193,14 +183,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	m.statusMsg = ""
-	m.recentlyMovedID = ""
 
-	if m.editingNode != nil {
+	if m.editingFolder != nil || m.editingRepo != nil {
 		return m.handleEditMode(msg)
-	}
-
-	if m.movingRepo != nil {
-		return m.handleMoveMode(msg)
 	}
 
 	switch {
@@ -208,48 +193,41 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 
 	case key.Matches(msg, m.keys.Up):
-		if m.cursor > 0 {
-			m.cursor--
-			m.syncViewportWithCursor()
-		}
+		m.moveCursor(-1)
 		return m, nil
 
 	case key.Matches(msg, m.keys.Down):
-		if m.cursor < len(m.flatTree)-1 {
-			m.cursor++
-			m.syncViewportWithCursor()
-		}
+		m.moveCursor(1)
 		return m, nil
 
 	case key.Matches(msg, m.keys.Left):
-		m.setFolderExpanded(false)
+		if m.focusedColumn == columnRepos {
+			m.focusedColumn = columnFolders
+		}
 		return m, nil
 
 	case key.Matches(msg, m.keys.Right):
-		m.setFolderExpanded(true)
+		if m.focusedColumn == columnFolders && len(m.filteredRepos) > 0 {
+			m.focusedColumn = columnRepos
+		}
+		return m, nil
+
+	case key.Matches(msg, m.keys.Enter):
+		if m.focusedColumn == columnFolders && len(m.filteredRepos) > 0 {
+			m.focusedColumn = columnRepos
+			m.repoCursor = 0
+			m.repoScroll = 0
+		}
 		return m, nil
 
 	case key.Matches(msg, m.keys.NewFolder):
 		return m.openCreateFolder()
-
-	case key.Matches(msg, m.keys.ToggleAll):
-		m.toggleAllFolders()
-		m.flatTree = FlattenTree(m.tree)
-		m.clampCursor()
-		m.syncViewportWithCursor()
-		return m, nil
 
 	case key.Matches(msg, m.keys.Rename):
 		return m.startRename()
 
 	case key.Matches(msg, m.keys.Delete):
 		return m.openDelete()
-
-	case key.Matches(msg, m.keys.Visibility):
-		return m.openToggleVisibility()
-
-	case key.Matches(msg, m.keys.Move):
-		return m.startMove()
 
 	case key.Matches(msg, m.keys.Clone):
 		return m.executeClone("")
@@ -261,47 +239,11 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m Model) handleMoveMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch {
-	case key.Matches(msg, m.keys.Quit):
-		m.movingRepo = nil
-		m.restoreFolderStates(m.tree)
-		m.preMoveExpanded = nil
-		m.flatTree = FlattenTree(m.tree)
-		m.clampCursor()
-		m.syncViewportWithCursor()
-		m.statusMsg = "Move cancelled"
-		return m, nil
-
-	case key.Matches(msg, m.keys.Up):
-		m.moveCursorToFolder(-1)
-		m.ensureFolderContentsVisible()
-		return m, nil
-
-	case key.Matches(msg, m.keys.Down):
-		m.moveCursorToFolder(1)
-		m.ensureFolderContentsVisible()
-		return m, nil
-
-	case key.Matches(msg, m.keys.Left):
-		m.setFolderExpanded(false)
-		return m, nil
-
-	case key.Matches(msg, m.keys.Right):
-		m.setFolderExpanded(true)
-		return m, nil
-
-	case key.Matches(msg, m.keys.Select), key.Matches(msg, m.keys.Move):
-		return m.confirmMove()
-	}
-
-	return m, nil
-}
-
 func (m Model) handleEditMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.Type {
 	case tea.KeyEscape:
-		m.editingNode = nil
+		m.editingFolder = nil
+		m.editingRepo = nil
 		m.editText = ""
 		return m, nil
 
@@ -315,7 +257,9 @@ func (m Model) handleEditMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyRunes:
-		m.editText += string(msg.Runes)
+		if len(m.editText) < 128 {
+			m.editText += string(msg.Runes)
+		}
 		return m, nil
 	}
 
@@ -324,43 +268,114 @@ func (m Model) handleEditMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 func (m Model) submitRename() (tea.Model, tea.Cmd) {
 	newName := m.editText
-	node := m.editingNode
+	editingFolder := m.editingFolder
+	editingRepo := m.editingRepo
 
-	m.editingNode = nil
+	m.editingFolder = nil
+	m.editingRepo = nil
 	m.editText = ""
 
-	if newName == "" || newName == node.Name {
+	if newName == "" {
 		return m, nil
 	}
 
-	if node.Kind == NodeFolder {
-		return m, m.renameFolder(node.ID, newName)
+	if editingFolder != nil {
+		if newName == editingFolder.Name {
+			return m, nil
+		}
+		return m, m.renameFolder(editingFolder.ID, newName)
 	}
-	return m, m.renameRepo(node.ID, newName)
+
+	if editingRepo != nil {
+		if newName == editingRepo.Name {
+			return m, nil
+		}
+		return m, m.renameRepo(editingRepo.ID, newName)
+	}
+
+	return m, nil
 }
 
-func (m *Model) moveCursorToFolder(direction int) {
-	for i := m.cursor + direction; i >= 0 && i < len(m.flatTree); i += direction {
-		if m.flatTree[i].IsContainer() {
-			m.cursor = i
-			return
+func (m *Model) moveCursor(delta int) {
+	switch m.focusedColumn {
+	case columnFolders:
+		m.folderCursor += delta
+		if m.folderCursor < 0 {
+			m.folderCursor = 0
+		}
+		maxFolder := len(m.folders)
+		if m.folderCursor > maxFolder {
+			m.folderCursor = maxFolder
+		}
+		m.syncFolderScroll()
+		m.filterRepos()
+		m.repoCursor = 0
+		m.repoScroll = 0
+
+	case columnRepos:
+		m.repoCursor += delta
+		maxRepo := len(m.filteredRepos) - 1
+		if m.repoCursor < 0 {
+			m.repoCursor = 0
+		} else if m.repoCursor > maxRepo && maxRepo >= 0 {
+			m.repoCursor = maxRepo
+		}
+		m.syncRepoScroll()
+	}
+}
+
+func (m *Model) syncFolderScroll() {
+	viewportHeight := m.mainHeight() - 2
+	if viewportHeight <= 0 {
+		return
+	}
+
+	if m.folderCursor < m.folderScroll {
+		m.folderScroll = m.folderCursor
+	} else if m.folderCursor >= m.folderScroll+viewportHeight {
+		m.folderScroll = m.folderCursor - viewportHeight + 1
+	}
+}
+
+func (m *Model) syncRepoScroll() {
+	viewportHeight := (m.mainHeight() - 2) / 3
+	if viewportHeight <= 0 {
+		return
+	}
+
+	if m.repoCursor < m.repoScroll {
+		m.repoScroll = m.repoCursor
+	} else if m.repoCursor >= m.repoScroll+viewportHeight {
+		m.repoScroll = m.repoCursor - viewportHeight + 1
+	}
+}
+
+func (m *Model) filterRepos() {
+	if m.folderCursor == 0 {
+		m.filteredRepos = m.repos
+		return
+	}
+
+	folderIdx := m.folderCursor - 1
+	if folderIdx >= len(m.folders) {
+		m.filteredRepos = nil
+		return
+	}
+
+	selectedFolder := m.folders[folderIdx]
+	var filtered []client.Repo
+
+	for _, repo := range m.repos {
+		folders := m.repoFolders[repo.ID]
+		for _, f := range folders {
+			if f.ID == selectedFolder.ID {
+				filtered = append(filtered, repo)
+				break
+			}
 		}
 	}
-}
 
-func (m *Model) setFolderExpanded(expanded bool) {
-	if m.cursor >= len(m.flatTree) {
-		return
-	}
-	node := m.flatTree[m.cursor]
-	if node.Kind != NodeFolder || node.Expanded == expanded {
-		return
-	}
-	if !expanded && len(node.Children) == 0 {
-		return
-	}
-	node.Expanded = expanded
-	m.flatTree = FlattenTree(m.tree)
+	m.filteredRepos = filtered
 }
 
 func (m Model) handleModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -369,148 +384,87 @@ func (m Model) handleModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-func (m Model) selectedNode() *TreeNode {
-	if m.cursor >= 0 && m.cursor < len(m.flatTree) {
-		return m.flatTree[m.cursor]
+func (m Model) selectedFolder() *client.Folder {
+	if m.folderCursor == 0 || m.folderCursor > len(m.folders) {
+		return nil
 	}
-	return nil
+	return &m.folders[m.folderCursor-1]
+}
+
+func (m Model) selectedRepo() *client.Repo {
+	if m.repoCursor < 0 || m.repoCursor >= len(m.filteredRepos) {
+		return nil
+	}
+	return &m.filteredRepos[m.repoCursor]
 }
 
 func (m Model) openCreateFolder() (tea.Model, tea.Cmd) {
-	var parentID *string
-	node := m.selectedNode()
-	if node != nil {
-		switch node.Kind {
-		case NodeRoot:
-		case NodeFolder:
-			parentID = &node.ID
-		case NodeRepo:
-			if node.Repo != nil {
-				parentID = node.Repo.FolderID
-			}
-		}
-	}
-
 	m.modal = modalCreateFolder
 	m.dialog = NewNameInputDialog("New Folder", "Enter folder name:", "folder-name")
-	m.actionTarget = &TreeNode{ParentID: parentID}
 	return m, m.dialog.Init()
 }
 
 func (m Model) startRename() (tea.Model, tea.Cmd) {
-	node := m.selectedNode()
-	if node == nil || (node.Kind != NodeRepo && node.Kind != NodeFolder) {
+	if m.focusedColumn == columnFolders {
+		folder := m.selectedFolder()
+		if folder == nil {
+			return m, nil
+		}
+		m.editingFolder = folder
+		m.editText = folder.Name
 		return m, nil
 	}
 
-	m.editingNode = node
-	m.editText = node.Name
+	if m.focusedColumn == columnRepos {
+		repo := m.selectedRepo()
+		if repo == nil {
+			return m, nil
+		}
+		m.editingRepo = repo
+		m.editText = repo.Name
+		return m, nil
+	}
+
 	return m, nil
 }
 
 func (m Model) openDelete() (tea.Model, tea.Cmd) {
-	node := m.selectedNode()
-	if node == nil || node.Kind == NodeRoot {
-		return m, nil
-	}
-
-	m.actionTarget = node
-	if node.Kind == NodeRepo {
-		m.modal = modalDeleteRepo
-		m.dialog = NewConfirmDialog(
-			"Delete Repo",
-			fmt.Sprintf("Are you sure you want to delete '%s'?\nThis cannot be undone.", node.Name),
-		)
-	} else {
+	if m.focusedColumn == columnFolders {
+		folder := m.selectedFolder()
+		if folder == nil {
+			return m, nil
+		}
 		m.modal = modalDeleteFolder
 		m.dialog = NewConfirmDialog(
 			"Delete Folder",
-			fmt.Sprintf("Are you sure you want to delete folder '%s'?\nContents will be moved to root.", node.Name),
+			fmt.Sprintf("Delete folder '%s'?\nRepos will be unlinked, not deleted.", folder.Name),
 		)
-	}
-	return m, nil
-}
-
-func (m Model) openToggleVisibility() (tea.Model, tea.Cmd) {
-	node := m.selectedNode()
-	if node == nil || node.Kind != NodeRepo || node.Repo == nil {
 		return m, nil
 	}
 
-	newVisibility := "public"
-	if node.Repo.Public {
-		newVisibility = "private"
-	}
-
-	m.modal = modalToggleVisibility
-	m.dialog = NewConfirmDialog(
-		"Change Visibility",
-		fmt.Sprintf("Make '%s' %s?", node.Name, newVisibility),
-	)
-	m.actionTarget = node
-	return m, nil
-}
-
-func (m Model) startMove() (tea.Model, tea.Cmd) {
-	node := m.selectedNode()
-	if node == nil || node.Kind != NodeRepo {
-		return m, nil
-	}
-
-	m.movingRepo = node
-	m.statusMsg = "Moving " + node.Name + " - select destination folder"
-	m.preMoveExpanded = m.saveFolderStates(m.tree)
-	m.flatTree = FlattenTree(m.tree)
-	m.selectContainingFolder(node)
-	m.ensureFolderContentsVisible()
-	return m, nil
-}
-
-func (m *Model) selectContainingFolder(repo *TreeNode) {
-	if repo.Repo == nil || repo.Repo.FolderID == nil {
-		m.cursor = 0
-		return
-	}
-
-	folderID := *repo.Repo.FolderID
-	for i, node := range m.flatTree {
-		if node.Kind == NodeFolder && node.ID == folderID {
-			m.cursor = i
-			return
+	if m.focusedColumn == columnRepos {
+		repo := m.selectedRepo()
+		if repo == nil {
+			return m, nil
 		}
-	}
-	m.cursor = 0
-}
-
-func (m Model) confirmMove() (tea.Model, tea.Cmd) {
-	target := m.selectedNode()
-	if target == nil {
+		m.modal = modalDeleteRepo
+		m.dialog = NewConfirmDialog(
+			"Delete Repo",
+			fmt.Sprintf("Delete '%s'?\nThis cannot be undone.", repo.Name),
+		)
 		return m, nil
 	}
 
-	var folderID *string
-	switch target.Kind {
-	case NodeRoot:
-		m.moveToRoot = true
-		m.moveTargetID = ""
-	case NodeFolder:
-		folderID = &target.ID
-		m.moveTargetID = target.ID
-		m.moveToRoot = false
-	default:
-		m.statusMsg = "Select a folder as the destination"
-		return m, nil
-	}
-
-	repoID := m.movingRepo.ID
-	m.recentlyMovedID = repoID
-	m.movingRepo = nil
-	return m, m.moveRepo(repoID, folderID)
+	return m, nil
 }
 
 func (m Model) openCloneDir() (tea.Model, tea.Cmd) {
-	node := m.selectedNode()
-	if node == nil || node.Kind != NodeRepo {
+	if m.focusedColumn != columnRepos {
+		return m, nil
+	}
+
+	repo := m.selectedRepo()
+	if repo == nil {
 		return m, nil
 	}
 
@@ -518,51 +472,36 @@ func (m Model) openCloneDir() (tea.Model, tea.Cmd) {
 	m.modal = modalCloneDir
 	m.dialog = NewInputDialog("Clone to Directory", "Enter path:", cwd)
 	m.dialog.SetValue(cwd)
-	m.actionTarget = node
 	return m, m.dialog.Init()
 }
 
 func (m Model) handleDialogSubmit(msg DialogSubmitMsg) (tea.Model, tea.Cmd) {
 	modal := m.modal
-	target := m.actionTarget
 	m.modal = modalNone
-	m.actionTarget = nil
 
 	switch modal {
 	case modalCreateFolder:
 		if msg.Value == "" {
 			return m, nil
 		}
-		var parentID *string
-		if target != nil {
-			parentID = target.ParentID
-		}
-		if parentID != nil {
-			m.expandAfterLoad = *parentID
-		}
-		return m, m.createFolder(msg.Value, parentID)
+		return m, m.createFolder(msg.Value)
 
 	case modalDeleteRepo:
-		if target == nil {
+		repo := m.selectedRepo()
+		if repo == nil {
 			return m, nil
 		}
-		return m, m.deleteRepo(target.ID)
+		return m, m.deleteRepo(repo.ID)
 
 	case modalDeleteFolder:
-		if target == nil {
+		folder := m.selectedFolder()
+		if folder == nil {
 			return m, nil
 		}
-		return m, m.deleteFolder(target.ID)
-
-	case modalToggleVisibility:
-		if target == nil || target.Repo == nil {
-			return m, nil
-		}
-		newPublic := !target.Repo.Public
-		return m, m.updateRepoVisibility(target.ID, newPublic)
+		return m, m.deleteFolder(folder.ID)
 
 	case modalCloneDir:
-		if msg.Value == "" || target == nil {
+		if msg.Value == "" {
 			return m, nil
 		}
 		return m.executeClone(msg.Value)
@@ -571,9 +510,9 @@ func (m Model) handleDialogSubmit(msg DialogSubmitMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m Model) createFolder(name string, parentID *string) tea.Cmd {
+func (m Model) createFolder(name string) tea.Cmd {
 	return func() tea.Msg {
-		folder, err := m.client.CreateFolder(name, parentID)
+		folder, err := m.client.CreateFolder(name)
 		if err != nil {
 			return ActionErrorMsg{Operation: "create folder", Err: err}
 		}
@@ -583,7 +522,7 @@ func (m Model) createFolder(name string, parentID *string) tea.Cmd {
 
 func (m Model) renameRepo(id, name string) tea.Cmd {
 	return func() tea.Msg {
-		repo, err := m.client.UpdateRepo(id, &name, nil, nil)
+		repo, err := m.client.UpdateRepo(id, &name, nil)
 		if err != nil {
 			return ActionErrorMsg{Operation: "rename repo", Err: err}
 		}
@@ -593,7 +532,7 @@ func (m Model) renameRepo(id, name string) tea.Cmd {
 
 func (m Model) renameFolder(id, name string) tea.Cmd {
 	return func() tea.Msg {
-		folder, err := m.client.UpdateFolder(id, &name, nil)
+		folder, err := m.client.UpdateFolder(id, &name)
 		if err != nil {
 			return ActionErrorMsg{Operation: "rename folder", Err: err}
 		}
@@ -619,33 +558,9 @@ func (m Model) deleteFolder(id string) tea.Cmd {
 	}
 }
 
-func (m Model) updateRepoVisibility(id string, public bool) tea.Cmd {
-	return func() tea.Msg {
-		repo, err := m.client.UpdateRepo(id, nil, &public, nil)
-		if err != nil {
-			return ActionErrorMsg{Operation: "update visibility", Err: err}
-		}
-		return RepoUpdatedMsg{Repo: *repo}
-	}
-}
-
-func (m Model) moveRepo(id string, folderID *string) tea.Cmd {
-	return func() tea.Msg {
-		fid := ""
-		if folderID != nil {
-			fid = *folderID
-		}
-		repo, err := m.client.UpdateRepo(id, nil, nil, &fid)
-		if err != nil {
-			return ActionErrorMsg{Operation: "move repo", Err: err}
-		}
-		return RepoUpdatedMsg{Repo: *repo}
-	}
-}
-
 func (m Model) executeClone(targetDir string) (tea.Model, tea.Cmd) {
-	node := m.selectedNode()
-	if node == nil || node.Kind != NodeRepo {
+	repo := m.selectedRepo()
+	if repo == nil {
 		return m, nil
 	}
 
@@ -658,8 +573,8 @@ func (m Model) executeClone(targetDir string) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	cloneURL := m.buildCloneURL(node.Name)
-	repoName := node.Name
+	cloneURL := m.buildCloneURL(repo.Name)
+	repoName := repo.Name
 
 	return m, tea.Batch(
 		func() tea.Msg {
@@ -695,110 +610,6 @@ func (m Model) runClone(cloneURL, targetDir, repoName string) tea.Cmd {
 	}
 }
 
-func (m *Model) clampCursor() {
-	if m.cursor >= len(m.flatTree) {
-		m.cursor = len(m.flatTree) - 1
-	}
-	if m.cursor < 0 {
-		m.cursor = 0
-	}
-}
-
-func (m *Model) toggleAllFolders() {
-	expand := m.hasCollapsedFolder(m.tree)
-	m.setAllFoldersExpanded(m.tree, expand)
-}
-
-func (m *Model) hasCollapsedFolder(nodes []*TreeNode) bool {
-	for _, node := range nodes {
-		if node.Kind == NodeFolder && !node.Expanded && len(node.Children) > 0 {
-			return true
-		}
-		if node.IsContainer() && m.hasCollapsedFolder(node.Children) {
-			return true
-		}
-	}
-	return false
-}
-
-func (m *Model) setAllFoldersExpanded(nodes []*TreeNode, expanded bool) {
-	for _, node := range nodes {
-		if node.Kind == NodeFolder {
-			if expanded || len(node.Children) > 0 {
-				node.Expanded = expanded
-			}
-		}
-		if node.IsContainer() {
-			m.setAllFoldersExpanded(node.Children, expanded)
-		}
-	}
-}
-
-func (m *Model) saveFolderStates(nodes []*TreeNode) map[string]bool {
-	states := make(map[string]bool)
-	m.collectFolderStates(nodes, states)
-	return states
-}
-
-func (m *Model) collectFolderStates(nodes []*TreeNode, states map[string]bool) {
-	for _, node := range nodes {
-		if node.Kind == NodeFolder {
-			states[node.ID] = node.Expanded
-		}
-		if node.IsContainer() {
-			m.collectFolderStates(node.Children, states)
-		}
-	}
-}
-
-func (m *Model) restoreFolderStates(nodes []*TreeNode) {
-	if m.preMoveExpanded == nil {
-		return
-	}
-	for _, node := range nodes {
-		if node.Kind == NodeFolder {
-			if expanded, ok := m.preMoveExpanded[node.ID]; ok {
-				node.Expanded = expanded
-			}
-		}
-		if node.IsContainer() {
-			m.restoreFolderStates(node.Children)
-		}
-	}
-}
-
-func (m *Model) expandFolderAndAncestors(nodes []*TreeNode, id string) bool {
-	for _, node := range nodes {
-		if node.Kind == NodeFolder && node.ID == id {
-			node.Expanded = true
-			return true
-		}
-		if node.IsContainer() {
-			if m.expandFolderAndAncestors(node.Children, id) {
-				if node.Kind == NodeFolder {
-					node.Expanded = true
-				}
-				return true
-			}
-		}
-	}
-	return false
-}
-
-func (m *Model) selectFolderByID(id string) {
-	if id == "" {
-		m.cursor = 0
-		return
-	}
-	for i, node := range m.flatTree {
-		if node.Kind == NodeFolder && node.ID == id {
-			m.cursor = i
-			return
-		}
-	}
-	m.cursor = 0
-}
-
 func (m Model) loadData() tea.Cmd {
 	return func() tea.Msg {
 		folders, _, err := m.client.ListFolders("", 0)
@@ -806,13 +617,40 @@ func (m Model) loadData() tea.Cmd {
 			return errMsg{err}
 		}
 
+		sort.Slice(folders, func(i, j int) bool {
+			return strings.ToLower(folders[i].Name) < strings.ToLower(folders[j].Name)
+		})
+
 		repos, _, err := m.client.ListRepos("", 0)
 		if err != nil {
 			return errMsg{err}
 		}
 
-		return dataLoadedMsg{folders: folders, repos: repos}
+		sort.Slice(repos, func(i, j int) bool {
+			return strings.ToLower(repos[i].Name) < strings.ToLower(repos[j].Name)
+		})
+
+		repoFolders := make(map[string][]client.Folder)
+		for _, repo := range repos {
+			rf, err := m.client.ListRepoFolders(repo.ID)
+			if err != nil {
+				return errMsg{err}
+			}
+			repoFolders[repo.ID] = rf
+		}
+
+		return dataLoadedMsg{
+			folders:     folders,
+			repos:       repos,
+			repoFolders: repoFolders,
+		}
 	}
+}
+
+const headerHeight = 1
+
+func (m Model) mainHeight() int {
+	return m.height - footerHeight - headerHeight
 }
 
 func (m Model) View() string {
@@ -820,9 +658,10 @@ func (m Model) View() string {
 		return ""
 	}
 
-	mainHeight := m.height - footerHeight
+	mainHeight := m.mainHeight()
 
 	sections := []string{
+		"",
 		m.mainContentView(mainHeight),
 		m.footerView(),
 	}
@@ -842,37 +681,177 @@ func (m Model) overlayModal(background string) string {
 
 func (m Model) mainContentView(height int) string {
 	if m.loading {
-		return lipgloss.NewStyle().Height(height).Render(m.loadingView())
+		return lipgloss.NewStyle().Height(height).Padding(0, 1).Render(m.loadingView())
 	}
 
 	if m.err != nil {
-		return lipgloss.NewStyle().Height(height).Render(m.errorView())
+		return lipgloss.NewStyle().Height(height).Padding(0, 1).Render(m.errorView())
 	}
 
-	return lipgloss.NewStyle().Height(height).Render(m.visibleTreeView(height))
+	contentWidth := m.width - 2 - 4
+	folderWidth := contentWidth / 4
+	repoWidth := contentWidth / 3
+	detailWidth := contentWidth - folderWidth - repoWidth
+
+	folderColumn := m.renderFolderColumn(folderWidth, height)
+	repoColumn := m.renderRepoColumn(repoWidth, height)
+	detailColumn := m.renderDetailColumn(detailWidth, height)
+
+	gap := "  "
+	content := lipgloss.JoinHorizontal(lipgloss.Top, folderColumn, gap, repoColumn, gap, detailColumn)
+	return lipgloss.NewStyle().Padding(0, 1).Render(content)
 }
 
-func (m Model) visibleTreeView(height int) string {
-	if len(m.flatTree) == 0 {
-		return StyleSubtle.Render("  No repositories found")
-	}
-
+func (m Model) renderFolderColumn(width, height int) string {
 	var b strings.Builder
 
-	end := m.scrollOffset + height
-	if end > len(m.flatTree) {
-		end = len(m.flatTree)
-	}
+	b.WriteString(StyleHeader.Width(width).Render(" Folders"))
+	b.WriteString("\n\n")
 
-	for i := m.scrollOffset; i < end; i++ {
-		if i > m.scrollOffset {
-			b.WriteString("\n")
+	viewportHeight := height - 2
+
+	allReposLabel := "All Repos"
+	countStr := fmt.Sprintf("%d", len(m.repos))
+
+	if m.folderCursor == 0 {
+		prefix := "  "
+		if m.focusedColumn == columnFolders {
+			prefix = "→ "
 		}
-		line := m.renderNode(m.flatTree[i], i == m.cursor)
+		left := prefix + allReposLabel
+		line := m.rightAlignInWidth(left, countStr, width)
+		b.WriteString(StyleSelected.Width(width).Render(line))
+	} else {
+		left := "  " + allReposLabel
+		line := m.rightAlignInWidth(left, StyleMetaText.Render(countStr), width)
 		b.WriteString(line)
 	}
+	b.WriteString("\n")
 
-	return b.String()
+	endIdx := m.folderScroll + viewportHeight - 1
+	if endIdx > len(m.folders) {
+		endIdx = len(m.folders)
+	}
+	startIdx := m.folderScroll
+	if startIdx < 0 {
+		startIdx = 0
+	}
+
+	for i := startIdx; i < endIdx; i++ {
+		folder := m.folders[i]
+		cursorIdx := i + 1
+
+		count := 0
+		for _, repo := range m.repos {
+			for _, f := range m.repoFolders[repo.ID] {
+				if f.ID == folder.ID {
+					count++
+					break
+				}
+			}
+		}
+
+		countStr := fmt.Sprintf("%d", count)
+
+		isEditing := m.editingFolder != nil && m.editingFolder.ID == folder.ID
+		isSelected := cursorIdx == m.folderCursor
+
+		prefix := "  "
+		if isSelected && m.focusedColumn == columnFolders {
+			prefix = "→ "
+		}
+
+		countWidth := lipgloss.Width(countStr)
+		maxNameWidth := width - lipgloss.Width(prefix) - countWidth - 2
+
+		if isEditing {
+			visibleText := truncateEditText(m.editText, maxNameWidth)
+			line := prefix + visibleText + "█"
+			b.WriteString(StyleEditing.Width(width).Render(line))
+		} else if isSelected {
+			name := truncateWithEllipsis(folder.Name, maxNameWidth)
+			left := prefix + name
+			line := m.rightAlignInWidth(left, countStr, width)
+			b.WriteString(StyleSelected.Width(width).Render(line))
+		} else {
+			name := truncateWithEllipsis(folder.Name, maxNameWidth)
+			left := prefix + name
+			line := m.rightAlignInWidth(left, StyleMetaText.Render(countStr), width)
+			b.WriteString(line)
+		}
+		b.WriteString("\n")
+	}
+
+	return lipgloss.NewStyle().Width(width).Height(height).Render(b.String())
+}
+
+func (m Model) renderRepoColumn(width, height int) string {
+	var b strings.Builder
+
+	b.WriteString(StyleHeader.Width(width).Render(" Repositories"))
+	b.WriteString("\n\n")
+
+	if len(m.filteredRepos) == 0 {
+		b.WriteString(StyleSubtle.Render("  No repositories"))
+		b.WriteString("\n")
+	} else {
+		viewportHeight := (height - 2) / 3
+
+		endIdx := m.repoScroll + viewportHeight
+		if endIdx > len(m.filteredRepos) {
+			endIdx = len(m.filteredRepos)
+		}
+		startIdx := m.repoScroll
+		if startIdx < 0 {
+			startIdx = 0
+		}
+
+		for i := startIdx; i < endIdx; i++ {
+			repo := m.filteredRepos[i]
+			isEditing := m.editingRepo != nil && m.editingRepo.ID == repo.ID
+			isSelected := i == m.repoCursor && m.focusedColumn == columnRepos
+
+			meta := formatRepoMeta(repo)
+
+			prefix := "  "
+			if isSelected {
+				prefix = "→ "
+			}
+			maxNameWidth := width - lipgloss.Width(prefix) - 1
+
+			if isEditing {
+				visibleText := truncateEditText(m.editText, maxNameWidth)
+				line := prefix + visibleText + "█"
+				b.WriteString(StyleEditing.Width(width).Render(line))
+			} else if isSelected {
+				name := truncateWithEllipsis(repo.Name, maxNameWidth)
+				line := StyleSelected.Width(width).Render(prefix + name)
+				b.WriteString(line)
+			} else {
+				name := truncateWithEllipsis(repo.Name, maxNameWidth)
+				b.WriteString(prefix + name)
+			}
+			b.WriteString("\n")
+			b.WriteString(StyleMetaText.Render(meta))
+			b.WriteString("\n\n")
+		}
+	}
+
+	return lipgloss.NewStyle().Width(width).Height(height).Render(b.String())
+}
+
+func (m Model) renderDetailColumn(width, height int) string {
+	var b strings.Builder
+
+	repo := m.selectedRepo()
+	if repo != nil {
+		name := truncateWithEllipsis(repo.Name, width-2)
+		b.WriteString(StyleHeader.Width(width).Render(" " + name))
+	} else {
+		b.WriteString(StyleHeader.Width(width).Render(""))
+	}
+
+	return lipgloss.NewStyle().Width(width).Height(height).Render(b.String())
 }
 
 func (m Model) loadingView() string {
@@ -883,179 +862,6 @@ func (m Model) errorView() string {
 	return StyleError.Render(fmt.Sprintf("\n  Error: %v\n", m.err))
 }
 
-func (m *Model) syncViewportWithCursor() {
-	m.ensureCursorVisible()
-}
-
-func (m *Model) ensureCursorVisible() {
-	if len(m.flatTree) == 0 {
-		return
-	}
-
-	viewportHeight := m.height - footerHeight
-	if viewportHeight <= 0 {
-		return
-	}
-
-	top := m.scrollOffset
-	bottom := top + viewportHeight - 1
-
-	if m.cursor < top {
-		m.scrollOffset = m.cursor
-	} else if m.cursor > bottom {
-		m.scrollOffset = m.cursor - viewportHeight + 1
-	}
-}
-
-func (m *Model) ensureFolderContentsVisible() {
-	if m.cursor < 0 || m.cursor >= len(m.flatTree) {
-		return
-	}
-
-	viewportHeight := m.height - footerHeight
-	if viewportHeight <= 0 {
-		return
-	}
-
-	node := m.flatTree[m.cursor]
-	if !node.IsContainer() {
-		m.ensureCursorVisible()
-		return
-	}
-
-	contentLines := m.countFolderContents(m.cursor)
-
-	if contentLines <= viewportHeight {
-		endLine := m.cursor + contentLines - 1
-		if endLine > m.scrollOffset+viewportHeight-1 {
-			m.scrollOffset = endLine - viewportHeight + 1
-		}
-		if m.cursor < m.scrollOffset {
-			m.scrollOffset = m.cursor
-		}
-	} else {
-		m.scrollOffset = m.cursor
-	}
-}
-
-func (m *Model) countFolderContents(cursorPos int) int {
-	node := m.flatTree[cursorPos]
-	count := 1
-	for i := cursorPos + 1; i < len(m.flatTree); i++ {
-		if m.flatTree[i].Depth <= node.Depth {
-			break
-		}
-		count++
-	}
-	return count
-}
-
-func (m Model) renderNode(node *TreeNode, selected bool) string {
-	indent := strings.Repeat("  ", node.Depth)
-	isMoving := m.movingRepo != nil && m.movingRepo.ID == node.ID
-	isRecentlyMoved := m.recentlyMovedID != "" && m.recentlyMovedID == node.ID
-	isEditing := m.editingNode != nil && m.editingNode.ID == node.ID
-
-	icon, name, badge, details := m.nodeContent(node, isMoving)
-
-	if isEditing {
-		line := indent + icon + m.editText + "█"
-		return StyleEditing.Width(m.width).Render(line)
-	}
-
-	left := indent + icon + name + badge
-
-	if selected {
-		return StyleSelected.Width(m.width).Render(m.renderWithDetails(left, details))
-	}
-
-	if isMoving {
-		return StyleMoving.Render(left)
-	}
-
-	if isRecentlyMoved {
-		return StyleRecentlyMoved.Width(m.width).Render(m.renderWithDetails(left, details))
-	}
-
-	icon, name, details = m.styledNodeContent(node, icon, name, details)
-	left = indent + icon + name + badge
-	return m.renderWithDetails(left, details)
-}
-
-func (m Model) nodeContent(node *TreeNode, isMoving bool) (icon, name, badge, details string) {
-	name = node.Name
-
-	switch node.Kind {
-	case NodeRoot:
-		icon = "◆ "
-		details = "last push  repo size"
-
-	case NodeFolder:
-		icon = folderIcon(node.Expanded, len(node.Children) > 0)
-
-	case NodeRepo:
-		if isMoving {
-			badge = " [moving]"
-		} else if node.Repo != nil {
-			details = fmt.Sprintf("%9s  %9s",
-				formatRelativeTime(node.Repo.LastPushAt),
-				formatSize(node.Repo.SizeBytes))
-		}
-	}
-
-	return icon, name, badge, details
-}
-
-func folderIcon(expanded, hasChildren bool) string {
-	if hasChildren {
-		if expanded {
-			return "▼ "
-		}
-		return "▶ "
-	}
-	if expanded {
-		return "▽ "
-	}
-	return "▷ "
-}
-
-func (m Model) styledNodeContent(node *TreeNode, icon, name, details string) (string, string, string) {
-	switch node.Kind {
-	case NodeRoot:
-		icon = StyleRootIcon.Render(icon)
-		name = StyleRootName.Render(name)
-		if details != "" {
-			details = StyleColumnHeader.Render(details)
-		}
-	case NodeFolder:
-		icon = StyleFolderIcon.Render(icon)
-		name = StyleFolderName.Render(name)
-	case NodeRepo:
-		name = StyleRepoName.Render(name)
-		if details != "" {
-			details = StyleSubtle.Render(details)
-		}
-	}
-	return icon, name, details
-}
-
-func (m Model) renderWithDetails(left, details string) string {
-	if details == "" {
-		return left
-	}
-
-	leftLen := lipgloss.Width(left)
-	detailsLen := lipgloss.Width(details)
-	padding := 1
-	gap := m.width - leftLen - detailsLen - padding
-
-	if gap < 2 {
-		return left
-	}
-
-	return left + strings.Repeat(" ", gap) + details
-}
-
 func (m Model) footerView() string {
 	namespaceBadge := StyleFooterNamespace.Render(m.namespace)
 	badgeWidth := lipgloss.Width(namespaceBadge)
@@ -1064,11 +870,11 @@ func (m Model) footerView() string {
 	if m.statusMsg != "" {
 		helpContent = StyleStatusMsg.Render(m.statusMsg)
 	} else {
-		var nodeKind *NodeKind
-		if node := m.selectedNode(); node != nil {
-			nodeKind = &node.Kind
+		ctx := contextualHelp{
+			inFolderColumn: m.focusedColumn == columnFolders,
+			inRepoColumn:   m.focusedColumn == columnRepos,
 		}
-		helpContent = m.keys.ShortHelp(nodeKind, m.movingRepo != nil)
+		helpContent = m.keys.ShortHelp(ctx)
 	}
 
 	return namespaceBadge + StyleFooterHelp.Width(m.width-badgeWidth).Render(helpContent)
@@ -1082,6 +888,46 @@ func Run(c *client.Client, namespace, server string) error {
 
 	_, err := p.Run()
 	return err
+}
+
+func formatRepoMeta(repo client.Repo) string {
+	return fmt.Sprintf("  %s • %s", formatSize(repo.SizeBytes), formatRelativeTime(repo.LastPushAt))
+}
+
+func (m Model) rightAlignInWidth(left, right string, width int) string {
+	leftLen := lipgloss.Width(left)
+	rightLen := lipgloss.Width(right)
+	gap := width - leftLen - rightLen
+	if gap < 1 {
+		gap = 1
+	}
+	return left + strings.Repeat(" ", gap) + right
+}
+
+func truncateWithEllipsis(s string, maxWidth int) string {
+	if lipgloss.Width(s) <= maxWidth {
+		return s
+	}
+	for i := len(s) - 1; i >= 0; i-- {
+		truncated := s[:i] + "…"
+		if lipgloss.Width(truncated) <= maxWidth {
+			return truncated
+		}
+	}
+	return "…"
+}
+
+func truncateEditText(s string, maxWidth int) string {
+	if lipgloss.Width(s) <= maxWidth {
+		return s
+	}
+	for i := 1; i < len(s); i++ {
+		visible := s[i:]
+		if lipgloss.Width(visible) <= maxWidth {
+			return visible
+		}
+	}
+	return s[len(s)-1:]
 }
 
 func formatSize(bytes int) string {
