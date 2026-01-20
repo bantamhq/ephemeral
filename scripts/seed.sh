@@ -163,11 +163,47 @@ create_repo "blog" public "$TYPESCRIPT"
 create_repo "resume" private "$DOCS"
 create_repo "scripts" private "$PYTHON"
 
+###############################################################################
+# Copy pre-made repos with commit history
+###############################################################################
+echo ""
+echo "Adding commit history to repos..."
+
+DATA_DIR="${EPHEMERAL_DATA_DIR:-$HOME/.ephemeral}"
+NS_ID=$(api GET /namespace | grep -o '"id":"[^"]*"' | cut -d'"' -f4)
+REPO_DIR="$DATA_DIR/repos/$NS_ID"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+SEED_REPOS="$SCRIPT_DIR/seed-repos"
+
+copy_seed_repo() {
+    local name=$1
+    local src="$SEED_REPOS/$name.git"
+    local dest="$REPO_DIR/$name.git"
+
+    if [ ! -d "$src" ]; then
+        echo "  $name (seed repo not found, skipping)"
+        return
+    fi
+
+    if [ ! -d "$dest" ]; then
+        echo "  $name (target repo not found, skipping)"
+        return
+    fi
+
+    rm -rf "$dest"
+    cp -r "$src" "$dest"
+    echo "  $name"
+}
+
+copy_seed_repo "admin-panel"
+copy_seed_repo "analytics-pipeline"
+
 echo ""
 echo "Seed complete!"
 echo ""
 echo "Summary:"
 echo "  Folders: 13"
 echo "  Repos: 35"
+echo "  Repos with history: 2"
 echo ""
 echo "Run the TUI to see the data: ./ephemeral"

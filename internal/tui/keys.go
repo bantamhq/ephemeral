@@ -2,12 +2,20 @@ package tui
 
 import "github.com/charmbracelet/bubbles/key"
 
+const (
+	columnFolders = 0
+	columnRepos   = 1
+	columnDetail  = 2
+)
+
 type KeyMap struct {
 	Up            key.Binding
 	Down          key.Binding
 	Left          key.Binding
 	Right         key.Binding
 	Enter         key.Binding
+	Tab           key.Binding
+	Escape        key.Binding
 	Quit          key.Binding
 	NewFolder     key.Binding
 	Rename        key.Binding
@@ -37,6 +45,14 @@ var DefaultKeyMap = KeyMap{
 	Enter: key.NewBinding(
 		key.WithKeys("enter"),
 		key.WithHelp("enter", "select"),
+	),
+	Tab: key.NewBinding(
+		key.WithKeys("tab"),
+		key.WithHelp("tab", "switch tab"),
+	),
+	Escape: key.NewBinding(
+		key.WithKeys("esc"),
+		key.WithHelp("esc", "back"),
 	),
 	Quit: key.NewBinding(
 		key.WithKeys("q", "ctrl+c"),
@@ -70,10 +86,12 @@ var DefaultKeyMap = KeyMap{
 
 func (k KeyMap) ShortHelp(focusedColumn int) string {
 	switch focusedColumn {
-	case 0: // columnFolders
+	case columnFolders:
 		return "n new folder • r rename • d delete"
-	case 1: // columnRepos
-		return "r rename • d delete • c clone • m folders"
+	case columnRepos:
+		return "tab switch tab • enter details • c clone • m folders"
+	case columnDetail:
+		return "↑↓ scroll • tab switch tab • esc back"
 	default:
 		return ""
 	}

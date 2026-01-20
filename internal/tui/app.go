@@ -13,6 +13,7 @@ import (
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/rmhubbert/bubbletea-overlay"
 
@@ -30,9 +31,12 @@ const (
 	modalManageFolders
 )
 
+type detailTab int
+
 const (
-	columnFolders = 0
-	columnRepos   = 1
+	tabInfo detailTab = iota
+	tabActivity
+	tabFiles
 )
 
 const footerHeight = 1
@@ -55,7 +59,7 @@ type Model struct {
 
 	filteredRepos []client.Repo
 
-	repoNextCursor string
+	repoNextCursor  string
 	repoHasMore     bool
 	repoLoadingMore bool
 
@@ -66,6 +70,13 @@ type Model struct {
 	modal        modalState
 	dialog       DialogModel
 	folderPicker FolderPickerModel
+
+	detailTab       detailTab
+	detailScroll    int
+	detailLoading   bool
+	detailCache     map[string]*RepoDetail
+	currentDetail   *RepoDetail
+	lastLoadedRepo  string
 
 	loading   bool
 	err       error
@@ -90,6 +101,7 @@ func NewModel(c *client.Client, namespace, server string) Model {
 		spinner:     s,
 		keys:        DefaultKeyMap,
 		repoFolders: make(map[string][]client.Folder),
+		detailCache: make(map[string]*RepoDetail),
 	}
 }
 
@@ -216,6 +228,29 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case repoFolderRemovedMsg:
 		m.repoFolders[msg.RepoID] = m.removeFolderFromList(m.repoFolders[msg.RepoID], msg.FolderID)
 		return m, nil
+
+	case DetailLoadedMsg:
+		m.detailLoading = false
+		if msg.Err != nil {
+			m.statusMsg = "Failed to load details: " + msg.Err.Error()
+			return m, nil
+		}
+		detail := &RepoDetail{
+			RepoID:  msg.RepoID,
+			Refs:    msg.Refs,
+			Commits: msg.Commits,
+			Tree:    msg.Tree,
+			Readme:  msg.Readme,
+		}
+		for _, ref := range msg.Refs {
+			if ref.IsDefault {
+				detail.DefaultRef = ref.Name
+				break
+			}
+		}
+		m.detailCache[msg.RepoID] = detail
+		m.currentDetail = detail
+		return m, nil
 	}
 
 	return m, nil
@@ -232,19 +267,44 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, m.keys.Quit):
 		return m, tea.Quit
 
-	case key.Matches(msg, m.keys.Up):
-		m.moveCursor(-1)
+	case key.Matches(msg, m.keys.Tab):
+		m.detailTab = (m.detailTab + 1) % 3
+		m.detailScroll = 0
 		return m, nil
 
-	case key.Matches(msg, m.keys.Down):
-		m.moveCursor(1)
-		if cmd := m.maybeLoadMoreRepos(); cmd != nil {
-			return m, cmd
+	case key.Matches(msg, m.keys.Escape):
+		if m.focusedColumn == columnDetail {
+			m.focusedColumn = columnRepos
+			m.detailScroll = 0
 		}
 		return m, nil
 
+	case key.Matches(msg, m.keys.Up):
+		if m.focusedColumn == columnDetail {
+			if m.detailScroll > 0 {
+				m.detailScroll--
+			}
+			return m, nil
+		}
+		m.moveCursor(-1)
+		return m, m.maybeLoadDetail()
+
+	case key.Matches(msg, m.keys.Down):
+		if m.focusedColumn == columnDetail {
+			m.detailScroll++
+			return m, nil
+		}
+		m.moveCursor(1)
+		if cmd := m.maybeLoadMoreRepos(); cmd != nil {
+			return m, tea.Batch(cmd, m.maybeLoadDetail())
+		}
+		return m, m.maybeLoadDetail()
+
 	case key.Matches(msg, m.keys.Left):
-		if m.focusedColumn == columnRepos {
+		if m.focusedColumn == columnDetail {
+			m.focusedColumn = columnRepos
+			m.detailScroll = 0
+		} else if m.focusedColumn == columnRepos {
 			m.focusedColumn = columnFolders
 		}
 		return m, nil
@@ -252,12 +312,22 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, m.keys.Right):
 		if m.focusedColumn == columnFolders {
 			m.focusedColumn = columnRepos
+			return m, m.maybeLoadDetail()
+		} else if m.focusedColumn == columnRepos {
+			m.focusedColumn = columnDetail
+			m.detailScroll = 0
+			return m, m.maybeLoadDetail()
 		}
 		return m, nil
 
 	case key.Matches(msg, m.keys.Enter):
 		if m.focusedColumn == columnFolders {
 			m.focusedColumn = columnRepos
+			return m, m.maybeLoadDetail()
+		} else if m.focusedColumn == columnRepos {
+			m.focusedColumn = columnDetail
+			m.detailScroll = 0
+			return m, m.maybeLoadDetail()
 		}
 		return m, nil
 
@@ -268,18 +338,33 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case key.Matches(msg, m.keys.Rename):
+		if m.focusedColumn == columnDetail {
+			return m, nil
+		}
 		return m.startRename()
 
 	case key.Matches(msg, m.keys.Delete):
+		if m.focusedColumn == columnDetail {
+			return m, nil
+		}
 		return m.openDelete()
 
 	case key.Matches(msg, m.keys.Clone):
+		if m.focusedColumn == columnDetail {
+			return m, nil
+		}
 		return m.executeClone("")
 
 	case key.Matches(msg, m.keys.CloneDir):
+		if m.focusedColumn == columnDetail {
+			return m, nil
+		}
 		return m.openCloneDir()
 
 	case key.Matches(msg, m.keys.ManageFolders):
+		if m.focusedColumn == columnDetail {
+			return m, nil
+		}
 		return m.openManageFolders()
 	}
 
@@ -849,6 +934,84 @@ func (m Model) loadMoreRepos() tea.Cmd {
 	}
 }
 
+func (m *Model) maybeLoadDetail() tea.Cmd {
+	repo := m.selectedRepo()
+	if repo == nil {
+		m.currentDetail = nil
+		return nil
+	}
+
+	if m.lastLoadedRepo == repo.ID {
+		return nil
+	}
+
+	if cached, ok := m.detailCache[repo.ID]; ok {
+		m.currentDetail = cached
+		m.lastLoadedRepo = repo.ID
+		return nil
+	}
+
+	m.detailLoading = true
+	m.lastLoadedRepo = repo.ID
+	return m.loadDetail(repo.ID)
+}
+
+func (m Model) loadDetail(repoID string) tea.Cmd {
+	return func() tea.Msg {
+		refs, _ := m.client.ListRefs(repoID)
+
+		var defaultRef string
+		for _, ref := range refs {
+			if ref.IsDefault {
+				defaultRef = ref.Name
+				break
+			}
+		}
+
+		if defaultRef == "" && len(refs) > 0 {
+			defaultRef = refs[0].Name
+		}
+
+		var commits []client.Commit
+		var tree []client.TreeEntry
+		var readme *string
+
+		if defaultRef != "" {
+			commits, _, _ = m.client.ListCommits(repoID, defaultRef, "", 20)
+			tree, _ = m.client.GetTree(repoID, defaultRef, "")
+
+			for _, entry := range tree {
+				nameLower := strings.ToLower(entry.Name)
+				if nameLower == "readme.md" || nameLower == "readme" || nameLower == "readme.txt" {
+					blob, err := m.client.GetBlob(repoID, defaultRef, entry.Name)
+					if err == nil && blob.Content != nil && !blob.IsBinary {
+						content := *blob.Content
+						if strings.HasSuffix(nameLower, ".md") {
+							rendered, err := glamour.Render(content, "dark")
+							if err == nil {
+								readme = &rendered
+							} else {
+								readme = &content
+							}
+						} else {
+							readme = &content
+						}
+					}
+					break
+				}
+			}
+		}
+
+		return DetailLoadedMsg{
+			RepoID:  repoID,
+			Refs:    refs,
+			Commits: commits,
+			Tree:    tree,
+			Readme:  readme,
+		}
+	}
+}
+
 const headerHeight = 1
 
 func (m Model) mainHeight() int {
@@ -996,7 +1159,7 @@ func (m Model) renderFolderColumn(width, height int) string {
 func (m Model) renderRepoColumn(width, height int) string {
 	var b strings.Builder
 
-	b.WriteString(StyleHeader.Width(width).Render(" Repositories"))
+	b.WriteString(StyleHeader.Width(width).Render(" Repos"))
 	b.WriteString("\n\n")
 
 	if len(m.filteredRepos) == 0 {
@@ -1033,15 +1196,184 @@ func (m Model) renderRepoColumn(width, height int) string {
 func (m Model) renderDetailColumn(width, height int) string {
 	var b strings.Builder
 
-	repo := m.selectedRepo()
-	if repo != nil && m.focusedColumn == columnRepos {
-		name := truncateWithEllipsis(repo.Name, width-2)
-		b.WriteString(StyleHeader.Width(width).Render(" " + name))
-	} else {
+	if m.focusedColumn == columnFolders {
 		b.WriteString(StyleHeader.Width(width).Render(""))
+		return lipgloss.NewStyle().Width(width).Height(height).Render(b.String())
+	}
+
+	repo := m.selectedRepo()
+	if repo == nil {
+		b.WriteString(StyleHeader.Width(width).Render(""))
+		return lipgloss.NewStyle().Width(width).Height(height).Render(b.String())
+	}
+
+	name := truncateWithEllipsis(repo.Name, width-2)
+	b.WriteString(StyleHeader.Width(width).Render(" " + name))
+	b.WriteString("\n")
+
+	b.WriteString(m.renderDetailTabs(width))
+	b.WriteString("\n")
+
+	contentHeight := height - 3
+	if m.detailLoading {
+		b.WriteString(StyleMetaText.Render("  Loading..."))
+	} else if m.currentDetail == nil {
+		b.WriteString(StyleMetaText.Render("  No data"))
+	} else {
+		var content string
+		switch m.detailTab {
+		case tabInfo:
+			content = m.renderInfoTab(width, contentHeight)
+		case tabActivity:
+			content = m.renderActivityTab(width, contentHeight)
+		case tabFiles:
+			content = m.renderFilesTab(width, contentHeight)
+		}
+		b.WriteString(content)
 	}
 
 	return lipgloss.NewStyle().Width(width).Height(height).Render(b.String())
+}
+
+func (m Model) renderDetailTabs(width int) string {
+	tabs := []string{"Info", "Activity", "Files"}
+	var parts []string
+
+	for i, tab := range tabs {
+		if detailTab(i) == m.detailTab {
+			parts = append(parts, StyleTabActive.Render(" "+tab+" "))
+		} else {
+			parts = append(parts, StyleTabInactive.Render(" "+tab+" "))
+		}
+	}
+
+	return "  " + strings.Join(parts, " ")
+}
+
+func (m Model) renderInfoTab(width, height int) string {
+	if m.currentDetail == nil {
+		return ""
+	}
+
+	var lines []string
+
+	repo := m.selectedRepo()
+	if repo != nil {
+		visibility := "private"
+		if repo.Public {
+			visibility = "public"
+		}
+		lines = append(lines, StyleMetaText.Render("  Visibility: ")+visibility)
+
+		cloneURL := m.buildCloneURL(repo.Name)
+		lines = append(lines, StyleMetaText.Render("  Clone: ")+truncateWithEllipsis(cloneURL, width-10))
+
+		if m.currentDetail.DefaultRef != "" {
+			lines = append(lines, StyleMetaText.Render("  Branch: ")+m.currentDetail.DefaultRef)
+		}
+
+		lines = append(lines, "")
+
+		if folders := m.repoFolders[repo.ID]; len(folders) > 0 {
+			var folderNames []string
+			for _, f := range folders {
+				folderNames = append(folderNames, f.Name)
+			}
+			lines = append(lines, StyleMetaText.Render("  Folders: ")+strings.Join(folderNames, ", "))
+			lines = append(lines, "")
+		}
+	}
+
+	if m.currentDetail.Readme != nil {
+		lines = append(lines, StyleMetaText.Render("  README"))
+		lines = append(lines, "")
+		readmeLines := strings.Split(*m.currentDetail.Readme, "\n")
+		for _, line := range readmeLines {
+			if len(line) > width-4 {
+				line = line[:width-4]
+			}
+			lines = append(lines, "  "+line)
+		}
+	}
+
+	return m.renderScrolledContent(lines, height)
+}
+
+func (m Model) renderActivityTab(width, height int) string {
+	if m.currentDetail == nil || len(m.currentDetail.Commits) == 0 {
+		return StyleMetaText.Render("  No commits")
+	}
+
+	var lines []string
+	for _, commit := range m.currentDetail.Commits {
+		shortSHA := commit.SHA
+		if len(shortSHA) > 7 {
+			shortSHA = shortSHA[:7]
+		}
+
+		message := strings.Split(commit.Message, "\n")[0]
+		maxMsgLen := width - 12
+		if len(message) > maxMsgLen {
+			message = message[:maxMsgLen-1] + "…"
+		}
+
+		timeAgo := formatRelativeTime(&commit.Author.Date)
+
+		lines = append(lines, StyleMetaText.Render("  "+shortSHA)+" "+message)
+		lines = append(lines, StyleMetaText.Render(fmt.Sprintf("    %s • %s", commit.Author.Name, timeAgo)))
+		lines = append(lines, "")
+	}
+
+	return m.renderScrolledContent(lines, height)
+}
+
+func (m Model) renderFilesTab(width, height int) string {
+	if m.currentDetail == nil || len(m.currentDetail.Tree) == 0 {
+		return StyleMetaText.Render("  No files")
+	}
+
+	var lines []string
+	for _, entry := range m.currentDetail.Tree {
+		icon := "[f]"
+		if entry.Type == "dir" {
+			icon = "[d]"
+		}
+
+		name := entry.Name
+		maxNameLen := width - 16
+		if len(name) > maxNameLen {
+			name = name[:maxNameLen-1] + "…"
+		}
+
+		line := "  " + icon + " " + name
+		if entry.Size != nil {
+			line = m.rightAlignInWidth(line, formatSize(int(*entry.Size)), width-2)
+		}
+		lines = append(lines, line)
+	}
+
+	return m.renderScrolledContent(lines, height)
+}
+
+func (m Model) renderScrolledContent(lines []string, height int) string {
+	if len(lines) == 0 {
+		return ""
+	}
+
+	start := m.detailScroll
+	if start >= len(lines) {
+		start = len(lines) - 1
+	}
+	if start < 0 {
+		start = 0
+	}
+
+	end := start + height
+	if end > len(lines) {
+		end = len(lines)
+	}
+
+	return strings.Join(lines[start:end], "\n")
 }
 
 func (m Model) renderRepoItem(name, meta string, maxNameWidth, width int, isEditing, isFocused bool) string {

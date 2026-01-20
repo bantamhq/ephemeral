@@ -82,4 +82,12 @@ var (
 
 	StylePickerSelected = lipgloss.NewStyle().
 				Reverse(true)
+
+	StyleTabActive = lipgloss.NewStyle().
+			Background(colorPrimary).
+			Foreground(colorTextOnPrimary).
+			Bold(true)
+
+	StyleTabInactive = lipgloss.NewStyle().
+				Foreground(colorTextMuted)
 )

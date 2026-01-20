@@ -4,6 +4,9 @@ set -e
 
 cd "$(dirname "$0")/../workspace"
 
+# Kill anything already running on port 8080
+lsof -ti :8080 | xargs kill 2>/dev/null || true
+
 echo "Starting server to capture token..."
 ./ephemeral serve > server.log 2>&1 &
 SERVER_PID=$!
@@ -36,7 +39,7 @@ namespace = "default"
 EOF
 
 echo "Seeding data..."
-../scripts/seed.sh "$TOKEN"
+EPHEMERAL_DATA_DIR="./data" ../scripts/seed.sh "$TOKEN"
 
 echo ""
 echo "Setup complete. Stopping temp server..."

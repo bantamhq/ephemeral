@@ -58,6 +58,46 @@ type Folder struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+type Ref struct {
+	Name      string `json:"name"`
+	Type      string `json:"type"`
+	CommitSHA string `json:"commit_sha"`
+	IsDefault bool   `json:"is_default"`
+}
+
+type Commit struct {
+	SHA        string    `json:"sha"`
+	Message    string    `json:"message"`
+	Author     GitAuthor `json:"author"`
+	Committer  GitAuthor `json:"committer"`
+	ParentSHAs []string  `json:"parent_shas"`
+	TreeSHA    string    `json:"tree_sha"`
+}
+
+type GitAuthor struct {
+	Name  string    `json:"name"`
+	Email string    `json:"email"`
+	Date  time.Time `json:"date"`
+}
+
+type TreeEntry struct {
+	Name string `json:"name"`
+	Path string `json:"path"`
+	Type string `json:"type"`
+	Mode string `json:"mode"`
+	SHA  string `json:"sha"`
+	Size *int64 `json:"size,omitempty"`
+}
+
+type Blob struct {
+	SHA       string  `json:"sha"`
+	Size      int64   `json:"size"`
+	Content   *string `json:"content,omitempty"`
+	Encoding  string  `json:"encoding"`
+	IsBinary  bool    `json:"is_binary"`
+	Truncated bool    `json:"truncated"`
+}
+
 type response struct {
 	Data  json.RawMessage `json:"data,omitempty"`
 	Error string          `json:"error,omitempty"`
@@ -422,4 +462,120 @@ func (c *Client) RemoveRepoFolder(repoID, folderID string) error {
 	}
 
 	return nil
+}
+
+func (c *Client) ListRefs(repoID string) ([]Ref, error) {
+	resp, err := c.doRequest(http.MethodGet, "/api/v1/repos/"+repoID+"/refs")
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, c.decodeError(resp, "list refs")
+	}
+
+	var dataResp response
+	if err := json.NewDecoder(resp.Body).Decode(&dataResp); err != nil {
+		return nil, fmt.Errorf("decode response: %w", err)
+	}
+
+	var refs []Ref
+	if err := json.Unmarshal(dataResp.Data, &refs); err != nil {
+		return nil, fmt.Errorf("decode refs: %w", err)
+	}
+
+	return refs, nil
+}
+
+func (c *Client) ListCommits(repoID, ref, cursor string, limit int) ([]Commit, bool, error) {
+	params := url.Values{}
+	if ref != "" {
+		params.Set("ref", ref)
+	}
+	if cursor != "" {
+		params.Set("cursor", cursor)
+	}
+	if limit > 0 {
+		params.Set("limit", strconv.Itoa(limit))
+	}
+
+	path := "/api/v1/repos/" + repoID + "/commits"
+	if len(params) > 0 {
+		path += "?" + params.Encode()
+	}
+
+	resp, err := c.doRequest(http.MethodGet, path)
+	if err != nil {
+		return nil, false, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, false, c.decodeError(resp, "list commits")
+	}
+
+	var listResp listResponse
+	if err := json.NewDecoder(resp.Body).Decode(&listResp); err != nil {
+		return nil, false, fmt.Errorf("decode response: %w", err)
+	}
+
+	var commits []Commit
+	if err := json.Unmarshal(listResp.Data, &commits); err != nil {
+		return nil, false, fmt.Errorf("decode commits: %w", err)
+	}
+
+	return commits, listResp.HasMore, nil
+}
+
+func (c *Client) GetTree(repoID, ref, path string) ([]TreeEntry, error) {
+	apiPath := "/api/v1/repos/" + repoID + "/tree/" + ref + "/" + path
+
+	resp, err := c.doRequest(http.MethodGet, apiPath)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, c.decodeError(resp, "get tree")
+	}
+
+	var dataResp response
+	if err := json.NewDecoder(resp.Body).Decode(&dataResp); err != nil {
+		return nil, fmt.Errorf("decode response: %w", err)
+	}
+
+	var entries []TreeEntry
+	if err := json.Unmarshal(dataResp.Data, &entries); err != nil {
+		return nil, fmt.Errorf("decode tree: %w", err)
+	}
+
+	return entries, nil
+}
+
+func (c *Client) GetBlob(repoID, ref, path string) (*Blob, error) {
+	apiPath := "/api/v1/repos/" + repoID + "/blob/" + ref + "/" + path
+
+	resp, err := c.doRequest(http.MethodGet, apiPath)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, c.decodeError(resp, "get blob")
+	}
+
+	var dataResp response
+	if err := json.NewDecoder(resp.Body).Decode(&dataResp); err != nil {
+		return nil, fmt.Errorf("decode response: %w", err)
+	}
+
+	var blob Blob
+	if err := json.Unmarshal(dataResp.Data, &blob); err != nil {
+		return nil, fmt.Errorf("decode blob: %w", err)
+	}
+
+	return &blob, nil
 }

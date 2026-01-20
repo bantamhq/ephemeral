@@ -37,24 +37,24 @@ test:
 # Run all API integration tests (self-contained: builds, starts server, runs tests, cleans up)
 # Usage: make test-api
 test-api:
-	@./tests/api/run_all.sh
+	@./scripts/tests/run_all.sh
 
 # Individual API test suites (server must be running)
 # Usage: make test-repos TOKEN=eph_xxx
 test-repos:
-	@./tests/api/repos.sh $(TOKEN)
+	@./scripts/tests/repos.sh $(TOKEN)
 
 test-tokens:
-	@./tests/api/tokens.sh $(TOKEN)
+	@./scripts/tests/tokens.sh $(TOKEN)
 
 test-namespaces:
-	@./tests/api/namespaces.sh $(TOKEN)
+	@./scripts/tests/namespaces.sh $(TOKEN)
 
 test-folders:
-	@./tests/api/folders.sh $(TOKEN)
+	@./scripts/tests/folders.sh $(TOKEN)
 
 test-content:
-	@./tests/api/content.sh $(TOKEN)
+	@./scripts/tests/content.sh $(TOKEN)
 
 # Seed test data (server must be running)
 # Usage: make seed TOKEN=eph_xxx

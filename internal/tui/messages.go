@@ -69,3 +69,21 @@ type repoFolderRemovedMsg struct {
 	RepoID   string
 	FolderID string
 }
+
+type RepoDetail struct {
+	RepoID     string
+	Refs       []client.Ref
+	DefaultRef string
+	Commits    []client.Commit
+	Tree       []client.TreeEntry
+	Readme     *string
+}
+
+type DetailLoadedMsg struct {
+	RepoID  string
+	Refs    []client.Ref
+	Commits []client.Commit
+	Tree    []client.TreeEntry
+	Readme  *string
+	Err     error
+}
