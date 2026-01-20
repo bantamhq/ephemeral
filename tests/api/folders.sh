@@ -98,6 +98,25 @@ expect_contains "$RESPONSE" '"projects"' "contains projects folder"
 expect_contains "$RESPONSE" '"web"' "contains web folder"
 expect_contains "$RESPONSE" '"backend"' "contains backend folder"
 
+# Pagination
+RESPONSE=$(auth_curl "$API/folders?limit=1")
+expect_json "$RESPONSE" '.has_more' "true" "limit=1 has more"
+
+NEXT_CURSOR=$(echo "$RESPONSE" | jq -r '.next_cursor')
+if [ -n "$NEXT_CURSOR" ] && [ "$NEXT_CURSOR" != "null" ]; then
+    pass "limit=1 returns next_cursor"
+else
+    fail "limit=1 returns next_cursor" "non-empty cursor" "$NEXT_CURSOR"
+fi
+
+RESPONSE=$(auth_curl "$API/folders?limit=1&cursor=$NEXT_CURSOR")
+NEXT_NAME=$(echo "$RESPONSE" | jq -r '.data[0].name')
+if [ "$NEXT_NAME" != "$NEXT_CURSOR" ]; then
+    pass "cursor returns next page"
+else
+    fail "cursor returns next page" "different name" "$NEXT_NAME"
+fi
+
 ###############################################################################
 section "Get"
 ###############################################################################
@@ -269,6 +288,17 @@ RESPONSE=$(auth_curl_with "$RO_TOKEN" -X POST \
     -d '{"name":"should-fail"}' \
     "$API/folders")
 expect_contains "$RESPONSE" "Insufficient permissions\|Forbidden" "read-only cannot create folders"
+
+# read-only cannot update folders
+RESPONSE=$(auth_curl_with "$RO_TOKEN" -X PATCH \
+    -H "Content-Type: application/json" \
+    -d '{"name":"should-fail-update"}' \
+    "$API/folders/$FOLDER1_ID")
+expect_contains "$RESPONSE" "Insufficient permissions\|Forbidden" "read-only cannot update folders"
+
+# read-only cannot delete folders
+RESPONSE=$(auth_curl_with "$RO_TOKEN" -X DELETE "$API/folders/$FOLDER1_ID")
+expect_contains "$RESPONSE" "Insufficient permissions\|Forbidden" "read-only cannot delete folders"
 
 ###############################################################################
 summary

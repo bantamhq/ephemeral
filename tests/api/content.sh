@@ -30,6 +30,19 @@ fi
 track_repo "$REPO_ID"
 info "Created repo: $REPO_ID"
 
+info "Creating empty repository..."
+RESPONSE=$(auth_curl -X POST -H "Content-Type: application/json" \
+    -d '{"name":"test-content-empty","public":false}' \
+    "$API/repos")
+
+EMPTY_REPO_ID=$(get_id "$RESPONSE")
+if [ -z "$EMPTY_REPO_ID" ]; then
+    echo "Failed to create empty repo: $RESPONSE"
+    exit 1
+fi
+track_repo "$EMPTY_REPO_ID"
+info "Created empty repo: $EMPTY_REPO_ID"
+
 # Clone and add content
 TMPDIR=$(mktemp -d)
 cd "$TMPDIR"
@@ -76,6 +89,16 @@ rm -rf "$TMPDIR"
 info "Test content pushed"
 
 ###############################################################################
+section "Empty Repository"
+###############################################################################
+
+RESPONSE=$(auth_curl "$API/repos/$EMPTY_REPO_ID/refs")
+expect_contains "$RESPONSE" "Repository is empty" "empty repo refs returns error"
+
+RESPONSE=$(auth_curl "$API/repos/$EMPTY_REPO_ID/commits")
+expect_contains "$RESPONSE" "Repository is empty" "empty repo commits returns error"
+
+###############################################################################
 section "Refs"
 ###############################################################################
 
@@ -104,6 +127,10 @@ expect_contains "$RESPONSE" '"message":"Update README' "ref=main works"
 RESPONSE=$(auth_curl "$API/repos/$REPO_ID/commits?limit=1")
 expect_json "$RESPONSE" '.has_more' "true" "limit=1 has_more=true"
 expect_json "$RESPONSE" '.data | length' "1" "limit=1 returns 1 commit"
+
+# Invalid cursor
+RESPONSE=$(auth_curl "$API/repos/$REPO_ID/commits?cursor=0000000000000000000000000000000000000000")
+expect_contains "$RESPONSE" "Invalid cursor" "invalid cursor rejected"
 
 # Tag ref
 RESPONSE=$(auth_curl "$API/repos/$REPO_ID/commits?ref=v1.0.0")
@@ -150,6 +177,13 @@ expect_json "$RESPONSE" '.data.is_binary' "true" "binary.dat is_binary=true"
 # Raw mode
 RESPONSE=$(auth_curl "$API/repos/$REPO_ID/blob/main/README.md?raw=true")
 expect_contains "$RESPONSE" "Test Repository" "raw mode returns content"
+
+CONTENT_TYPE=$(auth_curl -o /dev/null -w "%{content_type}" "$API/repos/$REPO_ID/blob/main/README.md?raw=true")
+if [ "$CONTENT_TYPE" = "text/markdown; charset=utf-8" ]; then
+    pass "raw mode content-type set"
+else
+    fail "raw mode content-type set" "text/markdown; charset=utf-8" "$CONTENT_TYPE"
+fi
 
 ###############################################################################
 section "Error Cases"

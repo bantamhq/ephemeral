@@ -39,6 +39,17 @@ fi
 expect_contains "$RESPONSE" '"token":"eph_' "returns token value"
 expect_json "$RESPONSE" '.data.scope' "read-only" "scope is read-only"
 
+# Create token with default scope
+RESPONSE=$(auth_curl -X POST -H "Content-Type: application/json" \
+    -d '{"name":"test-default-scope"}' \
+    "$API/tokens")
+
+TOKEN_DEFAULT_ID=$(get_id "$RESPONSE")
+if [ -n "$TOKEN_DEFAULT_ID" ]; then
+    track_token "$TOKEN_DEFAULT_ID"
+fi
+expect_json "$RESPONSE" '.data.scope' "read-only" "default scope is read-only"
+
 # Create repos scope token
 RESPONSE=$(auth_curl -X POST -H "Content-Type: application/json" \
     -d '{"name":"test-repos","scope":"repos"}' \
@@ -68,6 +79,13 @@ RESPONSE=$(auth_curl -X POST -H "Content-Type: application/json" \
 
 expect_contains "$RESPONSE" "Invalid scope" "invalid scope rejected"
 
+# Negative expiration should fail
+RESPONSE=$(auth_curl -X POST -H "Content-Type: application/json" \
+    -d '{"name":"bad-expiry","scope":"read-only","expires_in_seconds":-10}' \
+    "$API/tokens")
+
+expect_contains "$RESPONSE" "cannot be negative" "negative expiration rejected"
+
 ###############################################################################
 section "Scope Restrictions"
 ###############################################################################
@@ -90,6 +108,10 @@ RESPONSE=$(auth_curl_with "$REPOS_TOKEN" -X POST \
     "$API/tokens")
 
 expect_contains "$RESPONSE" "Insufficient permissions\|Forbidden" "repos cannot create tokens"
+
+# repos scope cannot list tokens
+RESPONSE=$(auth_curl_with "$REPOS_TOKEN" "$API/tokens")
+expect_contains "$RESPONSE" "Insufficient permissions\|Forbidden" "repos cannot list tokens"
 
 # repos scope can create repos
 RESPONSE=$(auth_curl_with "$REPOS_TOKEN" -X POST \
@@ -127,6 +149,25 @@ expect_contains "$RESPONSE" "Insufficient permissions\|Forbidden" "read-only can
 # read-only can list repos
 RESPONSE=$(auth_curl_with "$RO_TOKEN" "$API/repos")
 expect_contains "$RESPONSE" '"data"' "read-only can list repos"
+
+# Create full-scope token
+RESPONSE=$(auth_curl -X POST -H "Content-Type: application/json" \
+    -d '{"name":"test-full-scope","scope":"full"}' \
+    "$API/tokens")
+
+FULL_TOKEN=$(echo "$RESPONSE" | jq -r '.data.token')
+FULL_TOKEN_ID=$(get_id "$RESPONSE")
+if [ -n "$FULL_TOKEN_ID" ]; then
+    track_token "$FULL_TOKEN_ID"
+fi
+
+# full scope cannot create admin tokens
+RESPONSE=$(auth_curl_with "$FULL_TOKEN" -X POST \
+    -H "Content-Type: application/json" \
+    -d '{"name":"should-fail","scope":"admin"}' \
+    "$API/tokens")
+
+expect_contains "$RESPONSE" "Cannot create token with higher scope" "full cannot create admin token"
 
 ###############################################################################
 section "Delete"
@@ -167,6 +208,25 @@ track_token "$SELF_TOKEN_ID"
 # Try to delete self
 RESPONSE=$(auth_curl_with "$SELF_TOKEN" -X DELETE "$API/tokens/$SELF_TOKEN_ID")
 expect_contains "$RESPONSE" "Cannot delete current token" "self-delete prevented"
+
+###############################################################################
+section "Expiration"
+###############################################################################
+
+RESPONSE=$(auth_curl -X POST -H "Content-Type: application/json" \
+    -d '{"name":"expire-soon","scope":"read-only","expires_in_seconds":1}' \
+    "$API/tokens")
+
+EXP_TOKEN=$(echo "$RESPONSE" | jq -r '.data.token')
+EXP_TOKEN_ID=$(get_id "$RESPONSE")
+if [ -n "$EXP_TOKEN_ID" ]; then
+    track_token "$EXP_TOKEN_ID"
+fi
+
+sleep 2
+
+RESPONSE=$(auth_curl_with "$EXP_TOKEN" "$API/repos")
+expect_contains "$RESPONSE" "Token expired" "expired token rejected"
 
 ###############################################################################
 summary

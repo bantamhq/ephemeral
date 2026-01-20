@@ -22,6 +22,16 @@ expect_contains "$RESPONSE" '"data"' "returns data array"
 expect_contains "$RESPONSE" '"default"' "contains default namespace"
 
 ###############################################################################
+section "Current Namespace"
+###############################################################################
+
+RESPONSE=$(auth_curl "$API/namespace")
+expect_json "$RESPONSE" '.data.name' "default" "current namespace returned"
+
+RESPONSE=$(anon_curl "$API/namespace")
+expect_contains "$RESPONSE" "Authentication required" "anonymous current namespace denied"
+
+###############################################################################
 section "Create"
 ###############################################################################
 
@@ -65,6 +75,13 @@ RESPONSE=$(auth_curl -X POST -H "Content-Type: application/json" \
     "$API/namespaces")
 
 expect_contains "$RESPONSE" "required" "empty name rejected"
+
+# Invalid name should fail
+RESPONSE=$(auth_curl -X POST -H "Content-Type: application/json" \
+    -d '{"name":"bad/name"}' \
+    "$API/namespaces")
+
+expect_contains "$RESPONSE" "path separators" "invalid name rejected"
 
 ###############################################################################
 section "Get"
@@ -121,6 +138,10 @@ RESPONSE=$(auth_curl_with "$REPOS_TOKEN" -X POST \
     -d '{"name":"should-fail"}' \
     "$API/namespaces")
 expect_contains "$RESPONSE" "Admin access required\|Forbidden" "repos cannot create namespaces"
+
+# repos scope can access current namespace
+RESPONSE=$(auth_curl_with "$REPOS_TOKEN" "$API/namespace")
+expect_json "$RESPONSE" '.data.name' "default" "repos can access current namespace"
 
 ###############################################################################
 summary

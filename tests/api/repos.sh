@@ -44,6 +44,17 @@ if [ -n "$REPO2_ID" ]; then
 fi
 expect_json "$RESPONSE" '.data.public' "true" "public=true"
 
+# Create repo with uppercase name (should normalize)
+RESPONSE=$(auth_curl -X POST -H "Content-Type: application/json" \
+    -d '{"name":"Test-Repo-Upper","public":false}' \
+    "$API/repos")
+
+REPO3_ID=$(get_id "$RESPONSE")
+if [ -n "$REPO3_ID" ]; then
+    track_repo "$REPO3_ID"
+fi
+expect_json "$RESPONSE" '.data.name' "test-repo-upper" "name normalized to lowercase"
+
 # Duplicate name should fail
 RESPONSE=$(auth_curl -X POST -H "Content-Type: application/json" \
     -d '{"name":"test-repo-1","public":false}' \
@@ -57,6 +68,20 @@ RESPONSE=$(auth_curl -X POST -H "Content-Type: application/json" \
     "$API/repos")
 
 expect_contains "$RESPONSE" "required" "empty name rejected"
+
+# Path separators should fail
+RESPONSE=$(auth_curl -X POST -H "Content-Type: application/json" \
+    -d '{"name":"bad/name","public":false}' \
+    "$API/repos")
+
+expect_contains "$RESPONSE" "path separators" "path separators rejected"
+
+# Dot-dot should fail
+RESPONSE=$(auth_curl -X POST -H "Content-Type: application/json" \
+    -d '{"name":"bad..name","public":false}' \
+    "$API/repos")
+
+expect_contains "$RESPONSE" "cannot contain '..'" "dot-dot rejected"
 
 ###############################################################################
 section "Get"
@@ -83,6 +108,43 @@ expect_contains "$RESPONSE" "test-repo-public" "contains test-repo-public"
 # Has data array
 expect_json_length "$RESPONSE" '.data' "2" "returns at least 2 repos"
 
+# expand=folders returns folder associations
+RESPONSE=$(auth_curl -X POST -H "Content-Type: application/json" \
+    -d '{"name":"expand-folder"}' \
+    "$API/folders")
+
+EXPAND_FOLDER_ID=$(get_id "$RESPONSE")
+if [ -n "$EXPAND_FOLDER_ID" ]; then
+    track_folder "$EXPAND_FOLDER_ID"
+fi
+
+auth_curl -X POST -H "Content-Type: application/json" \
+    -d "{\"folder_ids\":[\"$EXPAND_FOLDER_ID\"]}" \
+    "$API/repos/$REPO1_ID/folders" > /dev/null
+
+RESPONSE=$(auth_curl "$API/repos?expand=folders")
+FOLDER_COUNT=$(echo "$RESPONSE" | jq -r --arg id "$REPO1_ID" '.data[] | select(.id == $id) | (.folders // []) | length')
+[ "$FOLDER_COUNT" = "1" ] && pass "expand=folders includes folder list" || fail "expand=folders includes folder list" "1" "$FOLDER_COUNT"
+
+# Pagination
+RESPONSE=$(auth_curl "$API/repos?limit=1")
+expect_json "$RESPONSE" '.has_more' "true" "limit=1 has more"
+
+NEXT_CURSOR=$(echo "$RESPONSE" | jq -r '.next_cursor')
+if [ -n "$NEXT_CURSOR" ] && [ "$NEXT_CURSOR" != "null" ]; then
+    pass "limit=1 returns next_cursor"
+else
+    fail "limit=1 returns next_cursor" "non-empty cursor" "$NEXT_CURSOR"
+fi
+
+RESPONSE=$(auth_curl "$API/repos?limit=1&cursor=$NEXT_CURSOR")
+NEXT_NAME=$(echo "$RESPONSE" | jq -r '.data[0].name')
+if [ "$NEXT_NAME" != "$NEXT_CURSOR" ]; then
+    pass "cursor returns next page"
+else
+    fail "cursor returns next page" "different name" "$NEXT_NAME"
+fi
+
 ###############################################################################
 section "Update"
 ###############################################################################
@@ -94,12 +156,26 @@ RESPONSE=$(auth_curl -X PATCH -H "Content-Type: application/json" \
 
 expect_json "$RESPONSE" '.data.name' "test-repo-renamed" "name changed"
 
+# Update with invalid name should fail
+RESPONSE=$(auth_curl -X PATCH -H "Content-Type: application/json" \
+    -d '{"name":"bad/name"}' \
+    "$API/repos/$REPO1_ID")
+
+expect_contains "$RESPONSE" "path separators" "update: path separators rejected"
+
 # Update public flag
 RESPONSE=$(auth_curl -X PATCH -H "Content-Type: application/json" \
     -d '{"public":true}' \
     "$API/repos/$REPO1_ID")
 
 expect_json "$RESPONSE" '.data.public' "true" "public changed to true"
+
+# Rename to existing name should fail
+RESPONSE=$(auth_curl -X PATCH -H "Content-Type: application/json" \
+    -d '{"name":"test-repo-renamed"}' \
+    "$API/repos/$REPO2_ID")
+
+expect_contains "$RESPONSE" "already exists" "update: duplicate name rejected"
 
 # Verify changes persisted
 RESPONSE=$(auth_curl "$API/repos/$REPO1_ID")
@@ -149,6 +225,27 @@ RESPONSE=$(anon_curl -X POST -H "Content-Type: application/json" \
     -d '{"name":"anon-repo","public":false}' \
     "$API/repos")
 expect_contains "$RESPONSE" "Authentication required\|Unauthorized" "anonymous create denied"
+
+# Create read-only token
+RESPONSE=$(auth_curl -X POST -H "Content-Type: application/json" \
+    -d '{"name":"repo-readonly","scope":"read-only"}' \
+    "$API/tokens")
+
+RO_TOKEN=$(echo "$RESPONSE" | jq -r '.data.token')
+RO_TOKEN_ID=$(get_id "$RESPONSE")
+if [ -n "$RO_TOKEN_ID" ]; then
+    track_token "$RO_TOKEN_ID"
+fi
+
+# read-only cannot update repos
+RESPONSE=$(auth_curl_with "$RO_TOKEN" -X PATCH -H "Content-Type: application/json" \
+    -d '{"public":false}' \
+    "$API/repos/$REPO2_ID")
+expect_contains "$RESPONSE" "Insufficient permissions\|Forbidden" "read-only cannot update repos"
+
+# read-only cannot delete repos
+RESPONSE=$(auth_curl_with "$RO_TOKEN" -X DELETE "$API/repos/$REPO2_ID")
+expect_contains "$RESPONSE" "Insufficient permissions\|Forbidden" "read-only cannot delete repos"
 
 ###############################################################################
 summary
