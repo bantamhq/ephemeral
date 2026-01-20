@@ -51,15 +51,15 @@ func newInputDialog(title, message, placeholder string, filterNameChar bool) Dia
 	ti := textinput.New()
 	ti.Placeholder = placeholder
 	ti.Focus()
-	ti.CharLimit = 128
-	ti.Width = 30
+	ti.CharLimit = nameMaxLength
+	ti.Width = dialogInputWidth
 
 	return DialogModel{
 		mode:           DialogInput,
 		title:          title,
 		message:        message,
 		input:          ti,
-		width:          40,
+		width:          dialogWidth,
 		filterNameChar: filterNameChar,
 	}
 }
@@ -72,7 +72,7 @@ func NewConfirmDialog(title, message string) DialogModel {
 		confirmText: "Confirm",
 		cancelText:  "Cancel",
 		focused:     1,
-		width:       40,
+		width:       dialogWidth,
 	}
 }
 
@@ -190,8 +190,8 @@ func NewFolderPickerModel(repoID, repoName string, allFolders []FolderPickerItem
 		repoName: repoName,
 		items:    allFolders,
 		cursor:   0,
-		width:    40,
-		height:   15,
+		width:    folderPickerWidth,
+		height:   folderPickerHeight,
 	}
 }
 
@@ -269,7 +269,7 @@ func (f FolderPickerModel) View() string {
 }
 
 func (f FolderPickerModel) visibleRange() (start, end int) {
-	const maxVisible = 8
+	const maxVisible = folderPickerMaxItems
 	start = 0
 	if f.cursor >= maxVisible {
 		start = f.cursor - maxVisible + 1

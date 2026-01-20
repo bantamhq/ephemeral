@@ -40,17 +40,15 @@ const (
 	tabFiles
 )
 
-const footerHeight = 1
-const repoPageSize = 50
-
 type Model struct {
 	client    *client.Client
 	namespace string
 	server    string
 
-	folders     []client.Folder
-	repos       []client.Repo
-	repoFolders map[string][]client.Folder
+	folders      []client.Folder
+	repos        []client.Repo
+	repoFolders  map[string][]client.Folder
+	folderCounts map[string]int
 
 	focusedColumn int
 	folderCursor  int
@@ -76,6 +74,7 @@ type Model struct {
 	detailViewport viewport.Model
 	detailLoading  bool
 	detailCache    map[string]*RepoDetail
+	detailScroll   map[detailTab]int
 	currentDetail  *RepoDetail
 	lastLoadedRepo string
 
@@ -102,7 +101,9 @@ func NewModel(c *client.Client, namespace, server string) Model {
 		spinner:        s,
 		keys:           DefaultKeyMap,
 		repoFolders:    make(map[string][]client.Folder),
+		folderCounts:   make(map[string]int),
 		detailCache:    make(map[string]*RepoDetail),
+		detailScroll:   make(map[detailTab]int),
 		detailViewport: viewport.New(0, 0),
 	}
 }
@@ -114,52 +115,22 @@ func (m Model) Init() tea.Cmd {
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
-		if m.modal != modalNone {
-			return m.handleModalKey(msg)
-		}
-		return m.handleKey(msg)
+		return m.handleKeyMsg(msg)
 
 	case tea.WindowSizeMsg:
-		m.width = msg.Width
-		m.height = msg.Height
-		m.updateViewportSize()
-		m.setViewportContent()
-		return m, nil
+		return m.handleWindowSize(msg)
 
 	case dataLoadedMsg:
-		m.loading = false
-		m.err = nil
-		m.folders = msg.folders
-		m.repos = msg.repos
-		m.repoFolders = msg.repoFolders
-		m.repoNextCursor = msg.repoNextCursor
-		m.repoHasMore = msg.repoHasMore
-		m.filterRepos()
-		return m, nil
+		return m.handleDataLoaded(msg)
 
 	case moreReposLoadedMsg:
-		m.repoLoadingMore = false
-		for _, rwf := range msg.repos {
-			m.repos = append(m.repos, rwf.Repo)
-			m.repoFolders[rwf.ID] = rwf.Folders
-		}
-		m.repoNextCursor = msg.nextCursor
-		m.repoHasMore = msg.hasMore
-		m.filterRepos()
-		return m, nil
+		return m.handleMoreReposLoaded(msg)
 
 	case errMsg:
-		m.loading = false
-		m.err = msg.err
-		return m, nil
+		return m.handleLoadError(msg)
 
 	case spinner.TickMsg:
-		if m.loading {
-			var cmd tea.Cmd
-			m.spinner, cmd = m.spinner.Update(msg)
-			return m, cmd
-		}
-		return m, nil
+		return m.handleSpinnerTick(msg)
 
 	case DialogSubmitMsg:
 		return m.handleDialogSubmit(msg)
@@ -169,52 +140,31 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case FolderCreatedMsg:
-		m.statusMsg = "Folder created: " + msg.Folder.Name
-		return m, m.loadData()
+		return m.reloadWithStatus("Folder created: " + msg.Folder.Name)
 
 	case FolderUpdatedMsg:
-		m.statusMsg = "Folder renamed: " + msg.Folder.Name
-		return m, m.loadData()
+		return m.reloadWithStatus("Folder renamed: " + msg.Folder.Name)
 
 	case RepoUpdatedMsg:
-		m.statusMsg = "Repo updated: " + msg.Repo.Name
-		return m, m.loadData()
+		return m.reloadWithStatus("Repo updated: " + msg.Repo.Name)
 
 	case RepoDeletedMsg:
-		m.statusMsg = "Repo deleted"
-		if len(m.filteredRepos) <= 1 {
-			m.focusedColumn = columnFolders
-			m.repoCursor = 0
-		} else if m.repoCursor >= len(m.filteredRepos)-1 {
-			m.repoCursor--
-		}
-		return m, m.loadData()
+		return m.handleRepoDeleted(msg)
 
 	case FolderDeletedMsg:
-		m.statusMsg = "Folder deleted"
-		if m.folderCursor > 0 {
-			m.folderCursor--
-		}
-		return m, m.loadData()
+		return m.handleFolderDeleted(msg)
 
 	case CloneStartedMsg:
-		m.statusMsg = "Cloning " + msg.RepoName + "..."
-		return m, nil
+		return m.setStatus("Cloning " + msg.RepoName + "...")
 
 	case CloneCompletedMsg:
-		m.statusMsg = "Cloned " + msg.RepoName + " to " + msg.Dir
-		return m, nil
+		return m.setStatus("Cloned " + msg.RepoName + " to " + msg.Dir)
 
 	case CloneFailedMsg:
-		m.statusMsg = "Clone failed: " + msg.Err.Error()
-		return m, nil
+		return m.setStatus("Clone failed: " + msg.Err.Error())
 
 	case ActionErrorMsg:
-		if msg.Operation == "load more repos" {
-			m.repoLoadingMore = false
-		}
-		m.statusMsg = msg.Operation + " failed: " + msg.Err.Error()
-		return m, nil
+		return m.handleActionError(msg)
 
 	case FolderPickerCloseMsg:
 		m.modal = modalNone
@@ -224,42 +174,156 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleFolderToggle(msg)
 
 	case repoFolderAddedMsg:
-		if folder := m.findFolder(msg.FolderID); folder != nil {
-			m.repoFolders[msg.RepoID] = append(m.repoFolders[msg.RepoID], *folder)
-		}
-		return m, nil
+		return m.handleRepoFolderAdded(msg)
 
 	case repoFolderRemovedMsg:
-		m.repoFolders[msg.RepoID] = m.removeFolderFromList(m.repoFolders[msg.RepoID], msg.FolderID)
-		return m, nil
+		return m.handleRepoFolderRemoved(msg)
 
 	case DetailLoadedMsg:
-		m.detailLoading = false
-		if msg.Err != nil {
-			m.statusMsg = "Failed to load details: " + msg.Err.Error()
-			return m, nil
+		return m.handleDetailLoaded(msg)
+	}
+
+	return m, nil
+}
+
+func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.modal != modalNone {
+		return m.handleModalKey(msg)
+	}
+	return m.handleKey(msg)
+}
+
+func (m Model) handleWindowSize(msg tea.WindowSizeMsg) (tea.Model, tea.Cmd) {
+	m.width = msg.Width
+	m.height = msg.Height
+	m.updateViewportSize()
+	m.setViewportContent()
+	return m, nil
+}
+
+func (m Model) handleDataLoaded(msg dataLoadedMsg) (tea.Model, tea.Cmd) {
+	m.loading = false
+	m.err = nil
+	m.folders = msg.folders
+	m.repos = msg.repos
+	m.repoFolders = msg.repoFolders
+	m.repoNextCursor = msg.repoNextCursor
+	m.repoHasMore = msg.repoHasMore
+	m.rebuildFolderCounts()
+	m.filterRepos()
+	return m, nil
+}
+
+func (m Model) handleMoreReposLoaded(msg moreReposLoadedMsg) (tea.Model, tea.Cmd) {
+	m.repoLoadingMore = false
+	for _, rwf := range msg.repos {
+		m.repos = append(m.repos, rwf.Repo)
+		m.repoFolders[rwf.ID] = rwf.Folders
+	}
+	m.repoNextCursor = msg.nextCursor
+	m.repoHasMore = msg.hasMore
+	m.rebuildFolderCounts()
+	m.filterRepos()
+	return m, nil
+}
+
+func (m Model) handleLoadError(msg errMsg) (tea.Model, tea.Cmd) {
+	m.loading = false
+	m.err = msg.err
+	return m, nil
+}
+
+func (m Model) handleSpinnerTick(msg spinner.TickMsg) (tea.Model, tea.Cmd) {
+	if m.loading {
+		var cmd tea.Cmd
+		m.spinner, cmd = m.spinner.Update(msg)
+		return m, cmd
+	}
+	return m, nil
+}
+
+func (m Model) reloadWithStatus(status string) (tea.Model, tea.Cmd) {
+	m.statusMsg = status
+	return m, m.loadData()
+}
+
+func (m Model) setStatus(status string) (tea.Model, tea.Cmd) {
+	m.statusMsg = status
+	return m, nil
+}
+
+func (m Model) handleRepoDeleted(_ RepoDeletedMsg) (tea.Model, tea.Cmd) {
+	m.statusMsg = "Repo deleted"
+	if len(m.filteredRepos) <= 1 {
+		m.focusedColumn = columnFolders
+		m.repoCursor = 0
+	} else if m.repoCursor >= len(m.filteredRepos)-1 {
+		m.repoCursor--
+	}
+	return m, m.loadData()
+}
+
+func (m Model) handleFolderDeleted(_ FolderDeletedMsg) (tea.Model, tea.Cmd) {
+	m.statusMsg = "Folder deleted"
+	if m.folderCursor > 0 {
+		m.folderCursor--
+	}
+	return m, m.loadData()
+}
+
+func (m Model) handleActionError(msg ActionErrorMsg) (tea.Model, tea.Cmd) {
+	if msg.Operation == "load more repos" {
+		m.repoLoadingMore = false
+	}
+	m.statusMsg = msg.Operation + " failed: " + msg.Err.Error()
+	return m, nil
+}
+
+func (m Model) handleRepoFolderAdded(msg repoFolderAddedMsg) (tea.Model, tea.Cmd) {
+	if folder := m.findFolder(msg.FolderID); folder != nil {
+		m.repoFolders[msg.RepoID] = append(m.repoFolders[msg.RepoID], *folder)
+		m.adjustFolderCount(msg.FolderID, 1)
+	}
+	return m, nil
+}
+
+func (m Model) handleRepoFolderRemoved(msg repoFolderRemovedMsg) (tea.Model, tea.Cmd) {
+	m.repoFolders[msg.RepoID] = m.removeFolderFromList(m.repoFolders[msg.RepoID], msg.FolderID)
+	m.adjustFolderCount(msg.FolderID, -1)
+	return m, nil
+}
+
+func (m Model) handleDetailLoaded(msg DetailLoadedMsg) (tea.Model, tea.Cmd) {
+	m.detailLoading = false
+	if msg.Err != nil {
+		m.statusMsg = "Failed to load details: " + msg.Err.Error()
+		if m.lastLoadedRepo == msg.RepoID {
+			m.lastLoadedRepo = ""
 		}
-		detail := &RepoDetail{
-			RepoID:         msg.RepoID,
-			Refs:           msg.Refs,
-			Commits:        msg.Commits,
-			Tree:           msg.Tree,
-			Readme:         msg.Readme,
-			ReadmeFilename: msg.ReadmeFilename,
+		if repo := m.selectedRepo(); repo != nil && repo.ID == msg.RepoID {
+			m.currentDetail = nil
+			m.setViewportContent()
 		}
-		for _, ref := range msg.Refs {
-			if ref.IsDefault {
-				detail.DefaultRef = ref.Name
-				break
-			}
-		}
-		m.detailCache[msg.RepoID] = detail
-		m.currentDetail = detail
-		m.detailViewport.GotoTop()
-		m.setViewportContent()
 		return m, nil
 	}
 
+	detail := &RepoDetail{
+		RepoID:         msg.RepoID,
+		Refs:           msg.Refs,
+		Commits:        msg.Commits,
+		Tree:           msg.Tree,
+		Readme:         msg.Readme,
+		ReadmeFilename: msg.ReadmeFilename,
+	}
+	for _, ref := range msg.Refs {
+		if ref.IsDefault {
+			detail.DefaultRef = ref.Name
+			break
+		}
+	}
+	m.detailCache[msg.RepoID] = detail
+	m.currentDetail = detail
+	m.setViewportContent()
 	return m, nil
 }
 
@@ -280,6 +344,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, m.keys.Up):
 		if m.focusedColumn == columnDetail {
 			m.detailViewport.LineUp(1)
+			m.recordDetailScroll()
 			return m, nil
 		}
 		m.moveCursor(-1)
@@ -288,6 +353,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, m.keys.Down):
 		if m.focusedColumn == columnDetail {
 			m.detailViewport.LineDown(1)
+			m.recordDetailScroll()
 			return m, nil
 		}
 		m.moveCursor(1)
@@ -308,7 +374,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, m.maybeLoadDetail()
 		} else if m.focusedColumn == columnRepos {
 			m.focusedColumn = columnDetail
-			m.detailViewport.GotoTop()
+			m.switchDetailTab(tabReadme)
 			return m, m.maybeLoadDetail()
 		}
 		return m, nil
@@ -362,7 +428,7 @@ func (m Model) handleEscape() (tea.Model, tea.Cmd) {
 	switch m.focusedColumn {
 	case columnDetail:
 		m.focusedColumn = columnRepos
-		m.detailViewport.GotoTop()
+		m.recordDetailScroll()
 	case columnRepos:
 		m.focusedColumn = columnFolders
 	}
@@ -374,11 +440,9 @@ func (m Model) handleLeft() (tea.Model, tea.Cmd) {
 	case columnDetail:
 		if m.detailTab == tabReadme {
 			m.focusedColumn = columnRepos
-			m.detailViewport.GotoTop()
+			m.recordDetailScroll()
 		} else {
-			m.detailTab--
-			m.detailViewport.GotoTop()
-			m.setViewportContent()
+			m.switchDetailTab(m.detailTab - 1)
 		}
 	case columnRepos:
 		m.focusedColumn = columnFolders
@@ -393,14 +457,11 @@ func (m Model) handleRight() (tea.Model, tea.Cmd) {
 		return m, m.maybeLoadDetail()
 	case columnRepos:
 		m.focusedColumn = columnDetail
-		m.detailTab = tabReadme
-		m.detailViewport.GotoTop()
+		m.switchDetailTab(tabReadme)
 		return m, m.maybeLoadDetail()
 	case columnDetail:
 		if m.detailTab < tabFiles {
-			m.detailTab++
-			m.detailViewport.GotoTop()
-			m.setViewportContent()
+			m.switchDetailTab(m.detailTab + 1)
 		}
 	}
 	return m, nil
@@ -424,7 +485,7 @@ func (m Model) handleEditMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyRunes:
-		if len(m.editText) >= 128 {
+		if len(m.editText) >= nameMaxLength {
 			return m, nil
 		}
 		if !validateNameInput(msg.Runes, m.editText) {
@@ -495,10 +556,7 @@ func (m *Model) moveCursor(delta int) {
 }
 
 func (m *Model) syncFolderScroll() {
-	viewportHeight := m.mainHeight() - 2
-	if viewportHeight < 1 {
-		viewportHeight = 1
-	}
+	viewportHeight := listViewportHeight(m.mainHeight())
 
 	if m.folderCursor < m.folderScroll {
 		m.folderScroll = m.folderCursor
@@ -508,10 +566,7 @@ func (m *Model) syncFolderScroll() {
 }
 
 func (m *Model) syncRepoScroll() {
-	viewportHeight := (m.mainHeight() - 2) / 3
-	if viewportHeight < 1 {
-		viewportHeight = 1
-	}
+	viewportHeight := repoViewportHeight(m.mainHeight())
 
 	if m.repoCursor < m.repoScroll {
 		m.repoScroll = m.repoCursor
@@ -526,7 +581,7 @@ func (m *Model) maybeLoadMoreRepos() tea.Cmd {
 	}
 
 	distanceFromEnd := len(m.filteredRepos) - m.repoCursor - 1
-	if distanceFromEnd > 5 {
+	if distanceFromEnd > repoLoadMoreThreshold {
 		return nil
 	}
 
@@ -558,6 +613,46 @@ func (m *Model) filterRepos() {
 		}
 	}
 	m.filteredRepos = filtered
+}
+
+func (m *Model) rebuildFolderCounts() {
+	counts := make(map[string]int, len(m.folders))
+	for _, folder := range m.folders {
+		counts[folder.ID] = 0
+	}
+
+	for _, folders := range m.repoFolders {
+		for _, folder := range folders {
+			if _, ok := counts[folder.ID]; ok {
+				counts[folder.ID]++
+			}
+		}
+	}
+
+	m.folderCounts = counts
+}
+
+func (m *Model) adjustFolderCount(folderID string, delta int) {
+	if m.folderCounts == nil {
+		m.rebuildFolderCounts()
+		return
+	}
+
+	count, ok := m.folderCounts[folderID]
+	if !ok {
+		m.rebuildFolderCounts()
+		return
+	}
+
+	count += delta
+	if count < 0 {
+		count = 0
+	}
+	if count == 0 {
+		delete(m.folderCounts, folderID)
+		return
+	}
+	m.folderCounts[folderID] = count
 }
 
 func (m Model) handleModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -656,7 +751,11 @@ func (m Model) openCloneDir() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	cwd, _ := os.Getwd()
+	cwd, err := os.Getwd()
+	if err != nil {
+		m.statusMsg = "Failed to get current directory: " + err.Error()
+		return m, nil
+	}
 	m.modal = modalCloneDir
 	m.dialog = NewInputDialog("Clone to Directory", "Enter path:", cwd)
 	m.dialog.SetValue(cwd)
@@ -726,9 +825,9 @@ func (m Model) removeRepoFolder(repoID, folderID string) tea.Cmd {
 }
 
 func (m Model) findFolder(id string) *client.Folder {
-	for _, f := range m.folders {
-		if f.ID == id {
-			return &f
+	for i := range m.folders {
+		if m.folders[i].ID == id {
+			return &m.folders[i]
 		}
 	}
 	return nil
@@ -967,7 +1066,10 @@ func (m Model) loadMoreRepos() tea.Cmd {
 func (m *Model) maybeLoadDetail() tea.Cmd {
 	repo := m.selectedRepo()
 	if repo == nil {
+		m.resetDetailScroll()
 		m.currentDetail = nil
+		m.detailLoading = false
+		m.lastLoadedRepo = ""
 		m.setViewportContent()
 		return nil
 	}
@@ -976,14 +1078,17 @@ func (m *Model) maybeLoadDetail() tea.Cmd {
 		return nil
 	}
 
+	m.resetDetailScroll()
+
 	if cached, ok := m.detailCache[repo.ID]; ok {
 		m.currentDetail = cached
 		m.lastLoadedRepo = repo.ID
-		m.detailViewport.GotoTop()
+		m.detailLoading = false
 		m.setViewportContent()
 		return nil
 	}
 
+	m.detailViewport.Height = m.detailViewportHeight()
 	m.detailLoading = true
 	m.lastLoadedRepo = repo.ID
 	return m.loadDetail(repo.ID)
@@ -991,7 +1096,10 @@ func (m *Model) maybeLoadDetail() tea.Cmd {
 
 func (m Model) loadDetail(repoID string) tea.Cmd {
 	return func() tea.Msg {
-		refs, _ := m.client.ListRefs(repoID)
+		refs, err := m.client.ListRefs(repoID)
+		if err != nil {
+			return DetailLoadedMsg{RepoID: repoID, Err: fmt.Errorf("list refs: %w", err)}
+		}
 
 		var defaultRef string
 		for _, ref := range refs {
@@ -1011,14 +1119,23 @@ func (m Model) loadDetail(repoID string) tea.Cmd {
 		var readmeFilename string
 
 		if defaultRef != "" {
-			commits, _, _ = m.client.ListCommits(repoID, defaultRef, "", 20)
-			tree, _ = m.client.GetTree(repoID, defaultRef, "")
+			commits, _, err = m.client.ListCommits(repoID, defaultRef, "", detailCommitsLimit)
+			if err != nil {
+				return DetailLoadedMsg{RepoID: repoID, Err: fmt.Errorf("list commits for %s: %w", defaultRef, err)}
+			}
+			tree, err = m.client.GetTree(repoID, defaultRef, "")
+			if err != nil {
+				return DetailLoadedMsg{RepoID: repoID, Err: fmt.Errorf("get tree for %s: %w", defaultRef, err)}
+			}
 
 			for _, entry := range tree {
 				nameLower := strings.ToLower(entry.Name)
 				if nameLower == "readme.md" || nameLower == "readme" || nameLower == "readme.txt" {
 					blob, err := m.client.GetBlob(repoID, defaultRef, entry.Name)
-					if err == nil && blob.Content != nil && !blob.IsBinary {
+					if err != nil {
+						return DetailLoadedMsg{RepoID: repoID, Err: fmt.Errorf("get readme %q: %w", entry.Name, err)}
+					}
+					if blob.Content != nil && !blob.IsBinary {
 						readme = blob.Content
 						readmeFilename = entry.Name
 					}
@@ -1038,27 +1155,20 @@ func (m Model) loadDetail(repoID string) tea.Cmd {
 	}
 }
 
-const headerHeight = 1
-
 func (m Model) mainHeight() int {
 	return m.height - footerHeight - headerHeight
 }
 
 func (m *Model) updateViewportSize() {
-	contentWidth := max(m.width-6, 30)
-	folderWidth := max(contentWidth/4, 10)
-	repoWidth := max(contentWidth/4, 10)
-	detailWidth := max(contentWidth-folderWidth-repoWidth, 10)
+	layout := m.layoutSizes()
+	viewportHeight := m.detailViewportHeight()
 
-	// Header+static info (3) + tab frame (3 tab rows + 1 padding + 1 border = 5)
-	const tabFrameOverhead = 8
-	viewportHeight := max(m.mainHeight()-tabFrameOverhead, 1)
-
-	m.detailViewport.Width = detailWidth - 2
+	m.detailViewport.Width = max(layout.detailWidth-detailViewportBorderWidth, 1)
 	m.detailViewport.Height = viewportHeight
 }
 
 func (m *Model) setViewportContent() {
+	m.detailViewport.Height = m.detailViewportHeight()
 	if m.currentDetail == nil {
 		m.detailViewport.SetContent("")
 		return
@@ -1076,7 +1186,49 @@ func (m *Model) setViewportContent() {
 		content = m.getFilesContent(width)
 	}
 
-	m.detailViewport.SetContent(content + "\n\n")
+	trimmed := strings.TrimRight(content, "\n")
+	padded := strings.Repeat("\n", detailViewportTopPadding) + trimmed + strings.Repeat("\n", detailViewportBottomPadding)
+	m.detailViewport.SetContent(padded)
+	m.restoreDetailScroll(m.detailTab)
+}
+
+func (m *Model) switchDetailTab(tab detailTab) {
+	if m.detailTab == tab {
+		return
+	}
+
+	m.recordDetailScroll()
+	m.detailTab = tab
+	m.setViewportContent()
+}
+
+func (m *Model) resetDetailScroll() {
+	m.detailScroll = make(map[detailTab]int)
+	m.detailViewport.GotoTop()
+}
+
+func (m *Model) recordDetailScroll() {
+	if m.detailScroll == nil {
+		m.detailScroll = make(map[detailTab]int)
+	}
+	m.detailScroll[m.detailTab] = m.detailViewport.YOffset
+}
+
+func (m *Model) restoreDetailScroll(tab detailTab) {
+	if m.detailScroll == nil {
+		m.detailScroll = make(map[detailTab]int)
+	}
+
+	offset := m.detailScroll[tab]
+	maxOffset := max(m.detailViewport.TotalLineCount()-m.detailViewport.Height, 0)
+	if offset > maxOffset {
+		offset = maxOffset
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	m.detailViewport.YOffset = offset
+	m.detailScroll[tab] = offset
 }
 
 func (m Model) getReadmeContent(width int) string {
@@ -1092,13 +1244,13 @@ func (m Model) getActivityContent(width int) string {
 		return " " + StyleMetaText.Render("No commits")
 	}
 
-	maxMsgLen := max(width-12, 10)
+	maxMsgLen := max(width-activityMessagePadding, activityMessageMinWidth)
 	var b strings.Builder
 
 	for i, commit := range m.currentDetail.Commits {
 		shortSHA := commit.SHA
-		if len(shortSHA) > 7 {
-			shortSHA = shortSHA[:7]
+		if len(shortSHA) > shortSHAWidth {
+			shortSHA = shortSHA[:shortSHAWidth]
 		}
 
 		message := strings.Split(commit.Message, "\n")[0]
@@ -1132,9 +1284,9 @@ func (m Model) getFilesContent(width int) string {
 		}
 
 		name := entry.Name
-		maxNameLen := width - 16
-		if maxNameLen < 5 {
-			maxNameLen = 5
+		maxNameLen := width - fileNamePadding
+		if maxNameLen < fileNameMinWidth {
+			maxNameLen = fileNameMinWidth
 		}
 		if len(name) > maxNameLen {
 			name = name[:maxNameLen-1] + "…"
@@ -1191,16 +1343,13 @@ func (m Model) mainContentView(height int) string {
 		return lipgloss.NewStyle().Height(height).Padding(0, 1).Render(m.errorView())
 	}
 
-	contentWidth := max(m.width-6, 30)
-	folderWidth := max(contentWidth/4, 10)
-	repoWidth := max(contentWidth/4, 10)
-	detailWidth := max(contentWidth-folderWidth-repoWidth, 10)
+	layout := m.layoutSizes()
 
-	folderColumn := m.renderFolderColumn(folderWidth, height)
-	repoColumn := m.renderRepoColumn(repoWidth, height)
-	detailColumn := m.renderDetailColumn(detailWidth, height)
+	folderColumn := m.renderFolderColumn(layout.folderWidth, height)
+	repoColumn := m.renderRepoColumn(layout.repoWidth, height)
+	detailColumn := m.renderDetailColumn(layout.detailWidth, height)
 
-	gap := "  "
+	gap := strings.Repeat(" ", columnGapWidth)
 	content := lipgloss.JoinHorizontal(lipgloss.Top, folderColumn, gap, repoColumn, gap, detailColumn)
 	return lipgloss.NewStyle().Padding(0, 1).Render(content)
 }
@@ -1211,7 +1360,7 @@ func (m Model) renderFolderColumn(width, height int) string {
 	b.WriteString(StyleHeader.Width(width).Render(" Folders"))
 	b.WriteString("\n\n")
 
-	viewportHeight := height - 2
+	viewportHeight := listViewportHeight(height)
 
 	allReposLabel := "All Repos"
 	countStr := fmt.Sprintf("%d", len(m.repos))
@@ -1244,15 +1393,7 @@ func (m Model) renderFolderColumn(width, height int) string {
 		folder := m.folders[i]
 		cursorIdx := i + 1
 
-		count := 0
-		for _, repo := range m.repos {
-			for _, f := range m.repoFolders[repo.ID] {
-				if f.ID == folder.ID {
-					count++
-					break
-				}
-			}
-		}
+		count := m.folderCounts[folder.ID]
 
 		countStr := fmt.Sprintf("%d", count)
 
@@ -1300,7 +1441,7 @@ func (m Model) renderRepoColumn(width, height int) string {
 		return lipgloss.NewStyle().Width(width).Height(height).Render(b.String())
 	}
 
-	viewportHeight := (height - 2) / 3
+	viewportHeight := repoViewportHeight(height)
 	startIdx := m.repoScroll
 	if startIdx < 0 {
 		startIdx = 0
@@ -1348,7 +1489,9 @@ func (m Model) renderDetailColumn(width, height int) string {
 	b.WriteString(staticInfo)
 
 	isActive := m.focusedColumn == columnDetail
-	tabbedContainer := m.renderTabbedContainer(width, height-3-strings.Count(staticInfo, "\n"), isActive)
+	staticInfoLines := m.detailStaticInfoLines()
+	tabbedHeight := detailTabContainerHeight(height, staticInfoLines)
+	tabbedContainer := m.renderTabbedContainer(width, tabbedHeight, isActive)
 	b.WriteString(tabbedContainer)
 
 	return lipgloss.NewStyle().Width(width).Height(height).Render(b.String())
@@ -1374,8 +1517,8 @@ func (m Model) renderStaticInfo(repo *client.Repo, width int) string {
 }
 
 func (m Model) renderTabbedContainer(width, height int, isActive bool) string {
-	if height < 4 {
-		height = 4
+	if height < detailTabMinHeight {
+		height = detailTabMinHeight
 	}
 
 	border := StyleTabBorder
@@ -1384,7 +1527,7 @@ func (m Model) renderTabbedContainer(width, height int, isActive bool) string {
 	}
 
 	tabHeader := m.renderTabHeader(width, border)
-	contentHeight := height - 5
+	contentHeight := height - detailTabFrameRows
 	if contentHeight < 1 {
 		contentHeight = 1
 	}
@@ -1445,7 +1588,7 @@ func (m Model) tabLeftCorner(index int, isActive bool) string {
 }
 
 func (m Model) renderTabContent(width, height int, border lipgloss.Style) string {
-	contentWidth := max(width-2, 1)
+	contentWidth := max(width-tabContentBorderWidth, 1)
 
 	var rawContent string
 	if m.detailLoading {
@@ -1458,9 +1601,6 @@ func (m Model) renderTabContent(width, height int, border lipgloss.Style) string
 
 	lines := strings.Split(rawContent, "\n")
 	var b strings.Builder
-
-	emptyLine := border.Render("│") + strings.Repeat(" ", contentWidth) + border.Render("│")
-	b.WriteString(emptyLine + "\n")
 
 	for i := 0; i < height; i++ {
 		line := ""
@@ -1480,13 +1620,14 @@ func (m Model) renderTabContent(width, height int, border lipgloss.Style) string
 }
 
 func (m Model) renderTabBottomBorder(width int, border lipgloss.Style) string {
+	borderWidth := max(width-tabContentBorderWidth, 1)
 	if m.detailViewport.TotalLineCount() <= m.detailViewport.Height {
-		return border.Render("╰" + strings.Repeat("─", width-2) + "╯")
+		return border.Render("╰" + strings.Repeat("─", borderWidth) + "╯")
 	}
 
 	pct := int(m.detailViewport.ScrollPercent() * 100)
 	pctStr := fmt.Sprintf("[%d%%]", pct)
-	leftDashes := max(width-2-len(pctStr)-2, 1)
+	leftDashes := max(borderWidth-len(pctStr)-tabScrollIndicatorPadding, 1)
 
 	return border.Render("╰" + strings.Repeat("─", leftDashes+1) + pctStr + "─" + "╯")
 }
