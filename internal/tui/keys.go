@@ -79,15 +79,9 @@ var DefaultKeyMap = KeyMap{
 	),
 }
 
-func (k KeyMap) ShortHelp(focusedColumn int) string {
-	switch focusedColumn {
-	case columnFolders:
-		return "n new folder • r rename • d delete • esc back"
-	case columnRepos:
-		return "→ details • c clone • m folders • esc back"
-	case columnDetail:
-		return "↑↓ scroll • ←→ switch tab • esc back"
-	default:
-		return ""
+func (k KeyMap) ShortHelp(hasSelectedRepo bool) string {
+	if hasSelectedRepo {
+		return "c clone • m folders • r rename • d delete"
 	}
+	return "n new folder • r rename • d delete"
 }

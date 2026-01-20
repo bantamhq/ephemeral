@@ -215,6 +215,7 @@ func (m Model) handleDataLoaded(msg dataLoadedMsg) (tea.Model, tea.Cmd) {
 	m.repoHasMore = msg.repoHasMore
 	m.rebuildFolderCounts()
 	m.filterRepos()
+	m.setViewportContent()
 	return m, nil
 }
 
@@ -260,7 +261,7 @@ func (m Model) handleRepoDeleted(_ RepoDeletedMsg) (tea.Model, tea.Cmd) {
 	m.statusMsg = "Repo deleted"
 	if len(m.filteredRepos) <= 1 {
 		m.focusedColumn = columnFolders
-		m.repoCursor = 0
+		m.deselectRepo()
 	} else if m.repoCursor >= len(m.filteredRepos)-1 {
 		m.repoCursor--
 	}
@@ -284,17 +285,29 @@ func (m Model) handleActionError(msg ActionErrorMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleRepoFolderAdded(msg repoFolderAddedMsg) (tea.Model, tea.Cmd) {
-	if folder := m.findFolder(msg.FolderID); folder != nil {
-		m.repoFolders[msg.RepoID] = append(m.repoFolders[msg.RepoID], *folder)
-		m.adjustFolderCount(msg.FolderID, 1)
-	}
+	m.applyRepoFolderAdded(msg.RepoID, msg.FolderID)
 	return m, nil
 }
 
 func (m Model) handleRepoFolderRemoved(msg repoFolderRemovedMsg) (tea.Model, tea.Cmd) {
-	m.repoFolders[msg.RepoID] = m.removeFolderFromList(m.repoFolders[msg.RepoID], msg.FolderID)
-	m.adjustFolderCount(msg.FolderID, -1)
+	m.applyRepoFolderRemoved(msg.RepoID, msg.FolderID)
 	return m, nil
+}
+
+func (m *Model) applyRepoFolderAdded(repoID, folderID string) {
+	folder := m.findFolder(folderID)
+	if folder == nil {
+		return
+	}
+	m.repoFolders[repoID] = append(m.repoFolders[repoID], *folder)
+	m.adjustFolderCount(folderID, 1)
+	m.setViewportContent()
+}
+
+func (m *Model) applyRepoFolderRemoved(repoID, folderID string) {
+	m.repoFolders[repoID] = m.removeFolderFromList(m.repoFolders[repoID], folderID)
+	m.adjustFolderCount(folderID, -1)
+	m.setViewportContent()
 }
 
 func (m Model) handleDetailLoaded(msg DetailLoadedMsg) (tea.Model, tea.Cmd) {
@@ -377,33 +390,18 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case key.Matches(msg, m.keys.Rename):
-		if m.focusedColumn == columnDetail {
-			return m, nil
-		}
 		return m.startRename()
 
 	case key.Matches(msg, m.keys.Delete):
-		if m.focusedColumn == columnDetail {
-			return m, nil
-		}
 		return m.openDelete()
 
 	case key.Matches(msg, m.keys.Clone):
-		if m.focusedColumn == columnDetail {
-			return m, nil
-		}
 		return m.executeClone("")
 
 	case key.Matches(msg, m.keys.CloneDir):
-		if m.focusedColumn == columnDetail {
-			return m, nil
-		}
 		return m.openCloneDir()
 
 	case key.Matches(msg, m.keys.ManageFolders):
-		if m.focusedColumn == columnDetail {
-			return m, nil
-		}
 		return m.openManageFolders()
 	}
 
@@ -420,8 +418,12 @@ func (m Model) handleEscape() (tea.Model, tea.Cmd) {
 	case columnDetail:
 		m.focusedColumn = columnRepos
 		m.recordDetailScroll()
+		m.switchDetailTab(tabDetails)
+		return m, nil
 	case columnRepos:
 		m.focusedColumn = columnFolders
+		m.deselectRepo()
+		return m, nil
 	}
 	return m, nil
 }
@@ -429,14 +431,15 @@ func (m Model) handleEscape() (tea.Model, tea.Cmd) {
 func (m Model) handleLeft() (tea.Model, tea.Cmd) {
 	switch m.focusedColumn {
 	case columnDetail:
-		if m.detailTab == tabDetails {
-			m.focusedColumn = columnRepos
-			m.recordDetailScroll()
-		} else {
+		if m.detailTab > tabDetails {
 			m.switchDetailTab(m.detailTab - 1)
+			return m, nil
 		}
+		m.focusedColumn = columnRepos
+		m.recordDetailScroll()
 	case columnRepos:
 		m.focusedColumn = columnFolders
+		m.deselectRepo()
 	}
 	return m, nil
 }
@@ -445,6 +448,9 @@ func (m Model) handleRight() (tea.Model, tea.Cmd) {
 	switch m.focusedColumn {
 	case columnFolders:
 		m.focusedColumn = columnRepos
+		if m.repoCursor < 0 && len(m.filteredRepos) > 0 {
+			m.repoCursor = 0
+		}
 		return m, m.maybeLoadDetail()
 	case columnRepos:
 		m.focusedColumn = columnDetail
@@ -454,6 +460,7 @@ func (m Model) handleRight() (tea.Model, tea.Cmd) {
 		if m.detailTab < tabFiles {
 			m.switchDetailTab(m.detailTab + 1)
 		}
+		return m, nil
 	}
 	return m, nil
 }
@@ -672,6 +679,13 @@ func (m Model) selectedRepo() *client.Repo {
 	return &m.filteredRepos[m.repoCursor]
 }
 
+func (m *Model) deselectRepo() {
+	m.repoCursor = -1
+	m.currentDetail = nil
+	m.lastLoadedRepo = ""
+	m.setViewportContent()
+}
+
 func (m Model) openCreateFolder() (tea.Model, tea.Cmd) {
 	m.modal = modalCreateFolder
 	m.dialog = NewNameInputDialog("New Folder", "Enter folder name:", "folder-name")
@@ -689,16 +703,12 @@ func (m Model) startRename() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	if m.focusedColumn == columnRepos {
-		repo := m.selectedRepo()
-		if repo == nil {
-			return m, nil
-		}
-		m.editingRepo = repo
-		m.editText = repo.Name
+	repo := m.selectedRepo()
+	if repo == nil {
 		return m, nil
 	}
-
+	m.editingRepo = repo
+	m.editText = repo.Name
 	return m, nil
 }
 
@@ -716,24 +726,20 @@ func (m Model) openDelete() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	if m.focusedColumn == columnRepos {
-		repo := m.selectedRepo()
-		if repo == nil {
-			return m, nil
-		}
-		m.modal = modalDeleteRepo
-		m.dialog = NewConfirmDialog(
-			"Delete Repo",
-			fmt.Sprintf("Delete '%s'?\nThis cannot be undone.", repo.Name),
-		)
+	repo := m.selectedRepo()
+	if repo == nil {
 		return m, nil
 	}
-
+	m.modal = modalDeleteRepo
+	m.dialog = NewConfirmDialog(
+		"Delete Repo",
+		fmt.Sprintf("Delete '%s'?\nThis cannot be undone.", repo.Name),
+	)
 	return m, nil
 }
 
 func (m Model) openCloneDir() (tea.Model, tea.Cmd) {
-	if m.focusedColumn != columnRepos {
+	if m.focusedColumn == columnFolders {
 		return m, nil
 	}
 
@@ -754,7 +760,7 @@ func (m Model) openCloneDir() (tea.Model, tea.Cmd) {
 }
 
 func (m Model) openManageFolders() (tea.Model, tea.Cmd) {
-	if m.focusedColumn != columnRepos {
+	if m.focusedColumn == columnFolders {
 		return m, nil
 	}
 
@@ -1144,7 +1150,7 @@ func (m Model) loadDetail(repoID string) tea.Cmd {
 }
 
 func (m Model) mainHeight() int {
-	return m.height - footerHeight - headerHeight
+	return m.height - footerHeight
 }
 
 func (m *Model) updateViewportSize() {
@@ -1219,7 +1225,7 @@ func (m *Model) restoreDetailScroll(tab detailTab) {
 func (m Model) getDetailsContent(width int) string {
 	repo := m.selectedRepo()
 	if repo == nil {
-		return ""
+		return " " + StyleMetaText.Render("Select a repo to see its details")
 	}
 
 	var b strings.Builder
@@ -1328,7 +1334,6 @@ func (m Model) View() string {
 	mainHeight := m.mainHeight()
 
 	sections := []string{
-		"",
 		m.mainContentView(mainHeight),
 		m.footerView(),
 	}
@@ -1363,8 +1368,9 @@ func (m Model) mainContentView(height int) string {
 
 	layout := m.layoutSizes()
 
-	folderColumn := m.renderFolderColumn(layout.folderWidth, height)
-	repoColumn := m.renderRepoColumn(layout.repoWidth, height)
+	listHeight := height - headerHeight
+	folderColumn := "\n" + m.renderFolderColumn(layout.folderWidth, listHeight)
+	repoColumn := "\n" + m.renderRepoColumn(layout.repoWidth, listHeight)
 	detailColumn := m.renderDetailColumn(layout.detailWidth, height)
 
 	gap := strings.Repeat(" ", columnGapWidth)
@@ -1483,17 +1489,6 @@ func (m Model) renderRepoColumn(width, height int) string {
 }
 
 func (m Model) renderDetailColumn(width, height int) string {
-	emptyColumn := lipgloss.NewStyle().Width(width).Height(height).Render("")
-
-	if m.focusedColumn == columnFolders {
-		return emptyColumn
-	}
-
-	repo := m.selectedRepo()
-	if repo == nil {
-		return emptyColumn
-	}
-
 	isActive := m.focusedColumn == columnDetail
 	tabbedHeight := detailTabContainerHeight(height)
 	tabbedContainer := m.renderTabbedContainer(width, tabbedHeight, isActive)
@@ -1688,7 +1683,7 @@ func (m Model) footerView() string {
 	} else if m.statusMsg != "" {
 		helpContent = StyleStatusMsg.Render(m.statusMsg)
 	} else {
-		helpContent = m.keys.ShortHelp(m.focusedColumn)
+		helpContent = m.keys.ShortHelp(m.selectedRepo() != nil)
 	}
 
 	return namespaceBadge + StyleFooterHelp.Width(m.width-badgeWidth).MaxHeight(1).Render(helpContent)
