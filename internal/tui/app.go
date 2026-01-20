@@ -35,6 +35,7 @@ const (
 )
 
 const footerHeight = 1
+const repoPageSize = 50
 
 type Model struct {
 	client    *client.Client
@@ -52,6 +53,10 @@ type Model struct {
 	repoScroll    int
 
 	filteredRepos []client.Repo
+
+	repoNextCursor  string
+	repoHasMore     bool
+	repoLoadingMore bool
 
 	editingFolder *client.Folder
 	editingRepo   *client.Repo
@@ -105,9 +110,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case dataLoadedMsg:
 		m.loading = false
+		m.err = nil
 		m.folders = msg.folders
 		m.repos = msg.repos
 		m.repoFolders = msg.repoFolders
+		m.repoNextCursor = msg.repoNextCursor
+		m.repoHasMore = msg.repoHasMore
+		m.filterRepos()
+		return m, nil
+
+	case moreReposLoadedMsg:
+		m.repoLoadingMore = false
+		for _, rwf := range msg.repos {
+			m.repos = append(m.repos, rwf.Repo)
+			m.repoFolders[rwf.ID] = rwf.Folders
+		}
+		m.repoNextCursor = msg.nextCursor
+		m.repoHasMore = msg.hasMore
 		m.filterRepos()
 		return m, nil
 
@@ -173,6 +192,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case ActionErrorMsg:
+		if msg.Operation == "load more repos" {
+			m.repoLoadingMore = false
+		}
 		m.statusMsg = msg.Operation + " failed: " + msg.Err.Error()
 		return m, nil
 	}
@@ -197,6 +219,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case key.Matches(msg, m.keys.Down):
 		m.moveCursor(1)
+		if cmd := m.maybeLoadMoreRepos(); cmd != nil {
+			return m, cmd
+		}
 		return m, nil
 
 	case key.Matches(msg, m.keys.Left):
@@ -332,8 +357,8 @@ func (m *Model) moveCursor(delta int) {
 
 func (m *Model) syncFolderScroll() {
 	viewportHeight := m.mainHeight() - 2
-	if viewportHeight <= 0 {
-		return
+	if viewportHeight < 1 {
+		viewportHeight = 1
 	}
 
 	if m.folderCursor < m.folderScroll {
@@ -345,8 +370,8 @@ func (m *Model) syncFolderScroll() {
 
 func (m *Model) syncRepoScroll() {
 	viewportHeight := (m.mainHeight() - 2) / 3
-	if viewportHeight <= 0 {
-		return
+	if viewportHeight < 1 {
+		viewportHeight = 1
 	}
 
 	if m.repoCursor < m.repoScroll {
@@ -354,6 +379,20 @@ func (m *Model) syncRepoScroll() {
 	} else if m.repoCursor >= m.repoScroll+viewportHeight {
 		m.repoScroll = m.repoCursor - viewportHeight + 1
 	}
+}
+
+func (m *Model) maybeLoadMoreRepos() tea.Cmd {
+	if m.focusedColumn != columnRepos || !m.repoHasMore || m.repoLoadingMore {
+		return nil
+	}
+
+	distanceFromEnd := len(m.filteredRepos) - m.repoCursor - 1
+	if distanceFromEnd > 5 {
+		return nil
+	}
+
+	m.repoLoadingMore = true
+	return m.loadMoreRepos()
 }
 
 func (m *Model) filterRepos() {
@@ -592,23 +631,50 @@ func (m Model) executeClone(targetDir string) (tea.Model, tea.Cmd) {
 
 func (m Model) buildCloneURL(repoName string) string {
 	baseURL := m.client.BaseURL()
-	token := m.client.Token()
 
 	parsed, err := url.Parse(baseURL)
 	if err != nil {
 		return baseURL + "/git/" + m.namespace + "/" + repoName + ".git"
 	}
 
-	parsed.User = url.UserPassword("x-token", token)
 	parsed.Path = "/git/" + m.namespace + "/" + repoName + ".git"
 	return parsed.String()
 }
 
 func (m Model) runClone(cloneURL, targetDir, repoName string) tea.Cmd {
+	token := m.client.Token()
 	return func() tea.Msg {
 		destPath := filepath.Join(targetDir, repoName)
 
+		// Create temp askpass script to avoid token in command line args
+		askpassFile, err := os.CreateTemp("", "eph-askpass-*")
+		if err != nil {
+			return CloneFailedMsg{RepoName: repoName, Err: fmt.Errorf("create askpass script: %w", err)}
+		}
+		defer os.Remove(askpassFile.Name())
+
+		script := fmt.Sprintf(`#!/bin/sh
+case "$1" in
+    *[Uu]sername*) echo "x-token" ;;
+    *[Pp]assword*) echo "%s" ;;
+esac
+`, token)
+
+		if _, err := askpassFile.WriteString(script); err != nil {
+			return CloneFailedMsg{RepoName: repoName, Err: fmt.Errorf("write askpass script: %w", err)}
+		}
+		askpassFile.Close()
+
+		if err := os.Chmod(askpassFile.Name(), 0700); err != nil {
+			return CloneFailedMsg{RepoName: repoName, Err: fmt.Errorf("chmod askpass script: %w", err)}
+		}
+
 		cmd := exec.Command("git", "clone", cloneURL, destPath)
+		cmd.Env = append(os.Environ(),
+			"GIT_ASKPASS="+askpassFile.Name(),
+			"GIT_TERMINAL_PROMPT=0",
+		)
+
 		if err := cmd.Run(); err != nil {
 			return CloneFailedMsg{RepoName: repoName, Err: err}
 		}
@@ -627,28 +693,50 @@ func (m Model) loadData() tea.Cmd {
 			return strings.ToLower(folders[i].Name) < strings.ToLower(folders[j].Name)
 		})
 
-		repos, _, err := m.client.ListRepos("", 0)
+		reposWithFolders, hasMore, err := m.client.ListReposWithFolders("", repoPageSize)
 		if err != nil {
 			return errMsg{err}
 		}
 
-		sort.Slice(repos, func(i, j int) bool {
-			return strings.ToLower(repos[i].Name) < strings.ToLower(repos[j].Name)
-		})
-
+		repos := make([]client.Repo, len(reposWithFolders))
 		repoFolders := make(map[string][]client.Folder)
-		for _, repo := range repos {
-			rf, err := m.client.ListRepoFolders(repo.ID)
-			if err != nil {
-				return errMsg{err}
-			}
-			repoFolders[repo.ID] = rf
+		for i, rwf := range reposWithFolders {
+			repos[i] = rwf.Repo
+			repoFolders[rwf.ID] = rwf.Folders
+		}
+
+		var nextCursor string
+		if len(repos) > 0 {
+			nextCursor = repos[len(repos)-1].Name
 		}
 
 		return dataLoadedMsg{
-			folders:     folders,
-			repos:       repos,
-			repoFolders: repoFolders,
+			folders:        folders,
+			repos:          repos,
+			repoFolders:    repoFolders,
+			repoNextCursor: nextCursor,
+			repoHasMore:    hasMore,
+		}
+	}
+}
+
+func (m Model) loadMoreRepos() tea.Cmd {
+	cursor := m.repoNextCursor
+	return func() tea.Msg {
+		reposWithFolders, hasMore, err := m.client.ListReposWithFolders(cursor, repoPageSize)
+		if err != nil {
+			return ActionErrorMsg{Operation: "load more repos", Err: err}
+		}
+
+		var nextCursor string
+		if len(reposWithFolders) > 0 {
+			nextCursor = reposWithFolders[len(reposWithFolders)-1].Name
+		}
+
+		return moreReposLoadedMsg{
+			repos:      reposWithFolders,
+			nextCursor: nextCursor,
+			hasMore:    hasMore,
 		}
 	}
 }
@@ -695,9 +783,21 @@ func (m Model) mainContentView(height int) string {
 	}
 
 	contentWidth := m.width - 2 - 4
+	if contentWidth < 30 {
+		contentWidth = 30
+	}
 	folderWidth := contentWidth / 4
+	if folderWidth < 10 {
+		folderWidth = 10
+	}
 	repoWidth := contentWidth / 3
+	if repoWidth < 10 {
+		repoWidth = 10
+	}
 	detailWidth := contentWidth - folderWidth - repoWidth
+	if detailWidth < 10 {
+		detailWidth = 10
+	}
 
 	folderColumn := m.renderFolderColumn(folderWidth, height)
 	repoColumn := m.renderRepoColumn(repoWidth, height)
@@ -726,7 +826,7 @@ func (m Model) renderFolderColumn(width, height int) string {
 		}
 		left := prefix + allReposLabel
 		line := m.rightAlignInWidth(left, countStr, width)
-		b.WriteString(StyleSelected.Width(width).Render(line))
+		b.WriteString(StyleFolderSelected.Width(width).Render(line))
 	} else {
 		left := "  " + allReposLabel
 		line := m.rightAlignInWidth(left, StyleMetaText.Render(countStr), width)
@@ -778,7 +878,7 @@ func (m Model) renderFolderColumn(width, height int) string {
 			name := truncateWithEllipsis(folder.Name, maxNameWidth)
 			left := prefix + name
 			line := m.rightAlignInWidth(left, countStr, width)
-			b.WriteString(StyleSelected.Width(width).Render(line))
+			b.WriteString(StyleFolderSelected.Width(width).Render(line))
 		} else {
 			name := truncateWithEllipsis(folder.Name, maxNameWidth)
 			left := prefix + name
@@ -798,7 +898,7 @@ func (m Model) renderRepoColumn(width, height int) string {
 	b.WriteString("\n\n")
 
 	if len(m.filteredRepos) == 0 {
-		b.WriteString(StyleSubtle.Render("  No repositories"))
+		b.WriteString(StyleMetaText.Render("  No repositories"))
 		b.WriteString("\n")
 		return lipgloss.NewStyle().Width(width).Height(height).Render(b.String())
 	}
@@ -862,9 +962,9 @@ func (m Model) renderRepoItem(name, meta string, maxNameWidth, width int, isEdit
 	}
 
 	truncName := truncateWithEllipsis(name, maxNameWidth)
-	lines.WriteString(StyleFaint.Render(StyleRepoTitle.Render("  " + truncName)))
+	lines.WriteString(StyleRepoTitle.Faint(true).Render("  " + truncName))
 	lines.WriteString("\n")
-	lines.WriteString(StyleFaint.Render(StyleMetaText.Render(meta)))
+	lines.WriteString(StyleMetaText.Faint(true).Render(meta))
 	return lines.String()
 }
 
@@ -881,7 +981,9 @@ func (m Model) footerView() string {
 	badgeWidth := lipgloss.Width(namespaceBadge)
 
 	var helpContent string
-	if m.statusMsg != "" {
+	if m.repoLoadingMore {
+		helpContent = StyleStatusMsg.Render("Loading more repos...")
+	} else if m.statusMsg != "" {
 		helpContent = StyleStatusMsg.Render(m.statusMsg)
 	} else {
 		helpContent = m.keys.ShortHelp(m.focusedColumn)
@@ -905,6 +1007,9 @@ func formatRepoMeta(repo client.Repo) string {
 }
 
 func (m Model) rightAlignInWidth(left, right string, width int) string {
+	if width < 1 {
+		width = 1
+	}
 	leftLen := lipgloss.Width(left)
 	rightLen := lipgloss.Width(right)
 	gap := width - leftLen - rightLen
@@ -918,8 +1023,9 @@ func truncateWithEllipsis(s string, maxWidth int) string {
 	if lipgloss.Width(s) <= maxWidth {
 		return s
 	}
-	for i := len(s) - 1; i >= 0; i-- {
-		truncated := s[:i] + "…"
+	runes := []rune(s)
+	for i := len(runes) - 1; i >= 0; i-- {
+		truncated := string(runes[:i]) + "…"
 		if lipgloss.Width(truncated) <= maxWidth {
 			return truncated
 		}
@@ -931,13 +1037,17 @@ func truncateEditText(s string, maxWidth int) string {
 	if lipgloss.Width(s) <= maxWidth {
 		return s
 	}
-	for i := 1; i < len(s); i++ {
-		visible := s[i:]
+	runes := []rune(s)
+	for i := 1; i < len(runes); i++ {
+		visible := string(runes[i:])
 		if lipgloss.Width(visible) <= maxWidth {
 			return visible
 		}
 	}
-	return s[len(s)-1:]
+	if len(runes) > 0 {
+		return string(runes[len(runes)-1:])
+	}
+	return ""
 }
 
 func formatSize(bytes int) string {

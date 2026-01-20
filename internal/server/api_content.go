@@ -320,7 +320,8 @@ func (s *Server) handleListCommits(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 		if err != nil {
-			break
+			JSONError(w, http.StatusInternalServerError, "Failed to iterate commits")
+			return
 		}
 
 		var parentSHAs []string

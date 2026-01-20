@@ -75,10 +75,10 @@ func SafeNamespacePath(dataDir, namespaceID string) (string, error) {
 }
 
 // parseLimit parses a limit string and returns a valid limit between 1-100.
-// Returns 0 if empty (meaning unlimited), or defaultVal if parsing fails or value is out of range.
+// Returns defaultVal if empty, parsing fails, or value is out of range.
 func parseLimit(limitStr string, defaultVal int) int {
 	if limitStr == "" {
-		return 0
+		return defaultVal
 	}
 	limit, err := strconv.Atoi(limitStr)
 	if err != nil || limit < 1 || limit > 100 {

@@ -2,10 +2,13 @@ package store
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
+	"strings"
 	"time"
 
-	_ "modernc.org/sqlite"
+	sqlite "modernc.org/sqlite"
+	sqlite3 "modernc.org/sqlite/lib"
 )
 
 // SQLiteStore implements the Store interface using SQLite.
@@ -43,14 +46,15 @@ func (s *SQLiteStore) Close() error {
 func (s *SQLiteStore) CreateToken(token *Token) error {
 	query := `
 		INSERT INTO tokens (
-			id, token_hash, name, namespace_id, scope,
+			id, token_hash, token_lookup, name, namespace_id, scope,
 			repo_ids, created_at, expires_at, external_id
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
 
 	_, err := s.db.Exec(query,
 		token.ID,
 		token.TokenHash,
+		token.TokenLookup,
 		ToNullString(token.Name),
 		token.NamespaceID,
 		token.Scope,
@@ -61,27 +65,41 @@ func (s *SQLiteStore) CreateToken(token *Token) error {
 	)
 
 	if err != nil {
+		if isTokenLookupCollision(err) {
+			return ErrTokenLookupCollision
+		}
 		return fmt.Errorf("insert token: %w", err)
 	}
 	return nil
 }
 
-// GetTokenByHash retrieves a token by its hash.
-func (s *SQLiteStore) GetTokenByHash(hash string) (*Token, error) {
+func isTokenLookupCollision(err error) bool {
+	var sqliteErr *sqlite.Error
+	if !errors.As(err, &sqliteErr) {
+		return false
+	}
+
+	return sqliteErr.Code() == sqlite3.SQLITE_CONSTRAINT_UNIQUE
+}
+
+// GetTokenByLookup retrieves a token by namespace and lookup key.
+func (s *SQLiteStore) GetTokenByLookup(namespaceID, lookup string) (*Token, error) {
 	query := `
-		SELECT id, token_hash, name, namespace_id, scope,
+		SELECT id, token_hash, token_lookup, name, namespace_id, scope,
 			   repo_ids, created_at, expires_at, last_used_at, external_id
 		FROM tokens
-		WHERE token_hash = ?
+		WHERE namespace_id = ? AND token_lookup = ?
 	`
 
-	token, err := s.scanToken(s.db.QueryRow(query, hash))
+	token, err := s.scanToken(s.db.QueryRow(query, namespaceID, lookup))
 	if err != nil || token == nil {
 		return token, err
 	}
 
 	go func() {
-		s.db.Exec("UPDATE tokens SET last_used_at = ? WHERE id = ?", time.Now(), token.ID)
+		if _, err := s.db.Exec("UPDATE tokens SET last_used_at = ? WHERE id = ?", time.Now(), token.ID); err != nil {
+			fmt.Printf("Warning: failed to update token last_used_at: %v\n", err)
+		}
 	}()
 
 	return token, nil
@@ -148,7 +166,7 @@ func (s *SQLiteStore) scanRepo(row *sql.Row) (*Repo, error) {
 		&repo.CreatedAt,
 		&repo.UpdatedAt,
 	)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
@@ -208,7 +226,7 @@ func (s *SQLiteStore) scanNamespace(row *sql.Row) (*Namespace, error) {
 		&externalID,
 	)
 
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
@@ -285,49 +303,29 @@ func (s *SQLiteStore) ListNamespaces(cursor string, limit int) ([]Namespace, err
 	return namespaces, rows.Err()
 }
 
-// DeleteNamespace deletes a namespace and cascades to all related data.
+// DeleteNamespace deletes a namespace. Related tokens, repos, and folders are
+// automatically deleted via ON DELETE CASCADE constraints.
 func (s *SQLiteStore) DeleteNamespace(id string) error {
-	tx, err := s.db.Begin()
+	result, err := s.db.Exec("DELETE FROM namespaces WHERE id = ?", id)
 	if err != nil {
-		return fmt.Errorf("begin transaction: %w", err)
-	}
-	defer tx.Rollback()
-
-	// Delete repo_folders for repos in this namespace
-	if _, err := tx.Exec(`
-		DELETE FROM repo_folders
-		WHERE repo_id IN (SELECT id FROM repos WHERE namespace_id = ?)
-	`, id); err != nil {
-		return fmt.Errorf("delete repo folders: %w", err)
-	}
-
-	// Delete folders in this namespace
-	if _, err := tx.Exec("DELETE FROM folders WHERE namespace_id = ?", id); err != nil {
-		return fmt.Errorf("delete folders: %w", err)
-	}
-
-	// Delete tokens in this namespace
-	if _, err := tx.Exec("DELETE FROM tokens WHERE namespace_id = ?", id); err != nil {
-		return fmt.Errorf("delete tokens: %w", err)
-	}
-
-	// Delete repos in this namespace
-	if _, err := tx.Exec("DELETE FROM repos WHERE namespace_id = ?", id); err != nil {
-		return fmt.Errorf("delete repos: %w", err)
-	}
-
-	// Finally delete the namespace itself
-	if _, err := tx.Exec("DELETE FROM namespaces WHERE id = ?", id); err != nil {
 		return fmt.Errorf("delete namespace: %w", err)
 	}
 
-	return tx.Commit()
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("get rows affected: %w", err)
+	}
+	if rows == 0 {
+		return sql.ErrNoRows
+	}
+
+	return nil
 }
 
 // GetTokenByID retrieves a token by ID.
 func (s *SQLiteStore) GetTokenByID(id string) (*Token, error) {
 	query := `
-		SELECT id, token_hash, name, namespace_id, scope,
+		SELECT id, token_hash, token_lookup, name, namespace_id, scope,
 			   repo_ids, created_at, expires_at, last_used_at, external_id
 		FROM tokens
 		WHERE id = ?
@@ -343,6 +341,7 @@ func (s *SQLiteStore) scanToken(row *sql.Row) (*Token, error) {
 	err := row.Scan(
 		&token.ID,
 		&token.TokenHash,
+		&token.TokenLookup,
 		&name,
 		&token.NamespaceID,
 		&token.Scope,
@@ -352,7 +351,7 @@ func (s *SQLiteStore) scanToken(row *sql.Row) (*Token, error) {
 		&lastUsedAt,
 		&externalID,
 	)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
@@ -371,7 +370,7 @@ func (s *SQLiteStore) scanToken(row *sql.Row) (*Token, error) {
 // ListTokens lists tokens in a namespace with cursor-based pagination.
 func (s *SQLiteStore) ListTokens(namespaceID, cursor string, limit int) ([]Token, error) {
 	query := `
-		SELECT id, token_hash, name, namespace_id, scope,
+		SELECT id, token_hash, token_lookup, name, namespace_id, scope,
 			   repo_ids, created_at, expires_at, last_used_at, external_id
 		FROM tokens
 		WHERE namespace_id = ? AND id > ?
@@ -394,6 +393,7 @@ func (s *SQLiteStore) ListTokens(namespaceID, cursor string, limit int) ([]Token
 		if err := rows.Scan(
 			&token.ID,
 			&token.TokenHash,
+			&token.TokenLookup,
 			&name,
 			&token.NamespaceID,
 			&token.Scope,
@@ -488,6 +488,65 @@ func (s *SQLiteStore) ListRepos(namespaceID, cursor string, limit int) ([]Repo, 
 	}
 
 	return repos, rows.Err()
+}
+
+// ListReposWithFolders lists repos with their folder associations in a single query.
+func (s *SQLiteStore) ListReposWithFolders(namespaceID, cursor string, limit int) ([]RepoWithFolders, error) {
+	repos, err := s.ListRepos(namespaceID, cursor, limit)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(repos) == 0 {
+		return []RepoWithFolders{}, nil
+	}
+
+	repoIDs := make([]interface{}, len(repos))
+	placeholders := make([]string, len(repos))
+	for i, repo := range repos {
+		repoIDs[i] = repo.ID
+		placeholders[i] = "?"
+	}
+
+	query := fmt.Sprintf(`
+		SELECT rf.repo_id, f.id, f.namespace_id, f.name, f.color, f.created_at
+		FROM repo_folders rf
+		JOIN folders f ON f.id = rf.folder_id
+		WHERE rf.repo_id IN (%s)
+		ORDER BY f.name
+	`, strings.Join(placeholders, ","))
+
+	rows, err := s.db.Query(query, repoIDs...)
+	if err != nil {
+		return nil, fmt.Errorf("query repo folders: %w", err)
+	}
+	defer rows.Close()
+
+	folderMap := make(map[string][]Folder)
+	for rows.Next() {
+		var repoID string
+		var folder Folder
+		var color sql.NullString
+
+		if err := rows.Scan(&repoID, &folder.ID, &folder.NamespaceID, &folder.Name, &color, &folder.CreatedAt); err != nil {
+			return nil, fmt.Errorf("scan folder: %w", err)
+		}
+		folder.Color = FromNullString(color)
+		folderMap[repoID] = append(folderMap[repoID], folder)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate folders: %w", err)
+	}
+
+	result := make([]RepoWithFolders, len(repos))
+	for i, repo := range repos {
+		result[i] = RepoWithFolders{
+			Repo:    repo,
+			Folders: folderMap[repo.ID],
+		}
+	}
+
+	return result, nil
 }
 
 // UpdateRepo updates a repository.
@@ -588,7 +647,7 @@ func (s *SQLiteStore) scanFolder(row *sql.Row) (*Folder, error) {
 		&color,
 		&folder.CreatedAt,
 	)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
@@ -828,6 +887,23 @@ func (s *SQLiteStore) SetRepoFolders(repoID string, folderIDs []string) error {
 	for _, folderID := range folderIDs {
 		if _, err := tx.Exec("INSERT INTO repo_folders (repo_id, folder_id) VALUES (?, ?)", repoID, folderID); err != nil {
 			return fmt.Errorf("insert repo folder: %w", err)
+		}
+	}
+
+	return tx.Commit()
+}
+
+// AddRepoFolders adds multiple folders to a repo atomically.
+func (s *SQLiteStore) AddRepoFolders(repoID string, folderIDs []string) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	for _, folderID := range folderIDs {
+		if _, err := tx.Exec("INSERT OR IGNORE INTO repo_folders (repo_id, folder_id) VALUES (?, ?)", repoID, folderID); err != nil {
+			return fmt.Errorf("add repo folder: %w", err)
 		}
 	}
 

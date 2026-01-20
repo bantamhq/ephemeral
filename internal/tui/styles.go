@@ -2,74 +2,95 @@ package tui
 
 import "github.com/charmbracelet/lipgloss"
 
+// Colors
 var (
-	StyleSelected = lipgloss.NewStyle().
-			Background(lipgloss.Color("61")).
-			Foreground(lipgloss.Color("230")).
-			Bold(true)
+	colorPurple     = lipgloss.Color("62")
+	colorPurpleDark = lipgloss.Color("60")
+	colorCream      = lipgloss.Color("230")
+	colorWhite      = lipgloss.Color("255")
+	colorGray       = lipgloss.Color("243")
+	colorGrayDark   = lipgloss.Color("237")
+	colorGrayDarker = lipgloss.Color("236")
+	colorGrayBg     = lipgloss.Color("235")
+	colorGrayLight  = lipgloss.Color("240")
+	colorGrayText   = lipgloss.Color("252")
+	colorYellow     = lipgloss.Color("11")
+	colorRed        = lipgloss.Color("9")
+)
+
+// Selection styles
+var (
+	StyleFolderSelected = lipgloss.NewStyle().
+				Background(colorPurpleDark).
+				Foreground(colorCream).
+				Bold(true)
 
 	StyleRepoSelected = lipgloss.NewStyle().
 				Border(lipgloss.ThickBorder(), false, false, false, true).
-				BorderForeground(lipgloss.Color("61")).
+				BorderForeground(colorPurpleDark).
 				PaddingLeft(1)
 
+	StyleEditing = lipgloss.NewStyle().
+			Background(colorGrayDarker).
+			Foreground(colorWhite).
+			Bold(true)
+)
+
+// Text styles
+var (
 	StyleHeader = lipgloss.NewStyle().
 			Bold(true).
-			Foreground(lipgloss.Color("230")).
-			Background(lipgloss.Color("62"))
+			Foreground(colorCream).
+			Background(colorPurple)
 
-	StyleSubtle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("243"))
+	StyleRepoTitle = lipgloss.NewStyle().
+			Foreground(colorWhite)
+
+	StyleMetaText = lipgloss.NewStyle().
+			Foreground(colorGray)
 
 	StyleError = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("9"))
+			Foreground(colorRed)
 
 	StyleStatusMsg = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("11")).
+			Foreground(colorYellow).
 			Italic(true)
+)
 
-	StyleEditing = lipgloss.NewStyle().
-			Background(lipgloss.Color("236")).
-			Foreground(lipgloss.Color("255")).
-			Bold(true)
-
+// Footer styles
+var (
 	StyleFooterNamespace = lipgloss.NewStyle().
-				Background(lipgloss.Color("62")).
-				Foreground(lipgloss.Color("230")).
+				Background(colorPurple).
+				Foreground(colorCream).
 				Bold(true).
 				Padding(0, 1)
 
 	StyleFooterHelp = lipgloss.NewStyle().
-			Background(lipgloss.Color("237")).
-			Foreground(lipgloss.Color("243")).
+			Background(colorGrayDark).
+			Foreground(colorGray).
 			PaddingLeft(1)
+)
 
+// Dialog styles
+var (
 	StyleDialogBox = lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
-			BorderForeground(lipgloss.Color("62")).
+			BorderForeground(colorPurple).
 			Padding(1, 2).
-			Background(lipgloss.Color("235"))
+			Background(colorGrayBg)
 
 	StyleDialogButton = lipgloss.NewStyle().
 				Padding(0, 2).
-				Background(lipgloss.Color("240")).
-				Foreground(lipgloss.Color("252"))
+				Background(colorGrayLight).
+				Foreground(colorGrayText)
 
 	StyleDialogButtonFocused = lipgloss.NewStyle().
 					Padding(0, 2).
-					Background(lipgloss.Color("62")).
-					Foreground(lipgloss.Color("230")).
+					Background(colorPurple).
+					Foreground(colorCream).
 					Bold(true)
 
 	StyleDialogHint = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("243")).
+			Foreground(colorGray).
 			Italic(true)
-
-	StyleMetaText = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("243"))
-
-	StyleFaint = lipgloss.NewStyle().Faint(true)
-
-	StyleRepoTitle = lipgloss.NewStyle().Foreground(lipgloss.Color("255"))
-
 )

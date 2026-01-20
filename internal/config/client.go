@@ -42,8 +42,11 @@ func Load() (*ClientConfig, error) {
 		return nil, err
 	}
 
-	if _, err := os.Stat(path); os.IsNotExist(err) {
-		return nil, fmt.Errorf("config file not found at %s", path)
+	if _, err := os.Stat(path); err != nil {
+		if os.IsNotExist(err) {
+			return nil, fmt.Errorf("config file not found at %s", path)
+		}
+		return nil, fmt.Errorf("access config: %w", err)
 	}
 
 	config := &ClientConfig{
@@ -63,15 +66,19 @@ func (c *ClientConfig) Save() error {
 		return err
 	}
 
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return fmt.Errorf("create config dir: %w", err)
 	}
 
-	f, err := os.Create(path)
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
 	if err != nil {
 		return fmt.Errorf("create config file: %w", err)
 	}
 	defer f.Close()
+
+	if err := f.Chmod(0600); err != nil {
+		return fmt.Errorf("set config permissions: %w", err)
+	}
 
 	if err := toml.NewEncoder(f).Encode(c); err != nil {
 		return fmt.Errorf("encode config: %w", err)

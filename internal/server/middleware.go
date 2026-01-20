@@ -2,12 +2,12 @@ package server
 
 import (
 	"context"
-	"crypto/sha256"
 	"fmt"
 	"net/http"
 	"strings"
 	"time"
 
+	"ephemeral/internal/core"
 	"ephemeral/internal/store"
 )
 
@@ -83,17 +83,22 @@ func BearerAuthMiddleware(st store.Store) func(http.Handler) http.Handler {
 	}
 }
 
-// lookupToken hashes the raw token and validates it against the store.
+// lookupToken parses the token, looks up by namespace and lookup key, and verifies.
 func lookupToken(st store.Store, rawToken string) (*store.Token, error) {
-	hasher := sha256.New()
-	hasher.Write([]byte(rawToken))
-	tokenHash := fmt.Sprintf("%x", hasher.Sum(nil))
+	namespaceID, lookup, _, err := core.ParseToken(rawToken)
+	if err != nil {
+		return nil, &authError{"Invalid token format", http.StatusUnauthorized}
+	}
 
-	token, err := st.GetTokenByHash(tokenHash)
+	token, err := st.GetTokenByLookup(namespaceID, lookup)
 	if err != nil {
 		return nil, &authError{"Internal server error", http.StatusInternalServerError}
 	}
 	if token == nil {
+		return nil, &authError{"Invalid token", http.StatusUnauthorized}
+	}
+
+	if err := core.VerifyToken(rawToken, token.TokenHash); err != nil {
 		return nil, &authError{"Invalid token", http.StatusUnauthorized}
 	}
 
@@ -141,18 +146,26 @@ func GetTokenFromContext(ctx context.Context) *store.Token {
 func ExtractRepoPath(path string) (namespace, repo string, err error) {
 	path = strings.TrimPrefix(path, "/git/")
 
-	gitIndex := strings.Index(path, ".git")
-	if gitIndex == -1 {
-		return "", "", fmt.Errorf("invalid git path: missing .git suffix")
-	}
-
-	repoPath := path[:gitIndex]
-	parts := strings.SplitN(repoPath, "/", 2)
-	if len(parts) != 2 {
+	slashIdx := strings.Index(path, "/")
+	if slashIdx == -1 {
 		return "", "", fmt.Errorf("invalid git path: expected namespace/repo format")
 	}
 
-	return parts[0], parts[1], nil
+	namespace = path[:slashIdx]
+	repoPath := path[slashIdx+1:]
+
+	parts := strings.SplitN(repoPath, "/", 2)
+	repoSegment := parts[0]
+	if !strings.HasSuffix(repoSegment, ".git") {
+		return "", "", fmt.Errorf("invalid git path: missing .git suffix")
+	}
+
+	repo = strings.TrimSuffix(repoSegment, ".git")
+	if repo == "" {
+		return "", "", fmt.Errorf("invalid git path: empty repo name")
+	}
+
+	return namespace, repo, nil
 }
 
 // OptionalBearerAuthMiddleware sets token context if a valid Bearer token is provided.

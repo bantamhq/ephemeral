@@ -23,30 +23,45 @@ func (s *Server) handleListRepos(w http.ResponseWriter, r *http.Request) {
 
 	cursor := r.URL.Query().Get("cursor")
 	limit := parseLimit(r.URL.Query().Get("limit"), defaultPageSize)
+	expand := r.URL.Query().Get("expand")
 
-	fetchLimit := limit
-	if limit > 0 {
-		fetchLimit = limit + 1
+	if expand == "folders" {
+		repos, err := s.store.ListReposWithFolders(token.NamespaceID, cursor, limit+1)
+		if err != nil {
+			JSONError(w, http.StatusInternalServerError, "Failed to list repos")
+			return
+		}
+
+		hasMore := len(repos) > limit
+		if hasMore {
+			repos = repos[:limit]
+		}
+
+		var nextCursor *string
+		if hasMore && len(repos) > 0 {
+			c := repos[len(repos)-1].Name
+			nextCursor = &c
+		}
+
+		JSONList(w, repos, nextCursor, hasMore)
+		return
 	}
 
-	repos, err := s.store.ListRepos(token.NamespaceID, cursor, fetchLimit)
+	repos, err := s.store.ListRepos(token.NamespaceID, cursor, limit+1)
 	if err != nil {
 		JSONError(w, http.StatusInternalServerError, "Failed to list repos")
 		return
 	}
 
-	var hasMore bool
-	var nextCursor *string
+	hasMore := len(repos) > limit
+	if hasMore {
+		repos = repos[:limit]
+	}
 
-	if limit > 0 {
-		hasMore = len(repos) > limit
-		if hasMore {
-			repos = repos[:limit]
-		}
-		if hasMore && len(repos) > 0 {
-			c := repos[len(repos)-1].Name
-			nextCursor = &c
-		}
+	var nextCursor *string
+	if hasMore && len(repos) > 0 {
+		c := repos[len(repos)-1].Name
+		nextCursor = &c
 	}
 
 	JSONList(w, repos, nextCursor, hasMore)
@@ -222,7 +237,9 @@ func (s *Server) handleUpdateRepo(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if err := s.store.UpdateRepo(repo); err != nil {
-			s.renameRepoOnDisk(repo.NamespaceID, *req.Name, oldName)
+			if rollbackErr := s.renameRepoOnDisk(repo.NamespaceID, *req.Name, oldName); rollbackErr != nil {
+				fmt.Printf("CRITICAL: failed to rollback repo rename from %s to %s: %v\n", *req.Name, oldName, rollbackErr)
+			}
 			JSONError(w, http.StatusInternalServerError, "Failed to update repo")
 			return
 		}
@@ -316,11 +333,9 @@ func (s *Server) handleAddRepoFolders(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	for _, folderID := range req.FolderIDs {
-		if err := s.store.AddRepoFolder(repo.ID, folderID); err != nil {
-			JSONError(w, http.StatusInternalServerError, "Failed to add folder")
-			return
-		}
+	if err := s.store.AddRepoFolders(repo.ID, req.FolderIDs); err != nil {
+		JSONError(w, http.StatusInternalServerError, "Failed to add folders")
+		return
 	}
 
 	folders, err := s.store.ListRepoFolders(repo.ID)

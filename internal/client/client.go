@@ -38,6 +38,11 @@ type Repo struct {
 	UpdatedAt   time.Time  `json:"updated_at"`
 }
 
+type RepoWithFolders struct {
+	Repo
+	Folders []Folder `json:"folders,omitempty"`
+}
+
 type Namespace struct {
 	ID                string    `json:"id"`
 	Name              string    `json:"name"`
@@ -112,6 +117,37 @@ func (c *Client) ListRepos(cursor string, limit int) ([]Repo, bool, error) {
 	}
 
 	var repos []Repo
+	if err := json.Unmarshal(listResp.Data, &repos); err != nil {
+		return nil, false, fmt.Errorf("decode repos: %w", err)
+	}
+
+	return repos, listResp.HasMore, nil
+}
+
+func (c *Client) ListReposWithFolders(cursor string, limit int) ([]RepoWithFolders, bool, error) {
+	path := buildPaginatedPath("/api/v1/repos", cursor, limit)
+	if cursor != "" || limit > 0 {
+		path += "&expand=folders"
+	} else {
+		path += "?expand=folders"
+	}
+
+	resp, err := c.doRequest(http.MethodGet, path)
+	if err != nil {
+		return nil, false, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, false, c.decodeError(resp, "list repos")
+	}
+
+	var listResp listResponse
+	if err := json.NewDecoder(resp.Body).Decode(&listResp); err != nil {
+		return nil, false, fmt.Errorf("decode response: %w", err)
+	}
+
+	var repos []RepoWithFolders
 	if err := json.Unmarshal(listResp.Data, &repos); err != nil {
 		return nil, false, fmt.Errorf("decode repos: %w", err)
 	}

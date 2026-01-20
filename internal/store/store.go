@@ -19,7 +19,7 @@ type Store interface {
 
 	// Token operations
 	CreateToken(token *Token) error
-	GetTokenByHash(hash string) (*Token, error)
+	GetTokenByLookup(namespaceID, lookup string) (*Token, error)
 	GetTokenByID(id string) (*Token, error)
 	ListTokens(namespaceID, cursor string, limit int) ([]Token, error)
 	DeleteToken(id string) error
@@ -30,6 +30,7 @@ type Store interface {
 	GetRepo(namespaceID, name string) (*Repo, error)
 	GetRepoByID(id string) (*Repo, error)
 	ListRepos(namespaceID, cursor string, limit int) ([]Repo, error)
+	ListReposWithFolders(namespaceID, cursor string, limit int) ([]RepoWithFolders, error)
 	UpdateRepo(repo *Repo) error
 	DeleteRepo(id string) error
 	UpdateRepoLastPush(id string, pushTime time.Time) error
@@ -45,6 +46,7 @@ type Store interface {
 
 	// Repo-Folder M2M operations
 	AddRepoFolder(repoID, folderID string) error
+	AddRepoFolders(repoID string, folderIDs []string) error
 	RemoveRepoFolder(repoID, folderID string) error
 	ListRepoFolders(repoID string) ([]Folder, error)
 	ListFolderRepos(folderID string) ([]Repo, error)
@@ -72,6 +74,7 @@ type Namespace struct {
 type Token struct {
 	ID          string     `json:"id"`
 	TokenHash   string     `json:"-"`
+	TokenLookup string     `json:"-"`
 	Name        *string    `json:"name,omitempty"`
 	NamespaceID string     `json:"namespace_id"`
 	Scope       string     `json:"scope"`
@@ -99,6 +102,11 @@ type Folder struct {
 	Name        string    `json:"name"`
 	Color       *string   `json:"color,omitempty"`
 	CreatedAt   time.Time `json:"created_at"`
+}
+
+type RepoWithFolders struct {
+	Repo
+	Folders []Folder `json:"folders,omitempty"`
 }
 
 func ToNullString(s *string) sql.NullString {

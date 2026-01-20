@@ -1,11 +1,13 @@
 package store
 
 import (
-	"crypto/sha256"
+	"errors"
 	"fmt"
 	"time"
 
 	"github.com/google/uuid"
+
+	"ephemeral/internal/core"
 )
 
 // Initialize creates the database schema and initial data.
@@ -40,9 +42,10 @@ func (s *SQLiteStore) createSchema() error {
 	-- Tokens are the only auth primitive
 	CREATE TABLE IF NOT EXISTS tokens (
 		id TEXT PRIMARY KEY,
-		token_hash TEXT NOT NULL UNIQUE,  -- sha256 of actual token
+		token_hash TEXT NOT NULL,          -- argon2id hash with embedded salt
+		token_lookup TEXT NOT NULL,        -- first 8 chars of ID for fast lookup
 		name TEXT,                         -- human-friendly label
-		namespace_id TEXT NOT NULL REFERENCES namespaces(id),
+		namespace_id TEXT NOT NULL REFERENCES namespaces(id) ON DELETE CASCADE,
 
 		-- Scope
 		scope TEXT NOT NULL DEFAULT 'full',  -- 'full' | 'repos' | 'read-only' | 'admin'
@@ -62,7 +65,7 @@ func (s *SQLiteStore) createSchema() error {
 	-- Folders for organizing repos (flat, no nesting)
 	CREATE TABLE IF NOT EXISTS folders (
 		id TEXT PRIMARY KEY,
-		namespace_id TEXT NOT NULL REFERENCES namespaces(id),
+		namespace_id TEXT NOT NULL REFERENCES namespaces(id) ON DELETE CASCADE,
 		name TEXT NOT NULL,
 		color TEXT,
 		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -73,7 +76,7 @@ func (s *SQLiteStore) createSchema() error {
 	-- Repositories
 	CREATE TABLE IF NOT EXISTS repos (
 		id TEXT PRIMARY KEY,
-		namespace_id TEXT NOT NULL REFERENCES namespaces(id),
+		namespace_id TEXT NOT NULL REFERENCES namespaces(id) ON DELETE CASCADE,
 		name TEXT NOT NULL,
 
 		-- Visibility
@@ -97,7 +100,7 @@ func (s *SQLiteStore) createSchema() error {
 
 	-- Create indexes
 	CREATE INDEX IF NOT EXISTS idx_repos_namespace ON repos(namespace_id);
-	CREATE INDEX IF NOT EXISTS idx_tokens_hash ON tokens(token_hash);
+	CREATE UNIQUE INDEX IF NOT EXISTS idx_tokens_lookup ON tokens(namespace_id, token_lookup);
 	CREATE INDEX IF NOT EXISTS idx_folders_namespace ON folders(namespace_id);
 	`
 
@@ -140,25 +143,44 @@ func (s *SQLiteStore) GenerateRootToken() (string, error) {
 		return "", nil
 	}
 
-	tokenValue := fmt.Sprintf("eph_default_%s", uuid.New().String())
+	const tokenCreateAttempts = 5
 
-	hasher := sha256.New()
-	hasher.Write([]byte(tokenValue))
-	tokenHash := fmt.Sprintf("%x", hasher.Sum(nil))
+	for attempt := 0; attempt < tokenCreateAttempts; attempt++ {
+		tokenID := uuid.New().String()
+		tokenLookup := tokenID[:8]
 
-	name := "Root Token"
-	token := &Token{
-		ID:          uuid.New().String(),
-		TokenHash:   tokenHash,
-		Name:        &name,
-		NamespaceID: "default",
-		Scope:       "admin",
-		CreatedAt:   time.Now(),
+		secret, err := core.GenerateTokenSecret(24)
+		if err != nil {
+			return "", fmt.Errorf("generate token secret: %w", err)
+		}
+
+		tokenValue := core.BuildToken("default", tokenLookup, secret)
+
+		tokenHash, err := core.HashToken(tokenValue)
+		if err != nil {
+			return "", fmt.Errorf("hash token: %w", err)
+		}
+
+		name := "Root Token"
+		token := &Token{
+			ID:          tokenID,
+			TokenHash:   tokenHash,
+			TokenLookup: tokenLookup,
+			Name:        &name,
+			NamespaceID: "default",
+			Scope:       "admin",
+			CreatedAt:   time.Now(),
+		}
+
+		if err := s.CreateToken(token); err != nil {
+			if errors.Is(err, ErrTokenLookupCollision) {
+				continue
+			}
+			return "", fmt.Errorf("create root token: %w", err)
+		}
+
+		return tokenValue, nil
 	}
 
-	if err := s.CreateToken(token); err != nil {
-		return "", fmt.Errorf("create root token: %w", err)
-	}
-
-	return tokenValue, nil
+	return "", fmt.Errorf("create root token: %w", ErrTokenLookupCollision)
 }

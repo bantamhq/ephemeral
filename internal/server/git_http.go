@@ -2,6 +2,7 @@ package server
 
 import (
 	"compress/gzip"
+	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -16,6 +17,8 @@ import (
 
 	"ephemeral/internal/store"
 )
+
+const gitCommandTimeout = 5 * time.Minute
 
 // GitHTTPHandler handles Git HTTP smart protocol requests.
 type GitHTTPHandler struct {
@@ -133,12 +136,15 @@ func (h *GitHTTPHandler) handleInfoRefs(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 
+	ctx, cancel := context.WithTimeout(r.Context(), gitCommandTimeout)
+	defer cancel()
+
 	var cmd *exec.Cmd
 	switch service {
 	case "git-upload-pack":
-		cmd = exec.Command("git-upload-pack", "--stateless-rpc", "--advertise-refs", repoPath)
+		cmd = exec.CommandContext(ctx, "git-upload-pack", "--stateless-rpc", "--advertise-refs", repoPath)
 	case "git-receive-pack":
-		cmd = exec.Command("git-receive-pack", "--stateless-rpc", "--advertise-refs", repoPath)
+		cmd = exec.CommandContext(ctx, "git-receive-pack", "--stateless-rpc", "--advertise-refs", repoPath)
 	default:
 		http.Error(w, "Invalid service", http.StatusBadRequest)
 		return
@@ -176,10 +182,13 @@ func (h *GitHTTPHandler) handleUploadPack(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	ctx, cancel := context.WithTimeout(r.Context(), gitCommandTimeout)
+	defer cancel()
+
 	w.Header().Set("Content-Type", "application/x-git-upload-pack-result")
 	w.Header().Set("Cache-Control", "no-cache")
 
-	cmd := exec.Command("git-upload-pack", "--stateless-rpc", repoPath)
+	cmd := exec.CommandContext(ctx, "git-upload-pack", "--stateless-rpc", repoPath)
 	cmd.Stdin = r.Body
 	cmd.Stdout = w
 
@@ -206,15 +215,21 @@ func (h *GitHTTPHandler) handleReceivePack(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	bodyReader := h.getRequestBody(r)
+	bodyReader, err := h.getRequestBody(w, r)
+	if err != nil {
+		return
+	}
 	if closer, ok := bodyReader.(io.Closer); ok && bodyReader != r.Body {
 		defer closer.Close()
 	}
 
+	ctx, cancel := context.WithTimeout(r.Context(), gitCommandTimeout)
+	defer cancel()
+
 	w.Header().Set("Content-Type", "application/x-git-receive-pack-result")
 	w.Header().Set("Cache-Control", "no-cache")
 
-	cmd := exec.Command("git-receive-pack", "--stateless-rpc", repoPath)
+	cmd := exec.CommandContext(ctx, "git-receive-pack", "--stateless-rpc", repoPath)
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -247,16 +262,17 @@ func (h *GitHTTPHandler) handleReceivePack(w http.ResponseWriter, r *http.Reques
 	h.store.UpdateRepoLastPush(repo.ID, time.Now())
 }
 
-func (h *GitHTTPHandler) getRequestBody(r *http.Request) io.Reader {
+func (h *GitHTTPHandler) getRequestBody(w http.ResponseWriter, r *http.Request) (io.Reader, error) {
 	if r.Header.Get("Content-Encoding") != "gzip" {
-		return r.Body
+		return r.Body, nil
 	}
 
 	gzipReader, err := gzip.NewReader(r.Body)
 	if err != nil {
-		return r.Body
+		http.Error(w, "Invalid gzip body", http.StatusBadRequest)
+		return nil, err
 	}
-	return gzipReader
+	return gzipReader, nil
 }
 
 // getOrCreateRepo gets a repo, optionally creating it if autoCreate is true.

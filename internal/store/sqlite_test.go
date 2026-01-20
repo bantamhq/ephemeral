@@ -65,11 +65,12 @@ func createTestFolder(t *testing.T, s *SQLiteStore, nsID, name string, color *st
 	return folder
 }
 
-func createTestToken(t *testing.T, s *SQLiteStore, nsID, id, hash string) *Token {
+func createTestToken(t *testing.T, s *SQLiteStore, nsID, id, lookup, hash string) *Token {
 	t.Helper()
 	token := &Token{
 		ID:          id,
 		TokenHash:   hash,
+		TokenLookup: lookup,
 		NamespaceID: nsID,
 		Scope:       ScopeFull,
 		CreatedAt:   time.Now(),
@@ -120,7 +121,7 @@ func TestStore_NamespaceLifecycle(t *testing.T) {
 		repo := createTestRepo(t, s, ns.ID, "cascade-test")
 		folder := createTestFolder(t, s, ns.ID, "cascade-folder", nil)
 		s.AddRepoFolder(repo.ID, folder.ID)
-		createTestToken(t, s, ns.ID, "cascade-token", "hash")
+		createTestToken(t, s, ns.ID, "cascade-token", "cascade0", "hash")
 
 		require.NoError(t, s.DeleteNamespace("ns-1"))
 
@@ -338,6 +339,7 @@ func TestStore_TokenLifecycle(t *testing.T) {
 		token = &Token{
 			ID:          "token-1",
 			TokenHash:   "hash123",
+			TokenLookup: "lookup01",
 			NamespaceID: ns.ID,
 			Scope:       ScopeFull,
 			CreatedAt:   time.Now(),
@@ -345,8 +347,8 @@ func TestStore_TokenLifecycle(t *testing.T) {
 		require.NoError(t, s.CreateToken(token))
 	})
 
-	t.Run("get by hash", func(t *testing.T) {
-		got, err := s.GetTokenByHash("hash123")
+	t.Run("get by lookup", func(t *testing.T) {
+		got, err := s.GetTokenByLookup(ns.ID, "lookup01")
 		require.NoError(t, err)
 		require.NotNil(t, got)
 		assert.Equal(t, "token-1", got.ID)
@@ -530,6 +532,7 @@ func TestStore_OptionalFields(t *testing.T) {
 		token := &Token{
 			ID:          "token-expiry",
 			TokenHash:   "hash-expiry",
+			TokenLookup: "token-ex",
 			NamespaceID: ns.ID,
 			Scope:       ScopeReadOnly,
 			Name:        &name,

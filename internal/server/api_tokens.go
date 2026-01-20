@@ -1,17 +1,16 @@
 package server
 
 import (
-	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
+	"ephemeral/internal/core"
 	"ephemeral/internal/store"
 )
 
@@ -114,31 +113,63 @@ func (s *Server) handleCreateToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	nsPrefix := token.NamespaceID
-	if len(nsPrefix) > 8 {
-		nsPrefix = nsPrefix[:8]
-	}
-	rawToken := fmt.Sprintf("eph_%s_%s", nsPrefix, uuid.New().String()[:16])
-	hasher := sha256.New()
-	hasher.Write([]byte(rawToken))
-	tokenHash := fmt.Sprintf("%x", hasher.Sum(nil))
-
-	now := time.Now()
-	newToken := &store.Token{
-		ID:          uuid.New().String(),
-		TokenHash:   tokenHash,
-		Name:        &req.Name,
-		NamespaceID: token.NamespaceID,
-		Scope:       req.Scope,
-		CreatedAt:   now,
+	if req.ExpiresIn != nil && *req.ExpiresIn < 0 {
+		JSONError(w, http.StatusBadRequest, "expires_in_seconds cannot be negative")
+		return
 	}
 
-	if req.ExpiresIn != nil {
-		exp := now.Add(time.Duration(*req.ExpiresIn) * time.Second)
-		newToken.ExpiresAt = &exp
+	const tokenCreateAttempts = 5
+
+	var rawToken string
+	var newToken *store.Token
+
+	for attempt := 0; attempt < tokenCreateAttempts; attempt++ {
+		tokenID := uuid.New().String()
+		tokenLookup := tokenID[:8]
+
+		secret, err := core.GenerateTokenSecret(24)
+		if err != nil {
+			JSONError(w, http.StatusInternalServerError, "Failed to generate token")
+			return
+		}
+
+		rawToken = core.BuildToken(token.NamespaceID, tokenLookup, secret)
+
+		tokenHash, err := core.HashToken(rawToken)
+		if err != nil {
+			JSONError(w, http.StatusInternalServerError, "Failed to generate token")
+			return
+		}
+
+		now := time.Now()
+		candidate := &store.Token{
+			ID:          tokenID,
+			TokenHash:   tokenHash,
+			TokenLookup: tokenLookup,
+			Name:        &req.Name,
+			NamespaceID: token.NamespaceID,
+			Scope:       req.Scope,
+			CreatedAt:   now,
+		}
+
+		if req.ExpiresIn != nil {
+			exp := now.Add(time.Duration(*req.ExpiresIn) * time.Second)
+			candidate.ExpiresAt = &exp
+		}
+
+		if err := s.store.CreateToken(candidate); err != nil {
+			if errors.Is(err, store.ErrTokenLookupCollision) {
+				continue
+			}
+			JSONError(w, http.StatusInternalServerError, "Failed to create token")
+			return
+		}
+
+		newToken = candidate
+		break
 	}
 
-	if err := s.store.CreateToken(newToken); err != nil {
+	if newToken == nil {
 		JSONError(w, http.StatusInternalServerError, "Failed to create token")
 		return
 	}

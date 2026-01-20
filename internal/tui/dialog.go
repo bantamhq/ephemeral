@@ -2,11 +2,12 @@ package tui
 
 import (
 	"strings"
-	"unicode"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+
+	"ephemeral/internal/core"
 )
 
 type DialogMode int
@@ -16,24 +17,8 @@ const (
 	DialogConfirm
 )
 
-func isValidNameChar(r rune, isFirst bool) bool {
-	if isFirst {
-		return unicode.IsLetter(r) || unicode.IsDigit(r)
-	}
-	return unicode.IsLetter(r) || unicode.IsDigit(r) || r == '.' || r == '_' || r == '-'
-}
-
 func validateNameInput(runes []rune, currentText string) bool {
-	for i, r := range runes {
-		isFirst := len(currentText)+i == 0
-		if !isValidNameChar(r, isFirst) {
-			return false
-		}
-		if r == '.' && len(currentText)+i > 0 && strings.HasSuffix(currentText, ".") {
-			return false
-		}
-	}
-	return true
+	return core.ValidateNameInput(runes, currentText)
 }
 
 type DialogSubmitMsg struct {

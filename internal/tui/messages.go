@@ -3,9 +3,17 @@ package tui
 import "ephemeral/internal/client"
 
 type dataLoadedMsg struct {
-	folders     []client.Folder
-	repos       []client.Repo
-	repoFolders map[string][]client.Folder
+	folders        []client.Folder
+	repos          []client.Repo
+	repoFolders    map[string][]client.Folder
+	repoNextCursor string
+	repoHasMore    bool
+}
+
+type moreReposLoadedMsg struct {
+	repos      []client.RepoWithFolders
+	nextCursor string
+	hasMore    bool
 }
 
 type errMsg struct {
