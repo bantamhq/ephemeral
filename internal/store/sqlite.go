@@ -91,16 +91,15 @@ func (s *SQLiteStore) GetTokenByHash(hash string) (*Token, error) {
 func (s *SQLiteStore) CreateRepo(repo *Repo) error {
 	query := `
 		INSERT INTO repos (
-			id, namespace_id, name, folder_id, public,
+			id, namespace_id, name, public,
 			size_bytes, last_push_at, created_at, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 	`
 
 	_, err := s.db.Exec(query,
 		repo.ID,
 		repo.NamespaceID,
 		repo.Name,
-		ToNullString(repo.FolderID),
 		repo.Public,
 		repo.SizeBytes,
 		ToNullTime(repo.LastPushAt),
@@ -116,7 +115,7 @@ func (s *SQLiteStore) CreateRepo(repo *Repo) error {
 // GetRepo retrieves a repository by namespace and name.
 func (s *SQLiteStore) GetRepo(namespaceID, name string) (*Repo, error) {
 	query := `
-		SELECT id, namespace_id, name, folder_id, public,
+		SELECT id, namespace_id, name, public,
 			   size_bytes, last_push_at, created_at, updated_at
 		FROM repos
 		WHERE namespace_id = ? AND name = ?
@@ -127,7 +126,7 @@ func (s *SQLiteStore) GetRepo(namespaceID, name string) (*Repo, error) {
 // GetRepoByID retrieves a repository by ID.
 func (s *SQLiteStore) GetRepoByID(id string) (*Repo, error) {
 	query := `
-		SELECT id, namespace_id, name, folder_id, public,
+		SELECT id, namespace_id, name, public,
 			   size_bytes, last_push_at, created_at, updated_at
 		FROM repos
 		WHERE id = ?
@@ -137,14 +136,12 @@ func (s *SQLiteStore) GetRepoByID(id string) (*Repo, error) {
 
 func (s *SQLiteStore) scanRepo(row *sql.Row) (*Repo, error) {
 	var repo Repo
-	var folderID sql.NullString
 	var lastPushAt sql.NullTime
 
 	err := row.Scan(
 		&repo.ID,
 		&repo.NamespaceID,
 		&repo.Name,
-		&folderID,
 		&repo.Public,
 		&repo.SizeBytes,
 		&lastPushAt,
@@ -158,7 +155,6 @@ func (s *SQLiteStore) scanRepo(row *sql.Row) (*Repo, error) {
 		return nil, fmt.Errorf("scan repo: %w", err)
 	}
 
-	repo.FolderID = FromNullString(folderID)
 	repo.LastPushAt = FromNullTime(lastPushAt)
 
 	return &repo, nil
@@ -297,17 +293,12 @@ func (s *SQLiteStore) DeleteNamespace(id string) error {
 	}
 	defer tx.Rollback()
 
-	// Delete repo_labels for repos in this namespace
+	// Delete repo_folders for repos in this namespace
 	if _, err := tx.Exec(`
-		DELETE FROM repo_labels
+		DELETE FROM repo_folders
 		WHERE repo_id IN (SELECT id FROM repos WHERE namespace_id = ?)
 	`, id); err != nil {
-		return fmt.Errorf("delete repo labels: %w", err)
-	}
-
-	// Delete labels in this namespace
-	if _, err := tx.Exec("DELETE FROM labels WHERE namespace_id = ?", id); err != nil {
-		return fmt.Errorf("delete labels: %w", err)
+		return fmt.Errorf("delete repo folders: %w", err)
 	}
 
 	// Delete folders in this namespace
@@ -451,7 +442,7 @@ func (s *SQLiteStore) ListRepos(namespaceID, cursor string, limit int) ([]Repo, 
 
 	if limit > 0 {
 		query := `
-			SELECT id, namespace_id, name, folder_id, public,
+			SELECT id, namespace_id, name, public,
 				   size_bytes, last_push_at, created_at, updated_at
 			FROM repos
 			WHERE namespace_id = ? AND name > ?
@@ -461,7 +452,7 @@ func (s *SQLiteStore) ListRepos(namespaceID, cursor string, limit int) ([]Repo, 
 		rows, err = s.db.Query(query, namespaceID, cursor, limit)
 	} else {
 		query := `
-			SELECT id, namespace_id, name, folder_id, public,
+			SELECT id, namespace_id, name, public,
 				   size_bytes, last_push_at, created_at, updated_at
 			FROM repos
 			WHERE namespace_id = ? AND name > ?
@@ -477,14 +468,12 @@ func (s *SQLiteStore) ListRepos(namespaceID, cursor string, limit int) ([]Repo, 
 	var repos []Repo
 	for rows.Next() {
 		var repo Repo
-		var folderID sql.NullString
 		var lastPushAt sql.NullTime
 
 		if err := rows.Scan(
 			&repo.ID,
 			&repo.NamespaceID,
 			&repo.Name,
-			&folderID,
 			&repo.Public,
 			&repo.SizeBytes,
 			&lastPushAt,
@@ -494,7 +483,6 @@ func (s *SQLiteStore) ListRepos(namespaceID, cursor string, limit int) ([]Repo, 
 			return nil, fmt.Errorf("scan repo: %w", err)
 		}
 
-		repo.FolderID = FromNullString(folderID)
 		repo.LastPushAt = FromNullTime(lastPushAt)
 		repos = append(repos, repo)
 	}
@@ -506,13 +494,12 @@ func (s *SQLiteStore) ListRepos(namespaceID, cursor string, limit int) ([]Repo, 
 func (s *SQLiteStore) UpdateRepo(repo *Repo) error {
 	query := `
 		UPDATE repos
-		SET name = ?, folder_id = ?, public = ?, updated_at = ?
+		SET name = ?, public = ?, updated_at = ?
 		WHERE id = ?
 	`
 
 	result, err := s.db.Exec(query,
 		repo.Name,
-		ToNullString(repo.FolderID),
 		repo.Public,
 		time.Now(),
 		repo.ID,
@@ -553,7 +540,7 @@ func (s *SQLiteStore) DeleteRepo(id string) error {
 // CreateFolder creates a new folder.
 func (s *SQLiteStore) CreateFolder(folder *Folder) error {
 	query := `
-		INSERT INTO folders (id, namespace_id, name, parent_id, created_at)
+		INSERT INTO folders (id, namespace_id, name, color, created_at)
 		VALUES (?, ?, ?, ?, ?)
 	`
 
@@ -561,7 +548,7 @@ func (s *SQLiteStore) CreateFolder(folder *Folder) error {
 		folder.ID,
 		folder.NamespaceID,
 		folder.Name,
-		ToNullString(folder.ParentID),
+		ToNullString(folder.Color),
 		folder.CreatedAt,
 	)
 	if err != nil {
@@ -573,47 +560,32 @@ func (s *SQLiteStore) CreateFolder(folder *Folder) error {
 // GetFolderByID retrieves a folder by ID.
 func (s *SQLiteStore) GetFolderByID(id string) (*Folder, error) {
 	query := `
-		SELECT id, namespace_id, name, parent_id, created_at
+		SELECT id, namespace_id, name, color, created_at
 		FROM folders
 		WHERE id = ?
 	`
 	return s.scanFolder(s.db.QueryRow(query, id))
 }
 
-// GetFolderByName retrieves a folder by name within the same parent.
-// parentID can be nil to check root-level folders.
-func (s *SQLiteStore) GetFolderByName(namespaceID, name string, parentID *string) (*Folder, error) {
-	var query string
-	var row *sql.Row
-
-	if parentID == nil {
-		query = `
-			SELECT id, namespace_id, name, parent_id, created_at
-			FROM folders
-			WHERE namespace_id = ? AND name = ? AND parent_id IS NULL
-		`
-		row = s.db.QueryRow(query, namespaceID, name)
-	} else {
-		query = `
-			SELECT id, namespace_id, name, parent_id, created_at
-			FROM folders
-			WHERE namespace_id = ? AND name = ? AND parent_id = ?
-		`
-		row = s.db.QueryRow(query, namespaceID, name, *parentID)
-	}
-
-	return s.scanFolder(row)
+// GetFolderByName retrieves a folder by namespace and name.
+func (s *SQLiteStore) GetFolderByName(namespaceID, name string) (*Folder, error) {
+	query := `
+		SELECT id, namespace_id, name, color, created_at
+		FROM folders
+		WHERE namespace_id = ? AND name = ?
+	`
+	return s.scanFolder(s.db.QueryRow(query, namespaceID, name))
 }
 
 func (s *SQLiteStore) scanFolder(row *sql.Row) (*Folder, error) {
 	var folder Folder
-	var parentID sql.NullString
+	var color sql.NullString
 
 	err := row.Scan(
 		&folder.ID,
 		&folder.NamespaceID,
 		&folder.Name,
-		&parentID,
+		&color,
 		&folder.CreatedAt,
 	)
 	if err == sql.ErrNoRows {
@@ -623,7 +595,7 @@ func (s *SQLiteStore) scanFolder(row *sql.Row) (*Folder, error) {
 		return nil, fmt.Errorf("scan folder: %w", err)
 	}
 
-	folder.ParentID = FromNullString(parentID)
+	folder.Color = FromNullString(color)
 	return &folder, nil
 }
 
@@ -634,7 +606,7 @@ func (s *SQLiteStore) ListFolders(namespaceID, cursor string, limit int) ([]Fold
 
 	if limit > 0 {
 		query := `
-			SELECT id, namespace_id, name, parent_id, created_at
+			SELECT id, namespace_id, name, color, created_at
 			FROM folders
 			WHERE namespace_id = ? AND name > ?
 			ORDER BY name
@@ -643,7 +615,7 @@ func (s *SQLiteStore) ListFolders(namespaceID, cursor string, limit int) ([]Fold
 		rows, err = s.db.Query(query, namespaceID, cursor, limit)
 	} else {
 		query := `
-			SELECT id, namespace_id, name, parent_id, created_at
+			SELECT id, namespace_id, name, color, created_at
 			FROM folders
 			WHERE namespace_id = ? AND name > ?
 			ORDER BY name
@@ -658,19 +630,19 @@ func (s *SQLiteStore) ListFolders(namespaceID, cursor string, limit int) ([]Fold
 	var folders []Folder
 	for rows.Next() {
 		var folder Folder
-		var parentID sql.NullString
+		var color sql.NullString
 
 		if err := rows.Scan(
 			&folder.ID,
 			&folder.NamespaceID,
 			&folder.Name,
-			&parentID,
+			&color,
 			&folder.CreatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("scan folder: %w", err)
 		}
 
-		folder.ParentID = FromNullString(parentID)
+		folder.Color = FromNullString(color)
 		folders = append(folders, folder)
 	}
 
@@ -681,13 +653,13 @@ func (s *SQLiteStore) ListFolders(namespaceID, cursor string, limit int) ([]Fold
 func (s *SQLiteStore) UpdateFolder(folder *Folder) error {
 	query := `
 		UPDATE folders
-		SET name = ?, parent_id = ?
+		SET name = ?, color = ?
 		WHERE id = ?
 	`
 
 	result, err := s.db.Exec(query,
 		folder.Name,
-		ToNullString(folder.ParentID),
+		ToNullString(folder.Color),
 		folder.ID,
 	)
 	if err != nil {
@@ -723,148 +695,31 @@ func (s *SQLiteStore) DeleteFolder(id string) error {
 	return nil
 }
 
-// CountFolderContents counts repos and subfolders in a folder.
-func (s *SQLiteStore) CountFolderContents(id string) (repos int, subfolders int, err error) {
-	err = s.db.QueryRow("SELECT COUNT(*) FROM repos WHERE folder_id = ?", id).Scan(&repos)
+// CountFolderRepos counts repos in a folder.
+func (s *SQLiteStore) CountFolderRepos(id string) (int, error) {
+	var count int
+	err := s.db.QueryRow("SELECT COUNT(*) FROM repo_folders WHERE folder_id = ?", id).Scan(&count)
 	if err != nil {
-		return 0, 0, fmt.Errorf("count repos: %w", err)
+		return 0, fmt.Errorf("count folder repos: %w", err)
 	}
-
-	err = s.db.QueryRow("SELECT COUNT(*) FROM folders WHERE parent_id = ?", id).Scan(&subfolders)
-	if err != nil {
-		return 0, 0, fmt.Errorf("count subfolders: %w", err)
-	}
-
-	return repos, subfolders, nil
+	return count, nil
 }
 
-// CreateLabel creates a new label.
-func (s *SQLiteStore) CreateLabel(label *Label) error {
-	query := `
-		INSERT INTO labels (id, namespace_id, name, color, created_at)
-		VALUES (?, ?, ?, ?, ?)
-	`
-
-	_, err := s.db.Exec(query,
-		label.ID,
-		label.NamespaceID,
-		label.Name,
-		ToNullString(label.Color),
-		label.CreatedAt,
-	)
+// AddRepoFolder adds a folder to a repo.
+func (s *SQLiteStore) AddRepoFolder(repoID, folderID string) error {
+	query := `INSERT OR IGNORE INTO repo_folders (repo_id, folder_id) VALUES (?, ?)`
+	_, err := s.db.Exec(query, repoID, folderID)
 	if err != nil {
-		return fmt.Errorf("insert label: %w", err)
+		return fmt.Errorf("add repo folder: %w", err)
 	}
 	return nil
 }
 
-// GetLabelByID retrieves a label by ID.
-func (s *SQLiteStore) GetLabelByID(id string) (*Label, error) {
-	query := `
-		SELECT id, namespace_id, name, color, created_at
-		FROM labels
-		WHERE id = ?
-	`
-	return s.scanLabel(s.db.QueryRow(query, id))
-}
-
-// GetLabelByName retrieves a label by namespace and name.
-func (s *SQLiteStore) GetLabelByName(namespaceID, name string) (*Label, error) {
-	query := `
-		SELECT id, namespace_id, name, color, created_at
-		FROM labels
-		WHERE namespace_id = ? AND name = ?
-	`
-	return s.scanLabel(s.db.QueryRow(query, namespaceID, name))
-}
-
-func (s *SQLiteStore) scanLabel(row *sql.Row) (*Label, error) {
-	var label Label
-	var color sql.NullString
-
-	err := row.Scan(
-		&label.ID,
-		&label.NamespaceID,
-		&label.Name,
-		&color,
-		&label.CreatedAt,
-	)
-	if err == sql.ErrNoRows {
-		return nil, nil
-	}
+// RemoveRepoFolder removes a folder from a repo.
+func (s *SQLiteStore) RemoveRepoFolder(repoID, folderID string) error {
+	result, err := s.db.Exec("DELETE FROM repo_folders WHERE repo_id = ? AND folder_id = ?", repoID, folderID)
 	if err != nil {
-		return nil, fmt.Errorf("scan label: %w", err)
-	}
-
-	label.Color = FromNullString(color)
-	return &label, nil
-}
-
-// ListLabels lists all labels in a namespace.
-func (s *SQLiteStore) ListLabels(namespaceID, cursor string, limit int) ([]Label, error) {
-	var rows *sql.Rows
-	var err error
-
-	if limit > 0 {
-		query := `
-			SELECT id, namespace_id, name, color, created_at
-			FROM labels
-			WHERE namespace_id = ? AND name > ?
-			ORDER BY name
-			LIMIT ?
-		`
-		rows, err = s.db.Query(query, namespaceID, cursor, limit)
-	} else {
-		query := `
-			SELECT id, namespace_id, name, color, created_at
-			FROM labels
-			WHERE namespace_id = ? AND name > ?
-			ORDER BY name
-		`
-		rows, err = s.db.Query(query, namespaceID, cursor)
-	}
-	if err != nil {
-		return nil, fmt.Errorf("query labels: %w", err)
-	}
-	defer rows.Close()
-
-	var labels []Label
-	for rows.Next() {
-		var label Label
-		var color sql.NullString
-
-		if err := rows.Scan(
-			&label.ID,
-			&label.NamespaceID,
-			&label.Name,
-			&color,
-			&label.CreatedAt,
-		); err != nil {
-			return nil, fmt.Errorf("scan label: %w", err)
-		}
-
-		label.Color = FromNullString(color)
-		labels = append(labels, label)
-	}
-
-	return labels, rows.Err()
-}
-
-// UpdateLabel updates a label.
-func (s *SQLiteStore) UpdateLabel(label *Label) error {
-	query := `
-		UPDATE labels
-		SET name = ?, color = ?
-		WHERE id = ?
-	`
-
-	result, err := s.db.Exec(query,
-		label.Name,
-		ToNullString(label.Color),
-		label.ID,
-	)
-	if err != nil {
-		return fmt.Errorf("update label: %w", err)
+		return fmt.Errorf("remove repo folder: %w", err)
 	}
 
 	rows, err := result.RowsAffected()
@@ -878,118 +733,70 @@ func (s *SQLiteStore) UpdateLabel(label *Label) error {
 	return nil
 }
 
-// DeleteLabel deletes a label by ID.
-func (s *SQLiteStore) DeleteLabel(id string) error {
-	result, err := s.db.Exec("DELETE FROM labels WHERE id = ?", id)
-	if err != nil {
-		return fmt.Errorf("delete label: %w", err)
-	}
-
-	rows, err := result.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("get rows affected: %w", err)
-	}
-	if rows == 0 {
-		return sql.ErrNoRows
-	}
-
-	return nil
-}
-
-// AddRepoLabel adds a label to a repo.
-func (s *SQLiteStore) AddRepoLabel(repoID, labelID string) error {
-	query := `INSERT OR IGNORE INTO repo_labels (repo_id, label_id) VALUES (?, ?)`
-	_, err := s.db.Exec(query, repoID, labelID)
-	if err != nil {
-		return fmt.Errorf("add repo label: %w", err)
-	}
-	return nil
-}
-
-// RemoveRepoLabel removes a label from a repo.
-func (s *SQLiteStore) RemoveRepoLabel(repoID, labelID string) error {
-	result, err := s.db.Exec("DELETE FROM repo_labels WHERE repo_id = ? AND label_id = ?", repoID, labelID)
-	if err != nil {
-		return fmt.Errorf("remove repo label: %w", err)
-	}
-
-	rows, err := result.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("get rows affected: %w", err)
-	}
-	if rows == 0 {
-		return sql.ErrNoRows
-	}
-
-	return nil
-}
-
-// ListRepoLabels lists all labels for a repo.
-func (s *SQLiteStore) ListRepoLabels(repoID string) ([]Label, error) {
+// ListRepoFolders lists all folders for a repo.
+func (s *SQLiteStore) ListRepoFolders(repoID string) ([]Folder, error) {
 	query := `
-		SELECT l.id, l.namespace_id, l.name, l.color, l.created_at
-		FROM labels l
-		JOIN repo_labels rl ON l.id = rl.label_id
-		WHERE rl.repo_id = ?
-		ORDER BY l.name
+		SELECT f.id, f.namespace_id, f.name, f.color, f.created_at
+		FROM folders f
+		JOIN repo_folders rf ON f.id = rf.folder_id
+		WHERE rf.repo_id = ?
+		ORDER BY f.name
 	`
 
 	rows, err := s.db.Query(query, repoID)
 	if err != nil {
-		return nil, fmt.Errorf("query repo labels: %w", err)
+		return nil, fmt.Errorf("query repo folders: %w", err)
 	}
 	defer rows.Close()
 
-	var labels []Label
+	var folders []Folder
 	for rows.Next() {
-		var label Label
+		var folder Folder
 		var color sql.NullString
 
 		if err := rows.Scan(
-			&label.ID,
-			&label.NamespaceID,
-			&label.Name,
+			&folder.ID,
+			&folder.NamespaceID,
+			&folder.Name,
 			&color,
-			&label.CreatedAt,
+			&folder.CreatedAt,
 		); err != nil {
-			return nil, fmt.Errorf("scan label: %w", err)
+			return nil, fmt.Errorf("scan folder: %w", err)
 		}
 
-		label.Color = FromNullString(color)
-		labels = append(labels, label)
+		folder.Color = FromNullString(color)
+		folders = append(folders, folder)
 	}
 
-	return labels, rows.Err()
+	return folders, rows.Err()
 }
 
-// ListLabelRepos lists all repos with a given label.
-func (s *SQLiteStore) ListLabelRepos(labelID string) ([]Repo, error) {
+// ListFolderRepos lists all repos in a folder.
+func (s *SQLiteStore) ListFolderRepos(folderID string) ([]Repo, error) {
 	query := `
-		SELECT r.id, r.namespace_id, r.name, r.folder_id, r.public,
+		SELECT r.id, r.namespace_id, r.name, r.public,
 			   r.size_bytes, r.last_push_at, r.created_at, r.updated_at
 		FROM repos r
-		JOIN repo_labels rl ON r.id = rl.repo_id
-		WHERE rl.label_id = ?
+		JOIN repo_folders rf ON r.id = rf.repo_id
+		WHERE rf.folder_id = ?
 		ORDER BY r.name
 	`
 
-	rows, err := s.db.Query(query, labelID)
+	rows, err := s.db.Query(query, folderID)
 	if err != nil {
-		return nil, fmt.Errorf("query label repos: %w", err)
+		return nil, fmt.Errorf("query folder repos: %w", err)
 	}
 	defer rows.Close()
 
 	var repos []Repo
 	for rows.Next() {
 		var repo Repo
-		var folderID sql.NullString
 		var lastPushAt sql.NullTime
 
 		if err := rows.Scan(
 			&repo.ID,
 			&repo.NamespaceID,
 			&repo.Name,
-			&folderID,
 			&repo.Public,
 			&repo.SizeBytes,
 			&lastPushAt,
@@ -999,10 +806,30 @@ func (s *SQLiteStore) ListLabelRepos(labelID string) ([]Repo, error) {
 			return nil, fmt.Errorf("scan repo: %w", err)
 		}
 
-		repo.FolderID = FromNullString(folderID)
 		repo.LastPushAt = FromNullTime(lastPushAt)
 		repos = append(repos, repo)
 	}
 
 	return repos, rows.Err()
+}
+
+// SetRepoFolders replaces all folders for a repo with the given folder IDs.
+func (s *SQLiteStore) SetRepoFolders(repoID string, folderIDs []string) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.Exec("DELETE FROM repo_folders WHERE repo_id = ?", repoID); err != nil {
+		return fmt.Errorf("delete existing repo folders: %w", err)
+	}
+
+	for _, folderID := range folderIDs {
+		if _, err := tx.Exec("INSERT INTO repo_folders (repo_id, folder_id) VALUES (?, ?)", repoID, folderID); err != nil {
+			return fmt.Errorf("insert repo folder: %w", err)
+		}
+	}
+
+	return tx.Commit()
 }

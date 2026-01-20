@@ -37,25 +37,18 @@ type Store interface {
 	// Folder operations
 	CreateFolder(folder *Folder) error
 	GetFolderByID(id string) (*Folder, error)
-	GetFolderByName(namespaceID, name string, parentID *string) (*Folder, error)
+	GetFolderByName(namespaceID, name string) (*Folder, error)
 	ListFolders(namespaceID, cursor string, limit int) ([]Folder, error)
 	UpdateFolder(folder *Folder) error
 	DeleteFolder(id string) error
-	CountFolderContents(id string) (repos int, subfolders int, err error)
+	CountFolderRepos(id string) (int, error)
 
-	// Label operations
-	CreateLabel(label *Label) error
-	GetLabelByID(id string) (*Label, error)
-	GetLabelByName(namespaceID, name string) (*Label, error)
-	ListLabels(namespaceID, cursor string, limit int) ([]Label, error)
-	UpdateLabel(label *Label) error
-	DeleteLabel(id string) error
-
-	// Repo-Label operations
-	AddRepoLabel(repoID, labelID string) error
-	RemoveRepoLabel(repoID, labelID string) error
-	ListRepoLabels(repoID string) ([]Label, error)
-	ListLabelRepos(labelID string) ([]Repo, error)
+	// Repo-Folder M2M operations
+	AddRepoFolder(repoID, folderID string) error
+	RemoveRepoFolder(repoID, folderID string) error
+	ListRepoFolders(repoID string) ([]Folder, error)
+	ListFolderRepos(folderID string) ([]Repo, error)
+	SetRepoFolders(repoID string, folderIDs []string) error
 
 	// Namespace operations
 	CreateNamespace(ns *Namespace) error
@@ -93,7 +86,6 @@ type Repo struct {
 	ID          string     `json:"id"`
 	NamespaceID string     `json:"namespace_id"`
 	Name        string     `json:"name"`
-	FolderID    *string    `json:"folder_id,omitempty"`
 	Public      bool       `json:"public"`
 	SizeBytes   int        `json:"size_bytes"`
 	LastPushAt  *time.Time `json:"last_push_at,omitempty"`
@@ -102,14 +94,6 @@ type Repo struct {
 }
 
 type Folder struct {
-	ID          string    `json:"id"`
-	NamespaceID string    `json:"namespace_id"`
-	Name        string    `json:"name"`
-	ParentID    *string   `json:"parent_id,omitempty"`
-	CreatedAt   time.Time `json:"created_at"`
-}
-
-type Label struct {
 	ID          string    `json:"id"`
 	NamespaceID string    `json:"namespace_id"`
 	Name        string    `json:"name"`

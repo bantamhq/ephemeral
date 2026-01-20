@@ -59,15 +59,15 @@ func (s *SQLiteStore) createSchema() error {
 		external_id TEXT                 -- e.g., platform token record id
 	);
 
-	-- Folders for organizing repos
+	-- Folders for organizing repos (flat, no nesting)
 	CREATE TABLE IF NOT EXISTS folders (
 		id TEXT PRIMARY KEY,
 		namespace_id TEXT NOT NULL REFERENCES namespaces(id),
 		name TEXT NOT NULL,
-		parent_id TEXT REFERENCES folders(id) ON DELETE CASCADE,
+		color TEXT,
 		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 
-		UNIQUE(namespace_id, parent_id, name)
+		UNIQUE(namespace_id, name)
 	);
 
 	-- Repositories
@@ -75,7 +75,6 @@ func (s *SQLiteStore) createSchema() error {
 		id TEXT PRIMARY KEY,
 		namespace_id TEXT NOT NULL REFERENCES namespaces(id),
 		name TEXT NOT NULL,
-		folder_id TEXT REFERENCES folders(id) ON DELETE SET NULL,
 
 		-- Visibility
 		public BOOLEAN DEFAULT FALSE,  -- If true, anonymous read access allowed
@@ -89,30 +88,17 @@ func (s *SQLiteStore) createSchema() error {
 		UNIQUE(namespace_id, name)
 	);
 
-	-- Labels for categorizing repos
-	CREATE TABLE IF NOT EXISTS labels (
-		id TEXT PRIMARY KEY,
-		namespace_id TEXT NOT NULL REFERENCES namespaces(id),
-		name TEXT NOT NULL,
-		color TEXT,  -- hex color for TUI
-		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-
-		UNIQUE(namespace_id, name)
-	);
-
-	-- Many-to-many relationship between repos and labels
-	CREATE TABLE IF NOT EXISTS repo_labels (
+	-- Many-to-many relationship between repos and folders
+	CREATE TABLE IF NOT EXISTS repo_folders (
 		repo_id TEXT REFERENCES repos(id) ON DELETE CASCADE,
-		label_id TEXT REFERENCES labels(id) ON DELETE CASCADE,
-		PRIMARY KEY (repo_id, label_id)
+		folder_id TEXT REFERENCES folders(id) ON DELETE CASCADE,
+		PRIMARY KEY (repo_id, folder_id)
 	);
 
 	-- Create indexes
 	CREATE INDEX IF NOT EXISTS idx_repos_namespace ON repos(namespace_id);
 	CREATE INDEX IF NOT EXISTS idx_tokens_hash ON tokens(token_hash);
-	CREATE INDEX IF NOT EXISTS idx_repos_folder ON repos(folder_id);
-	CREATE INDEX IF NOT EXISTS idx_folders_parent ON folders(parent_id);
-	CREATE INDEX IF NOT EXISTS idx_labels_namespace ON labels(namespace_id);
+	CREATE INDEX IF NOT EXISTS idx_folders_namespace ON folders(namespace_id);
 	`
 
 	_, err := s.db.Exec(schema)

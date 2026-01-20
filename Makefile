@@ -1,4 +1,4 @@
-.PHONY: build run clean test test-api test-repos test-tokens test-namespaces test-folders test-labels test-content workspace-setup dev dev-tui seed watch
+.PHONY: build run clean test test-api test-repos test-tokens test-namespaces test-folders test-content workspace-setup dev dev-tui seed watch
 
 # Build the binary
 build:
@@ -52,9 +52,6 @@ test-namespaces:
 
 test-folders:
 	@./tests/api/folders.sh $(TOKEN)
-
-test-labels:
-	@./tests/api/labels.sh $(TOKEN)
 
 test-content:
 	@./tests/api/content.sh $(TOKEN)

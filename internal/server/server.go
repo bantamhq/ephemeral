@@ -46,10 +46,11 @@ func (s *Server) setupRoutes() {
 			r.Delete("/repos/{id}", s.handleDeleteRepo)
 			r.Patch("/repos/{id}", s.handleUpdateRepo)
 
-			// Repo labels
-			r.Get("/repos/{id}/labels", s.handleListRepoLabels)
-			r.Post("/repos/{id}/labels", s.handleAddRepoLabels)
-			r.Delete("/repos/{id}/labels/{labelID}", s.handleRemoveRepoLabel)
+			// Repo folders (M2M)
+			r.Get("/repos/{id}/folders", s.handleListRepoFolders)
+			r.Post("/repos/{id}/folders", s.handleAddRepoFolders)
+			r.Put("/repos/{id}/folders", s.handleSetRepoFolders)
+			r.Delete("/repos/{id}/folders/{folderID}", s.handleRemoveRepoFolder)
 
 			// Folders
 			r.Get("/folders", s.handleListFolders)
@@ -57,13 +58,6 @@ func (s *Server) setupRoutes() {
 			r.Get("/folders/{id}", s.handleGetFolder)
 			r.Patch("/folders/{id}", s.handleUpdateFolder)
 			r.Delete("/folders/{id}", s.handleDeleteFolder)
-
-			// Labels
-			r.Get("/labels", s.handleListLabels)
-			r.Post("/labels", s.handleCreateLabel)
-			r.Get("/labels/{id}", s.handleGetLabel)
-			r.Patch("/labels/{id}", s.handleUpdateLabel)
-			r.Delete("/labels/{id}", s.handleDeleteLabel)
 		})
 
 		// Content API - supports anonymous access for public repos

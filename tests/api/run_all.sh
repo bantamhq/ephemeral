@@ -128,7 +128,6 @@ run_suite "Repos" "repos.sh"
 run_suite "Tokens" "tokens.sh"
 run_suite "Namespaces" "namespaces.sh"
 run_suite "Folders" "folders.sh"
-run_suite "Labels" "labels.sh"
 run_suite "Content" "content.sh"
 
 # Final summary

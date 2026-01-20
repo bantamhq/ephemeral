@@ -1,5 +1,5 @@
 #!/bin/bash
-# Folders API Tests
+# Folders API Tests (flat folders with M2M repo assignments)
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -17,7 +17,7 @@ echo -e "${BLUE}═════════════════════�
 section "Create"
 ###############################################################################
 
-# Create a root folder
+# Create a folder
 RESPONSE=$(auth_curl -X POST -H "Content-Type: application/json" \
     -d '{"name":"projects"}' \
     "$API/folders")
@@ -25,29 +25,28 @@ RESPONSE=$(auth_curl -X POST -H "Content-Type: application/json" \
 FOLDER1_ID=$(get_id "$RESPONSE")
 if [ -n "$FOLDER1_ID" ]; then
     track_folder "$FOLDER1_ID"
-    pass "create root folder"
+    pass "create folder"
 else
-    fail "create root folder" "valid ID" "$RESPONSE"
+    fail "create folder" "valid ID" "$RESPONSE"
 fi
 
 expect_json "$RESPONSE" '.data.name' "projects" "name matches"
-expect_json "$RESPONSE" '.data.parent_id' "null" "parent_id is null"
 
-# Create a nested folder
+# Create folder with color
 RESPONSE=$(auth_curl -X POST -H "Content-Type: application/json" \
-    -d "{\"name\":\"web\",\"parent_id\":\"$FOLDER1_ID\"}" \
+    -d '{"name":"web","color":"#61DAFB"}' \
     "$API/folders")
 
 FOLDER2_ID=$(get_id "$RESPONSE")
 if [ -n "$FOLDER2_ID" ]; then
     track_folder "$FOLDER2_ID"
 fi
-expect_json "$RESPONSE" '.data.name' "web" "nested folder name"
-expect_json "$RESPONSE" '.data.parent_id' "$FOLDER1_ID" "parent_id set"
+expect_json "$RESPONSE" '.data.name' "web" "folder with color name"
+expect_json "$RESPONSE" '.data.color' "#61DAFB" "color set"
 
-# Create another nested folder
+# Create more folders for M2M tests
 RESPONSE=$(auth_curl -X POST -H "Content-Type: application/json" \
-    -d "{\"name\":\"mobile\",\"parent_id\":\"$FOLDER1_ID\"}" \
+    -d '{"name":"backend","color":"#00ADD8"}' \
     "$API/folders")
 
 FOLDER3_ID=$(get_id "$RESPONSE")
@@ -61,13 +60,6 @@ RESPONSE=$(auth_curl -X POST -H "Content-Type: application/json" \
     "$API/folders")
 
 expect_contains "$RESPONSE" "required" "empty name rejected"
-
-# Invalid parent should fail
-RESPONSE=$(auth_curl -X POST -H "Content-Type: application/json" \
-    -d '{"name":"orphan","parent_id":"nonexistent"}' \
-    "$API/folders")
-
-expect_contains "$RESPONSE" "not found" "invalid parent rejected"
 
 # Invalid characters should fail (spaces)
 RESPONSE=$(auth_curl -X POST -H "Content-Type: application/json" \
@@ -90,53 +82,12 @@ RESPONSE=$(auth_curl -X POST -H "Content-Type: application/json" \
 
 expect_contains "$RESPONSE" "start with alphanumeric" "leading hyphen rejected"
 
-# Duplicate folder name at root should fail
+# Duplicate folder name should fail
 RESPONSE=$(auth_curl -X POST -H "Content-Type: application/json" \
     -d '{"name":"projects"}' \
     "$API/folders")
 
-expect_contains "$RESPONSE" "already exists" "duplicate root folder rejected"
-
-# Same name under different parents should succeed
-RESPONSE=$(auth_curl -X POST -H "Content-Type: application/json" \
-    -d "{\"name\":\"docs\",\"parent_id\":\"$FOLDER1_ID\"}" \
-    "$API/folders")
-
-FOLDER_DOCS1_ID=$(get_id "$RESPONSE")
-if [ -n "$FOLDER_DOCS1_ID" ]; then
-    track_folder "$FOLDER_DOCS1_ID"
-    pass "create docs under projects"
-fi
-
-# Create another folder at root level to test same name under different parents
-RESPONSE=$(auth_curl -X POST -H "Content-Type: application/json" \
-    -d '{"name":"archive"}' \
-    "$API/folders")
-
-FOLDER_ARCHIVE_ID=$(get_id "$RESPONSE")
-if [ -n "$FOLDER_ARCHIVE_ID" ]; then
-    track_folder "$FOLDER_ARCHIVE_ID"
-fi
-
-# Same name (docs) under different parent should succeed
-RESPONSE=$(auth_curl -X POST -H "Content-Type: application/json" \
-    -d "{\"name\":\"docs\",\"parent_id\":\"$FOLDER_ARCHIVE_ID\"}" \
-    "$API/folders")
-
-FOLDER_DOCS2_ID=$(get_id "$RESPONSE")
-if [ -n "$FOLDER_DOCS2_ID" ]; then
-    track_folder "$FOLDER_DOCS2_ID"
-    pass "same name under different parent allowed"
-else
-    fail "same name under different parent allowed" "success" "$RESPONSE"
-fi
-
-# Duplicate name within same parent should fail
-RESPONSE=$(auth_curl -X POST -H "Content-Type: application/json" \
-    -d "{\"name\":\"docs\",\"parent_id\":\"$FOLDER1_ID\"}" \
-    "$API/folders")
-
-expect_contains "$RESPONSE" "already exists" "duplicate in same parent rejected"
+expect_contains "$RESPONSE" "already exists" "duplicate folder rejected"
 
 ###############################################################################
 section "List"
@@ -145,7 +96,7 @@ section "List"
 RESPONSE=$(auth_curl "$API/folders")
 expect_contains "$RESPONSE" '"projects"' "contains projects folder"
 expect_contains "$RESPONSE" '"web"' "contains web folder"
-expect_contains "$RESPONSE" '"mobile"' "contains mobile folder"
+expect_contains "$RESPONSE" '"backend"' "contains backend folder"
 
 ###############################################################################
 section "Get"
@@ -175,12 +126,19 @@ expect_json "$RESPONSE" '.data.name' "all-projects" "name changed"
 RESPONSE=$(auth_curl "$API/folders/$FOLDER1_ID")
 expect_json "$RESPONSE" '.data.name' "all-projects" "name persisted"
 
-# Cannot set self as parent
+# Update color
 RESPONSE=$(auth_curl -X PATCH -H "Content-Type: application/json" \
-    -d "{\"parent_id\":\"$FOLDER1_ID\"}" \
+    -d '{"color":"#FF0000"}' \
     "$API/folders/$FOLDER1_ID")
 
-expect_contains "$RESPONSE" "cannot be its own parent" "self-parent rejected"
+expect_json "$RESPONSE" '.data.color' "#FF0000" "color changed"
+
+# Clear color
+RESPONSE=$(auth_curl -X PATCH -H "Content-Type: application/json" \
+    -d '{"color":""}' \
+    "$API/folders/$FOLDER1_ID")
+
+expect_json "$RESPONSE" '.data.color' "null" "color cleared"
 
 # Update with invalid name should fail
 RESPONSE=$(auth_curl -X PATCH -H "Content-Type: application/json" \
@@ -189,22 +147,68 @@ RESPONSE=$(auth_curl -X PATCH -H "Content-Type: application/json" \
 
 expect_contains "$RESPONSE" "alphanumeric" "update: invalid name rejected"
 
-# Rename to existing name at same level should fail
+# Rename to existing name should fail
 RESPONSE=$(auth_curl -X PATCH -H "Content-Type: application/json" \
-    -d '{"name":"archive"}' \
+    -d '{"name":"web"}' \
     "$API/folders/$FOLDER1_ID")
 
 expect_contains "$RESPONSE" "already exists" "update: duplicate name rejected"
 
-# Move to location with same name should fail
-# FOLDER_DOCS1_ID is "docs" under FOLDER1_ID (all-projects)
-# FOLDER_DOCS2_ID is "docs" under FOLDER_ARCHIVE_ID (archive)
-# Try to move FOLDER_DOCS1_ID to FOLDER_ARCHIVE_ID (where docs already exists)
-RESPONSE=$(auth_curl -X PATCH -H "Content-Type: application/json" \
-    -d "{\"parent_id\":\"$FOLDER_ARCHIVE_ID\"}" \
-    "$API/folders/$FOLDER_DOCS1_ID")
+###############################################################################
+section "Repo-Folder M2M"
+###############################################################################
 
-expect_contains "$RESPONSE" "already exists" "update: move to duplicate rejected"
+# Create a test repo
+RESPONSE=$(auth_curl -X POST -H "Content-Type: application/json" \
+    -d '{"name":"test-m2m-repo","public":false}' \
+    "$API/repos")
+
+REPO_ID=$(get_id "$RESPONSE")
+track_repo "$REPO_ID"
+
+# Initially repo has no folders
+RESPONSE=$(auth_curl "$API/repos/$REPO_ID/folders")
+FOLDER_COUNT=$(echo "$RESPONSE" | jq -r 'if .data then .data | length else 0 end')
+[ "$FOLDER_COUNT" = "0" ] && pass "repo starts with no folders" || fail "repo starts with no folders" "0" "$FOLDER_COUNT"
+
+# Add folders to repo
+RESPONSE=$(auth_curl -X POST -H "Content-Type: application/json" \
+    -d "{\"folder_ids\":[\"$FOLDER2_ID\",\"$FOLDER3_ID\"]}" \
+    "$API/repos/$REPO_ID/folders")
+
+expect_contains "$RESPONSE" '"web"' "repo has web folder"
+expect_contains "$RESPONSE" '"backend"' "repo has backend folder"
+
+FOLDER_COUNT=$(echo "$RESPONSE" | jq -r '.data | length')
+[ "$FOLDER_COUNT" = "2" ] && pass "repo has 2 folders" || fail "repo has 2 folders" "2" "$FOLDER_COUNT"
+
+# List folders for repo
+RESPONSE=$(auth_curl "$API/repos/$REPO_ID/folders")
+expect_contains "$RESPONSE" '"web"' "list repo folders: has web"
+
+# Set folders (replace all)
+RESPONSE=$(auth_curl -X PUT -H "Content-Type: application/json" \
+    -d "{\"folder_ids\":[\"$FOLDER1_ID\"]}" \
+    "$API/repos/$REPO_ID/folders")
+
+FOLDER_COUNT=$(echo "$RESPONSE" | jq -r '.data | length')
+[ "$FOLDER_COUNT" = "1" ] && pass "set replaces all folders" || fail "set replaces all folders" "1" "$FOLDER_COUNT"
+expect_contains "$RESPONSE" '"all-projects"' "repo now has all-projects folder"
+
+# Remove folder from repo
+auth_curl -X DELETE "$API/repos/$REPO_ID/folders/$FOLDER1_ID" > /dev/null
+pass "remove folder from repo"
+
+RESPONSE=$(auth_curl "$API/repos/$REPO_ID/folders")
+FOLDER_COUNT=$(echo "$RESPONSE" | jq -r '.data | length')
+[ "$FOLDER_COUNT" = "0" ] && pass "repo has no folders after removal" || fail "repo has no folders after removal" "0" "$FOLDER_COUNT"
+
+# Invalid folder ID should fail
+RESPONSE=$(auth_curl -X POST -H "Content-Type: application/json" \
+    -d '{"folder_ids":["nonexistent"]}' \
+    "$API/repos/$REPO_ID/folders")
+
+expect_contains "$RESPONSE" "not found" "invalid folder rejected"
 
 ###############################################################################
 section "Delete"
@@ -226,18 +230,10 @@ RESPONSE=$(auth_curl "$API/folders/$DELETE_FOLDER_ID")
 expect_contains "$RESPONSE" "not found" "folder no longer exists"
 
 # Non-empty folder without force should fail
-# First create a repo in the nested folder
-RESPONSE=$(auth_curl -X POST -H "Content-Type: application/json" \
-    -d '{"name":"test-repo-in-folder","public":false}' \
-    "$API/repos")
-
-REPO_ID=$(get_id "$RESPONSE")
-track_repo "$REPO_ID"
-
-# Assign to folder
-auth_curl -X PATCH -H "Content-Type: application/json" \
-    -d "{\"folder_id\":\"$FOLDER2_ID\"}" \
-    "$API/repos/$REPO_ID" > /dev/null
+# First add web folder to the repo
+auth_curl -X PUT -H "Content-Type: application/json" \
+    -d "{\"folder_ids\":[\"$FOLDER2_ID\"]}" \
+    "$API/repos/$REPO_ID/folders" > /dev/null
 
 # Try to delete non-empty folder
 RESPONSE=$(auth_curl -X DELETE "$API/folders/$FOLDER2_ID")

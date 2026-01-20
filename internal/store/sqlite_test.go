@@ -52,29 +52,17 @@ func createTestRepo(t *testing.T, s *SQLiteStore, nsID, name string) *Repo {
 	return repo
 }
 
-func createTestFolder(t *testing.T, s *SQLiteStore, nsID, name string, parentID *string) *Folder {
+func createTestFolder(t *testing.T, s *SQLiteStore, nsID, name string, color *string) *Folder {
 	t.Helper()
 	folder := &Folder{
 		ID:          "folder-" + name,
 		NamespaceID: nsID,
 		Name:        name,
-		ParentID:    parentID,
+		Color:       color,
 		CreatedAt:   time.Now(),
 	}
 	require.NoError(t, s.CreateFolder(folder))
 	return folder
-}
-
-func createTestLabel(t *testing.T, s *SQLiteStore, nsID, name string) *Label {
-	t.Helper()
-	label := &Label{
-		ID:          "label-" + name,
-		NamespaceID: nsID,
-		Name:        name,
-		CreatedAt:   time.Now(),
-	}
-	require.NoError(t, s.CreateLabel(label))
-	return label
 }
 
 func createTestToken(t *testing.T, s *SQLiteStore, nsID, id, hash string) *Token {
@@ -130,9 +118,8 @@ func TestStore_NamespaceLifecycle(t *testing.T) {
 
 	t.Run("delete cascades", func(t *testing.T) {
 		repo := createTestRepo(t, s, ns.ID, "cascade-test")
-		label := createTestLabel(t, s, ns.ID, "cascade-label")
-		s.AddRepoLabel(repo.ID, label.ID)
-		createTestFolder(t, s, ns.ID, "cascade-folder", nil)
+		folder := createTestFolder(t, s, ns.ID, "cascade-folder", nil)
+		s.AddRepoFolder(repo.ID, folder.ID)
 		createTestToken(t, s, ns.ID, "cascade-token", "hash")
 
 		require.NoError(t, s.DeleteNamespace("ns-1"))
@@ -215,148 +202,129 @@ func TestStore_FolderLifecycle(t *testing.T) {
 	s := newTestStore(t)
 	ns := createTestNamespace(t, s, "ns-1")
 
-	var rootFolder *Folder
+	var folder *Folder
 
-	t.Run("create root folder", func(t *testing.T) {
-		rootFolder = createTestFolder(t, s, ns.ID, "root", nil)
-	})
-
-	t.Run("create nested folder", func(t *testing.T) {
-		createTestFolder(t, s, ns.ID, "child", &rootFolder.ID)
+	t.Run("create folder with color", func(t *testing.T) {
+		color := "#ff0000"
+		folder = createTestFolder(t, s, ns.ID, "projects", &color)
 	})
 
 	t.Run("get by ID", func(t *testing.T) {
-		got, err := s.GetFolderByID(rootFolder.ID)
+		got, err := s.GetFolderByID(folder.ID)
 		require.NoError(t, err)
 		require.NotNil(t, got)
-		assert.Equal(t, "root", got.Name)
+		assert.Equal(t, "projects", got.Name)
+		require.NotNil(t, got.Color)
+		assert.Equal(t, "#ff0000", *got.Color)
 	})
 
-	t.Run("get by name root level", func(t *testing.T) {
-		got, err := s.GetFolderByName(ns.ID, "root", nil)
+	t.Run("get by name", func(t *testing.T) {
+		got, err := s.GetFolderByName(ns.ID, "projects")
 		require.NoError(t, err)
 		require.NotNil(t, got)
-		assert.Equal(t, rootFolder.ID, got.ID)
+		assert.Equal(t, folder.ID, got.ID)
 	})
 
-	t.Run("get by name nested", func(t *testing.T) {
-		got, err := s.GetFolderByName(ns.ID, "child", &rootFolder.ID)
-		require.NoError(t, err)
-		require.NotNil(t, got)
-		assert.Equal(t, "child", got.Name)
-	})
+	t.Run("count repos", func(t *testing.T) {
+		repo := createTestRepo(t, s, ns.ID, "in-folder")
+		s.AddRepoFolder(repo.ID, folder.ID)
 
-	t.Run("count contents", func(t *testing.T) {
-		s.CreateRepo(&Repo{
-			ID: "folder-repo", NamespaceID: ns.ID, Name: "in-folder",
-			FolderID: &rootFolder.ID, CreatedAt: time.Now(), UpdatedAt: time.Now(),
-		})
-
-		repos, subfolders, err := s.CountFolderContents(rootFolder.ID)
+		count, err := s.CountFolderRepos(folder.ID)
 		require.NoError(t, err)
-		assert.Equal(t, 1, repos)
-		assert.Equal(t, 1, subfolders)
+		assert.Equal(t, 1, count)
 	})
 
 	t.Run("update", func(t *testing.T) {
-		rootFolder.Name = "renamed-root"
-		require.NoError(t, s.UpdateFolder(rootFolder))
+		folder.Name = "renamed"
+		newColor := "#00ff00"
+		folder.Color = &newColor
+		require.NoError(t, s.UpdateFolder(folder))
 
-		got, _ := s.GetFolderByID(rootFolder.ID)
-		assert.Equal(t, "renamed-root", got.Name)
+		got, _ := s.GetFolderByID(folder.ID)
+		assert.Equal(t, "renamed", got.Name)
+		assert.Equal(t, "#00ff00", *got.Color)
 	})
 
 	t.Run("list", func(t *testing.T) {
+		createTestFolder(t, s, ns.ID, "another", nil)
 		folders, err := s.ListFolders(ns.ID, "", 10)
 		require.NoError(t, err)
 		assert.Len(t, folders, 2)
 	})
 
 	t.Run("delete", func(t *testing.T) {
-		child, _ := s.GetFolderByName(ns.ID, "child", &rootFolder.ID)
-		require.NoError(t, s.DeleteFolder(child.ID))
+		other, _ := s.GetFolderByName(ns.ID, "another")
+		require.NoError(t, s.DeleteFolder(other.ID))
 
-		got, _ := s.GetFolderByID(child.ID)
+		got, _ := s.GetFolderByID(other.ID)
 		assert.Nil(t, got)
 	})
 }
 
-func TestStore_LabelLifecycle(t *testing.T) {
+func TestStore_RepoFolderM2M(t *testing.T) {
 	s := newTestStore(t)
 	ns := createTestNamespace(t, s, "ns-1")
-	repo := createTestRepo(t, s, ns.ID, "labeled-repo")
+	repo := createTestRepo(t, s, ns.ID, "my-repo")
+	folder1 := createTestFolder(t, s, ns.ID, "folder1", nil)
+	folder2 := createTestFolder(t, s, ns.ID, "folder2", nil)
 
-	var label *Label
+	t.Run("add folder to repo", func(t *testing.T) {
+		require.NoError(t, s.AddRepoFolder(repo.ID, folder1.ID))
 
-	t.Run("create", func(t *testing.T) {
-		color := "#ff0000"
-		label = &Label{
-			ID:          "label-1",
-			NamespaceID: ns.ID,
-			Name:        "bug",
-			Color:       &color,
-			CreatedAt:   time.Now(),
-		}
-		require.NoError(t, s.CreateLabel(label))
-	})
-
-	t.Run("get by ID", func(t *testing.T) {
-		got, err := s.GetLabelByID("label-1")
+		folders, err := s.ListRepoFolders(repo.ID)
 		require.NoError(t, err)
-		require.NotNil(t, got)
-		assert.Equal(t, "bug", got.Name)
-		assert.Equal(t, "#ff0000", *got.Color)
+		assert.Len(t, folders, 1)
+		assert.Equal(t, "folder1", folders[0].Name)
 	})
 
-	t.Run("get by name", func(t *testing.T) {
-		got, err := s.GetLabelByName(ns.ID, "bug")
-		require.NoError(t, err)
-		require.NotNil(t, got)
-		assert.Equal(t, "label-1", got.ID)
+	t.Run("add same folder twice is idempotent", func(t *testing.T) {
+		require.NoError(t, s.AddRepoFolder(repo.ID, folder1.ID))
+
+		folders, _ := s.ListRepoFolders(repo.ID)
+		assert.Len(t, folders, 1)
 	})
 
-	t.Run("add to repo", func(t *testing.T) {
-		require.NoError(t, s.AddRepoLabel(repo.ID, label.ID))
-
-		labels, err := s.ListRepoLabels(repo.ID)
-		require.NoError(t, err)
-		assert.Len(t, labels, 1)
-		assert.Equal(t, "bug", labels[0].Name)
-	})
-
-	t.Run("list repos with label", func(t *testing.T) {
-		repos, err := s.ListLabelRepos(label.ID)
+	t.Run("list repos in folder", func(t *testing.T) {
+		repos, err := s.ListFolderRepos(folder1.ID)
 		require.NoError(t, err)
 		assert.Len(t, repos, 1)
 		assert.Equal(t, repo.ID, repos[0].ID)
 	})
 
-	t.Run("remove from repo", func(t *testing.T) {
-		require.NoError(t, s.RemoveRepoLabel(repo.ID, label.ID))
+	t.Run("repo can belong to multiple folders", func(t *testing.T) {
+		require.NoError(t, s.AddRepoFolder(repo.ID, folder2.ID))
 
-		labels, _ := s.ListRepoLabels(repo.ID)
-		assert.Len(t, labels, 0)
-	})
-
-	t.Run("update", func(t *testing.T) {
-		label.Name = "critical"
-		require.NoError(t, s.UpdateLabel(label))
-
-		got, _ := s.GetLabelByID("label-1")
-		assert.Equal(t, "critical", got.Name)
-	})
-
-	t.Run("list", func(t *testing.T) {
-		labels, err := s.ListLabels(ns.ID, "", 10)
+		folders, err := s.ListRepoFolders(repo.ID)
 		require.NoError(t, err)
-		assert.Len(t, labels, 1)
+		assert.Len(t, folders, 2)
 	})
 
-	t.Run("delete", func(t *testing.T) {
-		require.NoError(t, s.DeleteLabel("label-1"))
+	t.Run("set repo folders replaces all", func(t *testing.T) {
+		require.NoError(t, s.SetRepoFolders(repo.ID, []string{folder2.ID}))
 
-		got, _ := s.GetLabelByID("label-1")
-		assert.Nil(t, got)
+		folders, err := s.ListRepoFolders(repo.ID)
+		require.NoError(t, err)
+		assert.Len(t, folders, 1)
+		assert.Equal(t, "folder2", folders[0].Name)
+	})
+
+	t.Run("remove folder from repo", func(t *testing.T) {
+		require.NoError(t, s.RemoveRepoFolder(repo.ID, folder2.ID))
+
+		folders, _ := s.ListRepoFolders(repo.ID)
+		assert.Len(t, folders, 0)
+	})
+
+	t.Run("remove non-existent folder returns error", func(t *testing.T) {
+		err := s.RemoveRepoFolder(repo.ID, folder1.ID)
+		assert.Error(t, err)
+	})
+
+	t.Run("list folders for repo with none", func(t *testing.T) {
+		repo2 := createTestRepo(t, s, ns.ID, "no-folders")
+		folders, err := s.ListRepoFolders(repo2.ID)
+		require.NoError(t, err)
+		assert.Len(t, folders, 0)
 	})
 }
 
@@ -491,10 +459,6 @@ func TestStore_NotFound(t *testing.T) {
 		require.NoError(t, err)
 		assert.Nil(t, folder)
 
-		label, err := s.GetLabelByID("nope")
-		require.NoError(t, err)
-		assert.Nil(t, label)
-
 		token, err := s.GetTokenByID("nope")
 		require.NoError(t, err)
 		assert.Nil(t, token)
@@ -503,14 +467,12 @@ func TestStore_NotFound(t *testing.T) {
 	t.Run("delete returns error", func(t *testing.T) {
 		assert.Error(t, s.DeleteRepo("nope"))
 		assert.Error(t, s.DeleteFolder("nope"))
-		assert.Error(t, s.DeleteLabel("nope"))
 		assert.Error(t, s.DeleteToken("nope"))
 	})
 
 	t.Run("update returns error", func(t *testing.T) {
 		assert.Error(t, s.UpdateRepo(&Repo{ID: "nope"}))
 		assert.Error(t, s.UpdateFolder(&Folder{ID: "nope"}))
-		assert.Error(t, s.UpdateLabel(&Label{ID: "nope"}))
 	})
 }
 
@@ -536,34 +498,6 @@ func TestStore_GenerateRootToken(t *testing.T) {
 		token, err := s.GenerateRootToken()
 		require.NoError(t, err)
 		assert.Empty(t, token)
-	})
-}
-
-func TestStore_RepoLabelEdgeCases(t *testing.T) {
-	s := newTestStore(t)
-	ns := createTestNamespace(t, s, "ns-1")
-	repo := createTestRepo(t, s, ns.ID, "repo")
-	label := createTestLabel(t, s, ns.ID, "label")
-
-	t.Run("add same label twice is idempotent", func(t *testing.T) {
-		require.NoError(t, s.AddRepoLabel(repo.ID, label.ID))
-		require.NoError(t, s.AddRepoLabel(repo.ID, label.ID))
-
-		labels, _ := s.ListRepoLabels(repo.ID)
-		assert.Len(t, labels, 1)
-	})
-
-	t.Run("remove non-existent label returns error", func(t *testing.T) {
-		s.RemoveRepoLabel(repo.ID, label.ID)
-		err := s.RemoveRepoLabel(repo.ID, label.ID)
-		assert.Error(t, err)
-	})
-
-	t.Run("list labels for repo with none", func(t *testing.T) {
-		repo2 := createTestRepo(t, s, ns.ID, "no-labels")
-		labels, err := s.ListRepoLabels(repo2.ID)
-		require.NoError(t, err)
-		assert.Len(t, labels, 0)
 	})
 }
 
@@ -610,57 +544,18 @@ func TestStore_OptionalFields(t *testing.T) {
 		assert.Equal(t, "test-token", *got.Name)
 	})
 
-	t.Run("label without color", func(t *testing.T) {
-		ns := createTestNamespace(t, s, "ns-label")
-		label := &Label{
-			ID:          "label-no-color",
+	t.Run("folder without color", func(t *testing.T) {
+		ns := createTestNamespace(t, s, "ns-folder")
+		folder := &Folder{
+			ID:          "folder-no-color",
 			NamespaceID: ns.ID,
 			Name:        "plain",
 			CreatedAt:   time.Now(),
 		}
-		require.NoError(t, s.CreateLabel(label))
+		require.NoError(t, s.CreateFolder(folder))
 
-		got, _ := s.GetLabelByID("label-no-color")
+		got, _ := s.GetFolderByID("folder-no-color")
 		assert.Nil(t, got.Color)
 	})
 }
 
-func TestStore_FolderHierarchy(t *testing.T) {
-	s := newTestStore(t)
-	ns := createTestNamespace(t, s, "ns-1")
-
-	root1 := createTestFolder(t, s, ns.ID, "folder", nil)
-	root2 := createTestFolder(t, s, ns.ID, "other-root", nil)
-
-	t.Run("same name under different parents succeeds", func(t *testing.T) {
-		child1 := &Folder{
-			ID:          "child-under-" + root1.ID,
-			NamespaceID: ns.ID,
-			Name:        "child",
-			ParentID:    &root1.ID,
-			CreatedAt:   time.Now(),
-		}
-		require.NoError(t, s.CreateFolder(child1))
-
-		child2 := &Folder{
-			ID:          "child-under-" + root2.ID,
-			NamespaceID: ns.ID,
-			Name:        "child",
-			ParentID:    &root2.ID,
-			CreatedAt:   time.Now(),
-		}
-		require.NoError(t, s.CreateFolder(child2))
-	})
-
-	t.Run("get by name distinguishes by parent", func(t *testing.T) {
-		got1, err := s.GetFolderByName(ns.ID, "child", &root1.ID)
-		require.NoError(t, err)
-		require.NotNil(t, got1)
-		assert.Equal(t, "child-under-"+root1.ID, got1.ID)
-
-		got2, err := s.GetFolderByName(ns.ID, "child", &root2.ID)
-		require.NoError(t, err)
-		require.NotNil(t, got2)
-		assert.Equal(t, "child-under-"+root2.ID, got2.ID)
-	})
-}

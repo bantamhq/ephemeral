@@ -87,25 +87,3 @@ func (s *Server) requireFolderAccess(w http.ResponseWriter, r *http.Request, tok
 
 	return folder
 }
-
-// requireLabelAccess retrieves a label by ID and verifies the token has access.
-// Returns the label if access is granted, or writes an error response and returns nil.
-func (s *Server) requireLabelAccess(w http.ResponseWriter, r *http.Request, token *store.Token) *store.Label {
-	id := chi.URLParam(r, "id")
-	label, err := s.store.GetLabelByID(id)
-	if err != nil {
-		JSONError(w, http.StatusInternalServerError, "Failed to get label")
-		return nil
-	}
-	if label == nil {
-		JSONError(w, http.StatusNotFound, "Label not found")
-		return nil
-	}
-
-	if label.NamespaceID != token.NamespaceID && !HasScope(token, store.ScopeAdmin) {
-		JSONError(w, http.StatusForbidden, "Access denied")
-		return nil
-	}
-
-	return label
-}

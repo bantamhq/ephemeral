@@ -7,6 +7,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
 	"ephemeral/internal/store"
@@ -164,9 +165,8 @@ func (s *Server) handleDeleteRepo(w http.ResponseWriter, r *http.Request) {
 }
 
 type updateRepoRequest struct {
-	Name     *string `json:"name,omitempty"`
-	Public   *bool   `json:"public,omitempty"`
-	FolderID *string `json:"folder_id,omitempty"`
+	Name   *string `json:"name,omitempty"`
+	Public *bool   `json:"public,omitempty"`
 }
 
 func (s *Server) handleUpdateRepo(w http.ResponseWriter, r *http.Request) {
@@ -214,13 +214,6 @@ func (s *Server) handleUpdateRepo(w http.ResponseWriter, r *http.Request) {
 	if req.Public != nil {
 		repo.Public = *req.Public
 	}
-	if req.FolderID != nil {
-		if *req.FolderID == "" {
-			repo.FolderID = nil
-		} else {
-			repo.FolderID = req.FolderID
-		}
-	}
 
 	if nameChanged {
 		if err := s.renameRepoOnDisk(repo.NamespaceID, oldName, *req.Name); err != nil {
@@ -253,4 +246,150 @@ func (s *Server) renameRepoOnDisk(namespaceID, oldName, newName string) error {
 		return err
 	}
 	return os.Rename(oldPath, newPath)
+}
+
+func (s *Server) handleListRepoFolders(w http.ResponseWriter, r *http.Request) {
+	token := s.requireAuth(w, r)
+	if token == nil {
+		return
+	}
+
+	repo := s.requireRepoAccess(w, r, token)
+	if repo == nil {
+		return
+	}
+
+	folders, err := s.store.ListRepoFolders(repo.ID)
+	if err != nil {
+		JSONError(w, http.StatusInternalServerError, "Failed to list repo folders")
+		return
+	}
+
+	JSON(w, http.StatusOK, folders)
+}
+
+type repoFoldersRequest struct {
+	FolderIDs []string `json:"folder_ids"`
+}
+
+// validateFolderIDs verifies all folder IDs exist and belong to the token's namespace.
+func (s *Server) validateFolderIDs(w http.ResponseWriter, folderIDs []string, namespaceID string) bool {
+	for _, folderID := range folderIDs {
+		folder, err := s.store.GetFolderByID(folderID)
+		if err != nil {
+			JSONError(w, http.StatusInternalServerError, "Failed to get folder")
+			return false
+		}
+		if folder == nil {
+			JSONError(w, http.StatusBadRequest, "Folder not found: "+folderID)
+			return false
+		}
+		if folder.NamespaceID != namespaceID {
+			JSONError(w, http.StatusForbidden, "Folder not in namespace: "+folderID)
+			return false
+		}
+	}
+	return true
+}
+
+func (s *Server) handleAddRepoFolders(w http.ResponseWriter, r *http.Request) {
+	token := s.requireAuth(w, r)
+	if token == nil {
+		return
+	}
+	if !s.requireScope(w, token, store.ScopeRepos) {
+		return
+	}
+
+	repo := s.requireRepoAccess(w, r, token)
+	if repo == nil {
+		return
+	}
+
+	var req repoFoldersRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		JSONError(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+
+	if !s.validateFolderIDs(w, req.FolderIDs, token.NamespaceID) {
+		return
+	}
+
+	for _, folderID := range req.FolderIDs {
+		if err := s.store.AddRepoFolder(repo.ID, folderID); err != nil {
+			JSONError(w, http.StatusInternalServerError, "Failed to add folder")
+			return
+		}
+	}
+
+	folders, err := s.store.ListRepoFolders(repo.ID)
+	if err != nil {
+		JSONError(w, http.StatusInternalServerError, "Failed to list repo folders")
+		return
+	}
+
+	JSON(w, http.StatusOK, folders)
+}
+
+func (s *Server) handleSetRepoFolders(w http.ResponseWriter, r *http.Request) {
+	token := s.requireAuth(w, r)
+	if token == nil {
+		return
+	}
+	if !s.requireScope(w, token, store.ScopeRepos) {
+		return
+	}
+
+	repo := s.requireRepoAccess(w, r, token)
+	if repo == nil {
+		return
+	}
+
+	var req repoFoldersRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		JSONError(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+
+	if !s.validateFolderIDs(w, req.FolderIDs, token.NamespaceID) {
+		return
+	}
+
+	if err := s.store.SetRepoFolders(repo.ID, req.FolderIDs); err != nil {
+		JSONError(w, http.StatusInternalServerError, "Failed to set repo folders")
+		return
+	}
+
+	folders, err := s.store.ListRepoFolders(repo.ID)
+	if err != nil {
+		JSONError(w, http.StatusInternalServerError, "Failed to list repo folders")
+		return
+	}
+
+	JSON(w, http.StatusOK, folders)
+}
+
+func (s *Server) handleRemoveRepoFolder(w http.ResponseWriter, r *http.Request) {
+	token := s.requireAuth(w, r)
+	if token == nil {
+		return
+	}
+	if !s.requireScope(w, token, store.ScopeRepos) {
+		return
+	}
+
+	repo := s.requireRepoAccess(w, r, token)
+	if repo == nil {
+		return
+	}
+
+	folderID := chi.URLParam(r, "folderID")
+
+	if err := s.store.RemoveRepoFolder(repo.ID, folderID); err != nil {
+		JSONError(w, http.StatusInternalServerError, "Failed to remove folder")
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
 }
