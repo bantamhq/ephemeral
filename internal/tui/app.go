@@ -236,11 +236,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		detail := &RepoDetail{
-			RepoID:  msg.RepoID,
-			Refs:    msg.Refs,
-			Commits: msg.Commits,
-			Tree:    msg.Tree,
-			Readme:  msg.Readme,
+			RepoID:         msg.RepoID,
+			Refs:           msg.Refs,
+			Commits:        msg.Commits,
+			Tree:           msg.Tree,
+			Readme:         msg.Readme,
+			ReadmeFilename: msg.ReadmeFilename,
 		}
 		for _, ref := range msg.Refs {
 			if ref.IsDefault {
@@ -975,6 +976,7 @@ func (m Model) loadDetail(repoID string) tea.Cmd {
 		var commits []client.Commit
 		var tree []client.TreeEntry
 		var readme *string
+		var readmeFilename string
 
 		if defaultRef != "" {
 			commits, _, _ = m.client.ListCommits(repoID, defaultRef, "", 20)
@@ -985,17 +987,8 @@ func (m Model) loadDetail(repoID string) tea.Cmd {
 				if nameLower == "readme.md" || nameLower == "readme" || nameLower == "readme.txt" {
 					blob, err := m.client.GetBlob(repoID, defaultRef, entry.Name)
 					if err == nil && blob.Content != nil && !blob.IsBinary {
-						content := *blob.Content
-						if strings.HasSuffix(nameLower, ".md") {
-							rendered, err := glamour.Render(content, "dark")
-							if err == nil {
-								readme = &rendered
-							} else {
-								readme = &content
-							}
-						} else {
-							readme = &content
-						}
+						readme = blob.Content
+						readmeFilename = entry.Name
 					}
 					break
 				}
@@ -1003,11 +996,12 @@ func (m Model) loadDetail(repoID string) tea.Cmd {
 		}
 
 		return DetailLoadedMsg{
-			RepoID:  repoID,
-			Refs:    refs,
-			Commits: commits,
-			Tree:    tree,
-			Readme:  readme,
+			RepoID:         repoID,
+			Refs:           refs,
+			Commits:        commits,
+			Tree:           tree,
+			Readme:         readme,
+			ReadmeFilename: readmeFilename,
 		}
 	}
 }
@@ -1287,11 +1281,9 @@ func (m Model) renderInfoTab(width, height int) string {
 	if m.currentDetail.Readme != nil {
 		lines = append(lines, StyleMetaText.Render("  README"))
 		lines = append(lines, "")
-		readmeLines := strings.Split(*m.currentDetail.Readme, "\n")
-		for _, line := range readmeLines {
-			if len(line) > width-4 {
-				line = line[:width-4]
-			}
+
+		content := m.renderReadme(*m.currentDetail.Readme, m.currentDetail.ReadmeFilename, width-4)
+		for _, line := range strings.Split(content, "\n") {
 			lines = append(lines, "  "+line)
 		}
 	}
@@ -1374,6 +1366,27 @@ func (m Model) renderScrolledContent(lines []string, height int) string {
 	}
 
 	return strings.Join(lines[start:end], "\n")
+}
+
+func (m Model) renderReadme(content, filename string, width int) string {
+	if !strings.HasSuffix(strings.ToLower(filename), ".md") {
+		return content
+	}
+
+	renderer, err := glamour.NewTermRenderer(
+		glamour.WithWordWrap(width),
+		glamour.WithStandardStyle("dark"),
+	)
+	if err != nil {
+		return content
+	}
+
+	rendered, err := renderer.Render(content)
+	if err != nil {
+		return content
+	}
+
+	return rendered
 }
 
 func (m Model) renderRepoItem(name, meta string, maxNameWidth, width int, isEditing, isFocused bool) string {

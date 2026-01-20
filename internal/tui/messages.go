@@ -71,19 +71,21 @@ type repoFolderRemovedMsg struct {
 }
 
 type RepoDetail struct {
-	RepoID     string
-	Refs       []client.Ref
-	DefaultRef string
-	Commits    []client.Commit
-	Tree       []client.TreeEntry
-	Readme     *string
+	RepoID         string
+	Refs           []client.Ref
+	DefaultRef     string
+	Commits        []client.Commit
+	Tree           []client.TreeEntry
+	Readme         *string
+	ReadmeFilename string
 }
 
 type DetailLoadedMsg struct {
-	RepoID  string
-	Refs    []client.Ref
-	Commits []client.Commit
-	Tree    []client.TreeEntry
-	Readme  *string
-	Err     error
+	RepoID         string
+	Refs           []client.Ref
+	Commits        []client.Commit
+	Tree           []client.TreeEntry
+	Readme         *string
+	ReadmeFilename string
+	Err            error
 }
