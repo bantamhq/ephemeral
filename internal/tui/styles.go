@@ -19,10 +19,17 @@ var (
 				Foreground(colorTextOnPrimary).
 				Bold(true)
 
-	StyleRepoSelected = lipgloss.NewStyle().
-				Border(lipgloss.ThickBorder(), false, false, false, true).
-				BorderForeground(colorPrimaryDark).
-				PaddingLeft(1)
+	StyleRepoActive = lipgloss.NewStyle().
+			Border(lipgloss.ThickBorder(), false, false, false, true).
+			BorderForeground(colorPrimaryDark).
+			PaddingLeft(1)
+
+	StyleRepoCursor = lipgloss.NewStyle().
+			PaddingLeft(2)
+
+	StyleRepoDefault = lipgloss.NewStyle().
+			PaddingLeft(2).
+			Faint(true)
 
 	StyleEditing = lipgloss.NewStyle().
 			Background(colorSurface).

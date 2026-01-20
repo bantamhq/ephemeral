@@ -1,6 +1,7 @@
 package tui
 
 import (
+	_ "embed"
 	"fmt"
 	"net/url"
 	"os"
@@ -20,6 +21,9 @@ import (
 
 	"ephemeral/internal/client"
 )
+
+//go:embed ephemeral.json
+var glamourStyle []byte
 
 type modalState int
 
@@ -1453,13 +1457,11 @@ func (m Model) renderRepoColumn(width, height int) string {
 
 	for i := startIdx; i < endIdx; i++ {
 		repo := m.filteredRepos[i]
-		isEditing := m.editingRepo != nil && m.editingRepo.ID == repo.ID
-		isFocused := i == m.repoCursor && m.focusedColumn == columnRepos
-
+		state := m.repoItemState(i, repo.ID)
 		meta := formatRepoMeta(repo)
 		maxNameWidth := width - 3
 
-		b.WriteString(m.renderRepoItem(repo.Name, meta, maxNameWidth, width, isEditing, isFocused))
+		b.WriteString(m.renderRepoItem(repo.Name, meta, maxNameWidth, width, state))
 		b.WriteString("\n\n")
 	}
 
@@ -1639,7 +1641,7 @@ func (m Model) renderReadme(content, filename string, width int) string {
 
 	renderer, err := glamour.NewTermRenderer(
 		glamour.WithWordWrap(width),
-		glamour.WithStandardStyle("dark"),
+		glamour.WithStylesFromJSONBytes(glamourStyle),
 	)
 	if err != nil {
 		return content
@@ -1653,30 +1655,38 @@ func (m Model) renderReadme(content, filename string, width int) string {
 	return strings.TrimSpace(rendered)
 }
 
-func (m Model) renderRepoItem(name, meta string, maxNameWidth, width int, isEditing, isFocused bool) string {
-	var lines strings.Builder
+type repoItemState int
 
-	if isEditing {
+const (
+	repoStateDefault repoItemState = iota
+	repoStateCursor
+	repoStateActive
+	repoStateEditing
+)
+
+func (m Model) renderRepoItem(name, meta string, maxNameWidth, width int, state repoItemState) string {
+	if state == repoStateEditing {
 		visibleText := truncateEditText(m.editText, maxNameWidth)
-		lines.WriteString(StyleEditing.Width(width).Render("  " + visibleText + "█"))
-		lines.WriteString("\n")
-		lines.WriteString(StyleMetaText.Render(meta))
-		return lines.String()
-	}
-
-	if isFocused {
-		truncName := truncateWithEllipsis(name, maxNameWidth)
-		lines.WriteString(StyleRepoSelected.Width(width).Render(StyleRepoTitle.Render(truncName)))
-		lines.WriteString("\n")
-		lines.WriteString(StyleRepoSelected.Width(width).Render(StyleMetaText.Render(strings.TrimPrefix(meta, "  "))))
-		return lines.String()
+		return StyleEditing.Width(width).Render("  "+visibleText+"█") + "\n" + StyleMetaText.Render(meta)
 	}
 
 	truncName := truncateWithEllipsis(name, maxNameWidth)
-	lines.WriteString(StyleRepoTitle.Faint(true).Render("  " + truncName))
-	lines.WriteString("\n")
-	lines.WriteString(StyleMetaText.Faint(true).Render(meta))
-	return lines.String()
+	metaText := strings.TrimPrefix(meta, "  ")
+
+	var style lipgloss.Style
+	switch state {
+	case repoStateActive:
+		style = StyleRepoActive
+	case repoStateCursor:
+		style = StyleRepoCursor
+	default:
+		style = StyleRepoDefault
+	}
+
+	titleLine := style.Width(width).Render(StyleRepoTitle.Render(truncName))
+	metaLine := style.Width(width).Render(StyleMetaText.Render(metaText))
+
+	return titleLine + "\n" + metaLine
 }
 
 func (m Model) loadingView() string {
@@ -1715,6 +1725,25 @@ func Run(c *client.Client, namespace, server string) error {
 
 func formatRepoMeta(repo client.Repo) string {
 	return fmt.Sprintf("  size: %s • pushed: %s", formatSize(repo.SizeBytes), formatRelativeTime(repo.LastPushAt))
+}
+
+func (m Model) repoItemState(index int, repoID string) repoItemState {
+	if m.editingRepo != nil && m.editingRepo.ID == repoID {
+		return repoStateEditing
+	}
+
+	if index != m.repoCursor {
+		return repoStateDefault
+	}
+
+	switch m.focusedColumn {
+	case columnRepos:
+		return repoStateActive
+	case columnDetail:
+		return repoStateCursor
+	default:
+		return repoStateDefault
+	}
 }
 
 func (m Model) rightAlignInWidth(left, right string, width int) string {
