@@ -14,7 +14,6 @@ type KeyMap struct {
 	Left          key.Binding
 	Right         key.Binding
 	Enter         key.Binding
-	Tab           key.Binding
 	Escape        key.Binding
 	Quit          key.Binding
 	NewFolder     key.Binding
@@ -45,10 +44,6 @@ var DefaultKeyMap = KeyMap{
 	Enter: key.NewBinding(
 		key.WithKeys("enter"),
 		key.WithHelp("enter", "select"),
-	),
-	Tab: key.NewBinding(
-		key.WithKeys("tab"),
-		key.WithHelp("tab", "switch tab"),
 	),
 	Escape: key.NewBinding(
 		key.WithKeys("esc"),
@@ -87,11 +82,11 @@ var DefaultKeyMap = KeyMap{
 func (k KeyMap) ShortHelp(focusedColumn int) string {
 	switch focusedColumn {
 	case columnFolders:
-		return "n new folder • r rename • d delete"
+		return "n new folder • r rename • d delete • esc back"
 	case columnRepos:
-		return "tab switch tab • enter details • c clone • m folders"
+		return "→ details • c clone • m folders • esc back"
 	case columnDetail:
-		return "↑↓ scroll • tab switch tab • esc back"
+		return "↑↓ scroll • ←→ switch tab • esc back"
 	default:
 		return ""
 	}

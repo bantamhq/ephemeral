@@ -274,18 +274,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, m.keys.Quit):
 		return m, tea.Quit
 
-	case key.Matches(msg, m.keys.Tab):
-		m.detailTab = (m.detailTab + 1) % 3
-		m.detailViewport.GotoTop()
-		m.setViewportContent()
-		return m, nil
-
 	case key.Matches(msg, m.keys.Escape):
-		if m.focusedColumn == columnDetail {
-			m.focusedColumn = columnRepos
-			m.detailViewport.GotoTop()
-		}
-		return m, nil
+		return m.handleEscape()
 
 	case key.Matches(msg, m.keys.Up):
 		if m.focusedColumn == columnDetail {
@@ -307,24 +297,10 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, m.maybeLoadDetail()
 
 	case key.Matches(msg, m.keys.Left):
-		if m.focusedColumn == columnDetail {
-			m.focusedColumn = columnRepos
-			m.detailViewport.GotoTop()
-		} else if m.focusedColumn == columnRepos {
-			m.focusedColumn = columnFolders
-		}
-		return m, nil
+		return m.handleLeft()
 
 	case key.Matches(msg, m.keys.Right):
-		if m.focusedColumn == columnFolders {
-			m.focusedColumn = columnRepos
-			return m, m.maybeLoadDetail()
-		} else if m.focusedColumn == columnRepos {
-			m.focusedColumn = columnDetail
-			m.detailViewport.GotoTop()
-			return m, m.maybeLoadDetail()
-		}
-		return m, nil
+		return m.handleRight()
 
 	case key.Matches(msg, m.keys.Enter):
 		if m.focusedColumn == columnFolders {
@@ -380,6 +356,54 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m *Model) resetRepoCursor() {
 	m.repoCursor = 0
 	m.repoScroll = 0
+}
+
+func (m Model) handleEscape() (tea.Model, tea.Cmd) {
+	switch m.focusedColumn {
+	case columnDetail:
+		m.focusedColumn = columnRepos
+		m.detailViewport.GotoTop()
+	case columnRepos:
+		m.focusedColumn = columnFolders
+	}
+	return m, nil
+}
+
+func (m Model) handleLeft() (tea.Model, tea.Cmd) {
+	switch m.focusedColumn {
+	case columnDetail:
+		if m.detailTab == tabReadme {
+			m.focusedColumn = columnRepos
+			m.detailViewport.GotoTop()
+		} else {
+			m.detailTab--
+			m.detailViewport.GotoTop()
+			m.setViewportContent()
+		}
+	case columnRepos:
+		m.focusedColumn = columnFolders
+	}
+	return m, nil
+}
+
+func (m Model) handleRight() (tea.Model, tea.Cmd) {
+	switch m.focusedColumn {
+	case columnFolders:
+		m.focusedColumn = columnRepos
+		return m, m.maybeLoadDetail()
+	case columnRepos:
+		m.focusedColumn = columnDetail
+		m.detailTab = tabReadme
+		m.detailViewport.GotoTop()
+		return m, m.maybeLoadDetail()
+	case columnDetail:
+		if m.detailTab < tabFiles {
+			m.detailTab++
+			m.detailViewport.GotoTop()
+			m.setViewportContent()
+		}
+	}
+	return m, nil
 }
 
 func (m Model) handleEditMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -1026,10 +1050,9 @@ func (m *Model) updateViewportSize() {
 	repoWidth := max(contentWidth/4, 10)
 	detailWidth := max(contentWidth-folderWidth-repoWidth, 10)
 
-	viewportHeight := m.mainHeight() - 6
-	if viewportHeight < 1 {
-		viewportHeight = 1
-	}
+	// Header+static info (3) + tab frame (3 tab rows + 1 padding + 1 border = 5)
+	const tabFrameOverhead = 8
+	viewportHeight := max(m.mainHeight()-tabFrameOverhead, 1)
 
 	m.detailViewport.Width = detailWidth - 2
 	m.detailViewport.Height = viewportHeight
@@ -1053,7 +1076,7 @@ func (m *Model) setViewportContent() {
 		content = m.getFilesContent(width)
 	}
 
-	m.detailViewport.SetContent(content)
+	m.detailViewport.SetContent(content + "\n\n")
 }
 
 func (m Model) getReadmeContent(width int) string {
@@ -1069,30 +1092,31 @@ func (m Model) getActivityContent(width int) string {
 		return " " + StyleMetaText.Render("No commits")
 	}
 
-	var lines []string
-	for _, commit := range m.currentDetail.Commits {
+	maxMsgLen := max(width-12, 10)
+	var b strings.Builder
+
+	for i, commit := range m.currentDetail.Commits {
 		shortSHA := commit.SHA
 		if len(shortSHA) > 7 {
 			shortSHA = shortSHA[:7]
 		}
 
 		message := strings.Split(commit.Message, "\n")[0]
-		maxMsgLen := width - 12
-		if maxMsgLen < 10 {
-			maxMsgLen = 10
-		}
 		if len(message) > maxMsgLen {
 			message = message[:maxMsgLen-1] + "…"
 		}
 
 		timeAgo := formatRelativeTime(&commit.Author.Date)
 
-		lines = append(lines, " "+StyleMetaText.Render(shortSHA)+" "+message)
-		lines = append(lines, " "+StyleMetaText.Render(fmt.Sprintf("  %s • %s", commit.Author.Name, timeAgo)))
-		lines = append(lines, "")
+		b.WriteString(" " + StyleMetaText.Render(shortSHA) + " " + message + "\n")
+		b.WriteString(" " + StyleMetaText.Render(fmt.Sprintf("  %s • %s", commit.Author.Name, timeAgo)))
+
+		if i < len(m.currentDetail.Commits)-1 {
+			b.WriteString("\n\n")
+		}
 	}
 
-	return strings.Join(lines, "\n")
+	return b.String()
 }
 
 func (m Model) getFilesContent(width int) string {
@@ -1323,7 +1347,8 @@ func (m Model) renderDetailColumn(width, height int) string {
 	staticInfo := m.renderStaticInfo(repo, width)
 	b.WriteString(staticInfo)
 
-	tabbedContainer := m.renderTabbedContainer(width, height-3-strings.Count(staticInfo, "\n"))
+	isActive := m.focusedColumn == columnDetail
+	tabbedContainer := m.renderTabbedContainer(width, height-3-strings.Count(staticInfo, "\n"), isActive)
 	b.WriteString(tabbedContainer)
 
 	return lipgloss.NewStyle().Width(width).Height(height).Render(b.String())
@@ -1332,7 +1357,7 @@ func (m Model) renderDetailColumn(width, height int) string {
 func (m Model) renderStaticInfo(repo *client.Repo, width int) string {
 	folders := m.repoFolders[repo.ID]
 	if len(folders) == 0 {
-		return "\n"
+		return ""
 	}
 
 	var folderNames []string
@@ -1345,66 +1370,126 @@ func (m Model) renderStaticInfo(repo *client.Repo, width int) string {
 		foldersLine = truncateWithEllipsis(foldersLine, width-1)
 	}
 
-	return foldersLine + "\n\n"
+	return foldersLine + "\n"
 }
 
-func (m Model) renderTabbedContainer(width, height int) string {
-	if height < 3 {
-		height = 3
+func (m Model) renderTabbedContainer(width, height int, isActive bool) string {
+	if height < 4 {
+		height = 4
 	}
 
-	tabs := []string{"Readme", "Activity", "Files"}
-	border := StyleContainerBorder
-
-	var tabRow strings.Builder
-	var borderRow strings.Builder
-
-	borderPosAfterPadding := 0
-
-	for i, tab := range tabs {
-		isActive := detailTab(i) == m.detailTab
-		tabWidth := lipgloss.Width(tab)
-
-		if isActive {
-			tabRow.WriteString(" " + StyleTabActive.Render(tab) + " ")
-			borderRow.WriteString(border.Render(strings.Repeat("─", borderPosAfterPadding+1)))
-			borderRow.WriteString(StyleTabActive.Render(strings.Repeat("─", tabWidth)))
-			borderPosAfterPadding = 1
-		} else {
-			tabRow.WriteString(" " + StyleTabInactive.Render(tab) + " ")
-			borderPosAfterPadding += tabWidth + 2
-		}
+	border := StyleTabBorder
+	if isActive {
+		border = StyleTabBorderActive
 	}
 
-	remainingBorder := width - lipgloss.Width(borderRow.String())
-	if remainingBorder > 0 {
-		borderRow.WriteString(border.Render(strings.Repeat("─", remainingBorder)))
-	}
-
-	contentHeight := height - 2
+	tabHeader := m.renderTabHeader(width, border)
+	contentHeight := height - 5
 	if contentHeight < 1 {
 		contentHeight = 1
 	}
 
-	var content string
-	if m.detailLoading {
-		content = " " + StyleMetaText.Render("Loading...")
-	} else if m.currentDetail == nil {
-		content = " " + StyleMetaText.Render("No data")
-	} else {
-		content = m.detailViewport.View()
-	}
+	content := m.renderTabContent(width, contentHeight, border)
+	bottomBorder := m.renderTabBottomBorder(width, border)
 
-	var result strings.Builder
-	result.WriteString(tabRow.String())
-	result.WriteString("\n")
-	result.WriteString(borderRow.String())
-	result.WriteString("\n")
-	result.WriteString(content)
-
-	return result.String()
+	return tabHeader + content + "\n" + bottomBorder
 }
 
+func (m Model) renderTabHeader(width int, border lipgloss.Style) string {
+	tabs := []string{"Readme", "Activity", "Files"}
+
+	var topRow, midRow, botRow strings.Builder
+
+	for i, tab := range tabs {
+		innerWidth := len(tab) + 2
+		isActiveTab := detailTab(i) == m.detailTab
+
+		topRow.WriteString(border.Render("╭" + strings.Repeat("─", innerWidth) + "╮"))
+		midRow.WriteString(border.Render("│") + " " + tab + " " + border.Render("│"))
+
+		leftCorner := m.tabLeftCorner(i, isActiveTab)
+		if isActiveTab {
+			botRow.WriteString(border.Render(leftCorner) + strings.Repeat(" ", innerWidth) + border.Render("└"))
+		} else {
+			botRow.WriteString(border.Render(leftCorner + strings.Repeat("─", innerWidth) + "┴"))
+		}
+
+		if i < len(tabs)-1 {
+			topRow.WriteString(" ")
+			midRow.WriteString(" ")
+			botRow.WriteString(border.Render("─"))
+		}
+	}
+
+	remaining := width - lipgloss.Width(botRow.String()) - 1
+	if remaining > 0 {
+		botRow.WriteString(border.Render(strings.Repeat("─", remaining) + "╮"))
+	} else {
+		botRow.WriteString(border.Render("╮"))
+	}
+
+	return topRow.String() + "\n" + midRow.String() + "\n" + botRow.String() + "\n"
+}
+
+func (m Model) tabLeftCorner(index int, isActive bool) string {
+	if index == 0 {
+		if isActive {
+			return "│"
+		}
+		return "├"
+	}
+	if isActive {
+		return "┘"
+	}
+	return "┴"
+}
+
+func (m Model) renderTabContent(width, height int, border lipgloss.Style) string {
+	contentWidth := max(width-2, 1)
+
+	var rawContent string
+	if m.detailLoading {
+		rawContent = StyleMetaText.Render("Loading...")
+	} else if m.currentDetail == nil {
+		rawContent = StyleMetaText.Render("No data")
+	} else {
+		rawContent = m.detailViewport.View()
+	}
+
+	lines := strings.Split(rawContent, "\n")
+	var b strings.Builder
+
+	emptyLine := border.Render("│") + strings.Repeat(" ", contentWidth) + border.Render("│")
+	b.WriteString(emptyLine + "\n")
+
+	for i := 0; i < height; i++ {
+		line := ""
+		if i < len(lines) {
+			line = lines[i]
+		}
+
+		padding := max(contentWidth-lipgloss.Width(line), 0)
+		b.WriteString(border.Render("│") + line + strings.Repeat(" ", padding) + border.Render("│"))
+
+		if i < height-1 {
+			b.WriteString("\n")
+		}
+	}
+
+	return b.String()
+}
+
+func (m Model) renderTabBottomBorder(width int, border lipgloss.Style) string {
+	if m.detailViewport.TotalLineCount() <= m.detailViewport.Height {
+		return border.Render("╰" + strings.Repeat("─", width-2) + "╯")
+	}
+
+	pct := int(m.detailViewport.ScrollPercent() * 100)
+	pctStr := fmt.Sprintf("[%d%%]", pct)
+	leftDashes := max(width-2-len(pctStr)-2, 1)
+
+	return border.Render("╰" + strings.Repeat("─", leftDashes+1) + pctStr + "─" + "╯")
+}
 
 func (m Model) renderReadme(content, filename string, width int) string {
 	if !strings.HasSuffix(strings.ToLower(filename), ".md") {
