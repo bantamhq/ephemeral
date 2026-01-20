@@ -18,7 +18,7 @@ const (
 
 	repoLoadMoreThreshold = 5
 
-	detailInfoBaseRows          = 3
+	detailInfoBaseRows          = 0
 	detailTabHeaderRows         = 3
 	detailTabContentPaddingRows = 0
 	detailTabBottomBorderRows   = 1
@@ -26,7 +26,7 @@ const (
 	detailViewportOverhead      = detailInfoBaseRows + detailTabFrameRows
 	detailViewportBorderWidth   = 2
 	detailTabMinHeight          = 4
-	detailViewportTopPadding    = 1
+	detailViewportTopPadding    = 0
 	detailViewportBottomPadding = 1
 
 	detailCommitsLimit = 20
@@ -72,19 +72,7 @@ func listViewportHeight(height int) int {
 }
 
 func (m Model) detailViewportHeight() int {
-	staticInfoLines := m.detailStaticInfoLines()
-	return max(m.mainHeight()-detailViewportOverhead-staticInfoLines, 1)
-}
-
-func (m Model) detailStaticInfoLines() int {
-	repo := m.selectedRepo()
-	if repo == nil {
-		return 0
-	}
-	if len(m.repoFolders[repo.ID]) == 0 {
-		return 0
-	}
-	return 1
+	return max(m.mainHeight()-detailViewportOverhead, 1)
 }
 
 func repoViewportHeight(height int) int {
@@ -95,8 +83,8 @@ func repoViewportHeight(height int) int {
 	return max(available/repoItemHeight, 1)
 }
 
-func detailTabContainerHeight(height, staticInfoLines int) int {
-	containerHeight := height - detailInfoBaseRows - staticInfoLines
+func detailTabContainerHeight(height int) int {
+	containerHeight := height - detailInfoBaseRows
 	if containerHeight < detailTabMinHeight {
 		return detailTabMinHeight
 	}

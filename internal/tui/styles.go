@@ -94,5 +94,5 @@ var (
 			Foreground(colorTextMuted)
 
 	StyleTabBorderActive = lipgloss.NewStyle().
-				Foreground(colorPrimary)
+				Foreground(colorPrimaryDark)
 )
