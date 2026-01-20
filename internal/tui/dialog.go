@@ -161,3 +161,140 @@ func (d DialogModel) View() string {
 func (d *DialogModel) SetValue(value string) {
 	d.input.SetValue(value)
 }
+
+type FolderPickerItem struct {
+	ID       string
+	Name     string
+	Selected bool
+}
+
+type FolderPickerCloseMsg struct{}
+
+type FolderPickerToggleMsg struct {
+	FolderID string
+	Selected bool
+}
+
+type FolderPickerModel struct {
+	repoID   string
+	repoName string
+	items    []FolderPickerItem
+	cursor   int
+	width    int
+	height   int
+}
+
+func NewFolderPickerModel(repoID, repoName string, allFolders []FolderPickerItem) FolderPickerModel {
+	return FolderPickerModel{
+		repoID:   repoID,
+		repoName: repoName,
+		items:    allFolders,
+		cursor:   0,
+		width:    40,
+		height:   15,
+	}
+}
+
+func (f FolderPickerModel) Init() tea.Cmd {
+	return nil
+}
+
+func (f FolderPickerModel) Update(msg tea.Msg) (FolderPickerModel, tea.Cmd) {
+	keyMsg, ok := msg.(tea.KeyMsg)
+	if !ok {
+		return f, nil
+	}
+
+	switch keyMsg.String() {
+	case "esc":
+		return f, func() tea.Msg { return FolderPickerCloseMsg{} }
+
+	case "up", "k":
+		if f.cursor > 0 {
+			f.cursor--
+		}
+		return f, nil
+
+	case "down", "j":
+		if f.cursor < len(f.items)-1 {
+			f.cursor++
+		}
+		return f, nil
+
+	case "enter":
+		if f.cursor >= len(f.items) {
+			return f, nil
+		}
+		item := &f.items[f.cursor]
+		item.Selected = !item.Selected
+		return f, func() tea.Msg {
+			return FolderPickerToggleMsg{
+				FolderID: item.ID,
+				Selected: item.Selected,
+			}
+		}
+	}
+
+	return f, nil
+}
+
+func (f FolderPickerModel) View() string {
+	var content strings.Builder
+
+	title := "Manage Folders"
+	if f.repoName != "" {
+		title = "Folders: " + f.repoName
+	}
+	content.WriteString(StyleHeader.Render(title))
+	content.WriteString("\n\n")
+
+	if len(f.items) == 0 {
+		content.WriteString(StyleMetaText.Render("No folders available"))
+		content.WriteString("\n\n")
+		content.WriteString(StyleDialogHint.Render("esc close"))
+		return StyleDialogBox.Width(f.width).Render(content.String())
+	}
+
+	startIdx, endIdx := f.visibleRange()
+	for i := startIdx; i < endIdx; i++ {
+		item := f.items[i]
+		line := f.renderItem(item, i == f.cursor)
+		content.WriteString(line)
+		content.WriteString("\n")
+	}
+	content.WriteString("\n")
+	content.WriteString(StyleDialogHint.Render("enter toggle • esc close"))
+
+	return StyleDialogBox.Width(f.width).Render(content.String())
+}
+
+func (f FolderPickerModel) visibleRange() (start, end int) {
+	const maxVisible = 8
+	start = 0
+	if f.cursor >= maxVisible {
+		start = f.cursor - maxVisible + 1
+	}
+	end = start + maxVisible
+	if end > len(f.items) {
+		end = len(f.items)
+	}
+	return start, end
+}
+
+func (f FolderPickerModel) renderItem(item FolderPickerItem, isCursor bool) string {
+	check := " "
+	if item.Selected {
+		check = "✓"
+	}
+
+	line := " " + check + " " + item.Name
+
+	if isCursor {
+		return StylePickerSelected.Width(f.width - 4).Render(line)
+	}
+	return line
+}
+
+func (f FolderPickerModel) RepoID() string {
+	return f.repoID
+}

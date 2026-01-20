@@ -3,17 +3,18 @@ package tui
 import "github.com/charmbracelet/bubbles/key"
 
 type KeyMap struct {
-	Up        key.Binding
-	Down      key.Binding
-	Left      key.Binding
-	Right     key.Binding
-	Enter     key.Binding
-	Quit      key.Binding
-	NewFolder key.Binding
-	Rename    key.Binding
-	Delete    key.Binding
-	Clone     key.Binding
-	CloneDir  key.Binding
+	Up            key.Binding
+	Down          key.Binding
+	Left          key.Binding
+	Right         key.Binding
+	Enter         key.Binding
+	Quit          key.Binding
+	NewFolder     key.Binding
+	Rename        key.Binding
+	Delete        key.Binding
+	Clone         key.Binding
+	CloneDir      key.Binding
+	ManageFolders key.Binding
 }
 
 var DefaultKeyMap = KeyMap{
@@ -61,6 +62,10 @@ var DefaultKeyMap = KeyMap{
 		key.WithKeys("C"),
 		key.WithHelp("C", "clone to dir"),
 	),
+	ManageFolders: key.NewBinding(
+		key.WithKeys("m"),
+		key.WithHelp("m", "manage folders"),
+	),
 }
 
 func (k KeyMap) ShortHelp(focusedColumn int) string {
@@ -68,7 +73,7 @@ func (k KeyMap) ShortHelp(focusedColumn int) string {
 	case 0: // columnFolders
 		return "n new folder • r rename • d delete"
 	case 1: // columnRepos
-		return "r rename • d delete • c clone"
+		return "r rename • d delete • c clone • m folders"
 	default:
 		return ""
 	}

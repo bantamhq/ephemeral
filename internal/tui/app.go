@@ -27,6 +27,7 @@ const (
 	modalDeleteRepo
 	modalDeleteFolder
 	modalCloneDir
+	modalManageFolders
 )
 
 const (
@@ -62,8 +63,9 @@ type Model struct {
 	editingRepo   *client.Repo
 	editText      string
 
-	modal    modalState
-	dialog   DialogModel
+	modal        modalState
+	dialog       DialogModel
+	folderPicker FolderPickerModel
 
 	loading   bool
 	err       error
@@ -197,6 +199,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.statusMsg = msg.Operation + " failed: " + msg.Err.Error()
 		return m, nil
+
+	case FolderPickerCloseMsg:
+		m.modal = modalNone
+		return m, nil
+
+	case FolderPickerToggleMsg:
+		return m.handleFolderToggle(msg)
+
+	case repoFolderAddedMsg:
+		if folder := m.findFolder(msg.FolderID); folder != nil {
+			m.repoFolders[msg.RepoID] = append(m.repoFolders[msg.RepoID], *folder)
+		}
+		return m, nil
+
+	case repoFolderRemovedMsg:
+		m.repoFolders[msg.RepoID] = m.removeFolderFromList(m.repoFolders[msg.RepoID], msg.FolderID)
+		return m, nil
 	}
 
 	return m, nil
@@ -261,6 +280,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case key.Matches(msg, m.keys.CloneDir):
 		return m.openCloneDir()
+
+	case key.Matches(msg, m.keys.ManageFolders):
+		return m.openManageFolders()
 	}
 
 	return m, nil
@@ -424,6 +446,12 @@ func (m *Model) filterRepos() {
 }
 
 func (m Model) handleModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.modal == modalManageFolders {
+		var cmd tea.Cmd
+		m.folderPicker, cmd = m.folderPicker.Update(msg)
+		return m, cmd
+	}
+
 	var cmd tea.Cmd
 	m.dialog, cmd = m.dialog.Update(msg)
 	return m, cmd
@@ -518,6 +546,86 @@ func (m Model) openCloneDir() (tea.Model, tea.Cmd) {
 	m.dialog = NewInputDialog("Clone to Directory", "Enter path:", cwd)
 	m.dialog.SetValue(cwd)
 	return m, m.dialog.Init()
+}
+
+func (m Model) openManageFolders() (tea.Model, tea.Cmd) {
+	if m.focusedColumn != columnRepos {
+		return m, nil
+	}
+
+	repo := m.selectedRepo()
+	if repo == nil {
+		return m, nil
+	}
+
+	items := make([]FolderPickerItem, len(m.folders))
+	for i, folder := range m.folders {
+		items[i] = FolderPickerItem{
+			ID:       folder.ID,
+			Name:     folder.Name,
+			Selected: m.repoHasFolder(repo.ID, folder.ID),
+		}
+	}
+
+	m.modal = modalManageFolders
+	m.folderPicker = NewFolderPickerModel(repo.ID, repo.Name, items)
+	return m, nil
+}
+
+func (m Model) repoHasFolder(repoID, folderID string) bool {
+	for _, f := range m.repoFolders[repoID] {
+		if f.ID == folderID {
+			return true
+		}
+	}
+	return false
+}
+
+func (m Model) handleFolderToggle(msg FolderPickerToggleMsg) (tea.Model, tea.Cmd) {
+	repoID := m.folderPicker.RepoID()
+
+	if msg.Selected {
+		return m, m.addRepoFolder(repoID, msg.FolderID)
+	}
+	return m, m.removeRepoFolder(repoID, msg.FolderID)
+}
+
+func (m Model) addRepoFolder(repoID, folderID string) tea.Cmd {
+	return func() tea.Msg {
+		_, err := m.client.AddRepoFolders(repoID, []string{folderID})
+		if err != nil {
+			return ActionErrorMsg{Operation: "add folder", Err: err}
+		}
+		return repoFolderAddedMsg{RepoID: repoID, FolderID: folderID}
+	}
+}
+
+func (m Model) removeRepoFolder(repoID, folderID string) tea.Cmd {
+	return func() tea.Msg {
+		err := m.client.RemoveRepoFolder(repoID, folderID)
+		if err != nil {
+			return ActionErrorMsg{Operation: "remove folder", Err: err}
+		}
+		return repoFolderRemovedMsg{RepoID: repoID, FolderID: folderID}
+	}
+}
+
+func (m Model) findFolder(id string) *client.Folder {
+	for _, f := range m.folders {
+		if f.ID == id {
+			return &f
+		}
+	}
+	return nil
+}
+
+func (m Model) removeFolderFromList(folders []client.Folder, id string) []client.Folder {
+	for i, f := range folders {
+		if f.ID == id {
+			return append(folders[:i], folders[i+1:]...)
+		}
+	}
+	return folders
 }
 
 func (m Model) handleDialogSubmit(msg DialogSubmitMsg) (tea.Model, tea.Cmd) {
@@ -770,7 +878,13 @@ func (m Model) View() string {
 }
 
 func (m Model) overlayModal(background string) string {
-	return overlay.Composite(m.dialog.View(), background, overlay.Center, overlay.Center, 0, 0)
+	var modalView string
+	if m.modal == modalManageFolders {
+		modalView = m.folderPicker.View()
+	} else {
+		modalView = m.dialog.View()
+	}
+	return overlay.Composite(modalView, background, overlay.Center, overlay.Center, 0, 0)
 }
 
 func (m Model) mainContentView(height int) string {
@@ -1003,7 +1117,7 @@ func Run(c *client.Client, namespace, server string) error {
 }
 
 func formatRepoMeta(repo client.Repo) string {
-	return fmt.Sprintf("  %s • %s", formatSize(repo.SizeBytes), formatRelativeTime(repo.LastPushAt))
+	return fmt.Sprintf("  size: %s • pushed: %s", formatSize(repo.SizeBytes), formatRelativeTime(repo.LastPushAt))
 }
 
 func (m Model) rightAlignInWidth(left, right string, width int) string {

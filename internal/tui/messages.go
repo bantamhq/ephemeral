@@ -59,3 +59,13 @@ type ActionErrorMsg struct {
 	Operation string
 	Err       error
 }
+
+type repoFolderAddedMsg struct {
+	RepoID   string
+	FolderID string
+}
+
+type repoFolderRemovedMsg struct {
+	RepoID   string
+	FolderID string
+}

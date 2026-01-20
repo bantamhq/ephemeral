@@ -93,4 +93,7 @@ var (
 	StyleDialogHint = lipgloss.NewStyle().
 			Foreground(colorGray).
 			Italic(true)
+
+	StylePickerSelected = lipgloss.NewStyle().
+				Reverse(true)
 )
