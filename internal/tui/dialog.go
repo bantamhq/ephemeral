@@ -16,8 +16,24 @@ const (
 	DialogConfirm
 )
 
-func isValidNameChar(r rune) bool {
+func isValidNameChar(r rune, isFirst bool) bool {
+	if isFirst {
+		return unicode.IsLetter(r) || unicode.IsDigit(r)
+	}
 	return unicode.IsLetter(r) || unicode.IsDigit(r) || r == '.' || r == '_' || r == '-'
+}
+
+func validateNameInput(runes []rune, currentText string) bool {
+	for i, r := range runes {
+		isFirst := len(currentText)+i == 0
+		if !isValidNameChar(r, isFirst) {
+			return false
+		}
+		if r == '.' && len(currentText)+i > 0 && strings.HasSuffix(currentText, ".") {
+			return false
+		}
+	}
+	return true
 }
 
 type DialogSubmitMsg struct {
@@ -105,13 +121,9 @@ func (d DialogModel) Update(msg tea.Msg) (DialogModel, tea.Cmd) {
 			return d, nil
 		}
 
-		if d.mode == DialogInput && d.filterNameChar {
-			if len(msg.Runes) > 0 {
-				for _, r := range msg.Runes {
-					if !isValidNameChar(r) {
-						return d, nil
-					}
-				}
+		if d.mode == DialogInput && d.filterNameChar && len(msg.Runes) > 0 {
+			if !validateNameInput(msg.Runes, d.input.Value()) {
+				return d, nil
 			}
 		}
 	}

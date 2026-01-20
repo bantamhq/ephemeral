@@ -63,21 +63,13 @@ var DefaultKeyMap = KeyMap{
 	),
 }
 
-type contextualHelp struct {
-	inFolderColumn bool
-	inRepoColumn   bool
-}
-
-func (k KeyMap) ShortHelp(ctx contextualHelp) string {
-	base := "q quit • j/k navigate • h/l columns • n new folder"
-
-	if ctx.inFolderColumn {
-		return base + " • r rename • d delete"
+func (k KeyMap) ShortHelp(focusedColumn int) string {
+	switch focusedColumn {
+	case 0: // columnFolders
+		return "n new folder • r rename • d delete"
+	case 1: // columnRepos
+		return "r rename • d delete • c clone"
+	default:
+		return ""
 	}
-
-	if ctx.inRepoColumn {
-		return base + " • r rename • d delete • c clone"
-	}
-
-	return base
 }

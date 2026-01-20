@@ -4,9 +4,14 @@ import "github.com/charmbracelet/lipgloss"
 
 var (
 	StyleSelected = lipgloss.NewStyle().
-			Background(lipgloss.Color("62")).
+			Background(lipgloss.Color("61")).
 			Foreground(lipgloss.Color("230")).
 			Bold(true)
+
+	StyleRepoSelected = lipgloss.NewStyle().
+				Border(lipgloss.ThickBorder(), false, false, false, true).
+				BorderForeground(lipgloss.Color("61")).
+				PaddingLeft(1)
 
 	StyleHeader = lipgloss.NewStyle().
 			Bold(true).
@@ -62,5 +67,9 @@ var (
 
 	StyleMetaText = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("243"))
+
+	StyleFaint = lipgloss.NewStyle().Faint(true)
+
+	StyleRepoTitle = lipgloss.NewStyle().Foreground(lipgloss.Color("255"))
 
 )

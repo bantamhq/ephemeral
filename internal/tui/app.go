@@ -32,7 +32,6 @@ const (
 const (
 	columnFolders = 0
 	columnRepos   = 1
-	columnDetails = 2
 )
 
 const footerHeight = 1
@@ -221,7 +220,10 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case key.Matches(msg, m.keys.NewFolder):
-		return m.openCreateFolder()
+		if m.focusedColumn == columnFolders {
+			return m.openCreateFolder()
+		}
+		return m, nil
 
 	case key.Matches(msg, m.keys.Rename):
 		return m.startRename()
@@ -257,9 +259,13 @@ func (m Model) handleEditMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyRunes:
-		if len(m.editText) < 128 {
-			m.editText += string(msg.Runes)
+		if len(m.editText) >= 128 {
+			return m, nil
 		}
+		if !validateNameInput(msg.Runes, m.editText) {
+			return m, nil
+		}
+		m.editText += string(msg.Runes)
 		return m, nil
 	}
 
@@ -794,47 +800,29 @@ func (m Model) renderRepoColumn(width, height int) string {
 	if len(m.filteredRepos) == 0 {
 		b.WriteString(StyleSubtle.Render("  No repositories"))
 		b.WriteString("\n")
-	} else {
-		viewportHeight := (height - 2) / 3
+		return lipgloss.NewStyle().Width(width).Height(height).Render(b.String())
+	}
 
-		endIdx := m.repoScroll + viewportHeight
-		if endIdx > len(m.filteredRepos) {
-			endIdx = len(m.filteredRepos)
-		}
-		startIdx := m.repoScroll
-		if startIdx < 0 {
-			startIdx = 0
-		}
+	viewportHeight := (height - 2) / 3
+	startIdx := m.repoScroll
+	if startIdx < 0 {
+		startIdx = 0
+	}
+	endIdx := startIdx + viewportHeight
+	if endIdx > len(m.filteredRepos) {
+		endIdx = len(m.filteredRepos)
+	}
 
-		for i := startIdx; i < endIdx; i++ {
-			repo := m.filteredRepos[i]
-			isEditing := m.editingRepo != nil && m.editingRepo.ID == repo.ID
-			isSelected := i == m.repoCursor && m.focusedColumn == columnRepos
+	for i := startIdx; i < endIdx; i++ {
+		repo := m.filteredRepos[i]
+		isEditing := m.editingRepo != nil && m.editingRepo.ID == repo.ID
+		isFocused := i == m.repoCursor && m.focusedColumn == columnRepos
 
-			meta := formatRepoMeta(repo)
+		meta := formatRepoMeta(repo)
+		maxNameWidth := width - 3
 
-			prefix := "  "
-			if isSelected {
-				prefix = "→ "
-			}
-			maxNameWidth := width - lipgloss.Width(prefix) - 1
-
-			if isEditing {
-				visibleText := truncateEditText(m.editText, maxNameWidth)
-				line := prefix + visibleText + "█"
-				b.WriteString(StyleEditing.Width(width).Render(line))
-			} else if isSelected {
-				name := truncateWithEllipsis(repo.Name, maxNameWidth)
-				line := StyleSelected.Width(width).Render(prefix + name)
-				b.WriteString(line)
-			} else {
-				name := truncateWithEllipsis(repo.Name, maxNameWidth)
-				b.WriteString(prefix + name)
-			}
-			b.WriteString("\n")
-			b.WriteString(StyleMetaText.Render(meta))
-			b.WriteString("\n\n")
-		}
+		b.WriteString(m.renderRepoItem(repo.Name, meta, maxNameWidth, width, isEditing, isFocused))
+		b.WriteString("\n\n")
 	}
 
 	return lipgloss.NewStyle().Width(width).Height(height).Render(b.String())
@@ -844,7 +832,7 @@ func (m Model) renderDetailColumn(width, height int) string {
 	var b strings.Builder
 
 	repo := m.selectedRepo()
-	if repo != nil {
+	if repo != nil && m.focusedColumn == columnRepos {
 		name := truncateWithEllipsis(repo.Name, width-2)
 		b.WriteString(StyleHeader.Width(width).Render(" " + name))
 	} else {
@@ -852,6 +840,32 @@ func (m Model) renderDetailColumn(width, height int) string {
 	}
 
 	return lipgloss.NewStyle().Width(width).Height(height).Render(b.String())
+}
+
+func (m Model) renderRepoItem(name, meta string, maxNameWidth, width int, isEditing, isFocused bool) string {
+	var lines strings.Builder
+
+	if isEditing {
+		visibleText := truncateEditText(m.editText, maxNameWidth)
+		lines.WriteString(StyleEditing.Width(width).Render("  " + visibleText + "█"))
+		lines.WriteString("\n")
+		lines.WriteString(StyleMetaText.Render(meta))
+		return lines.String()
+	}
+
+	if isFocused {
+		truncName := truncateWithEllipsis(name, maxNameWidth)
+		lines.WriteString(StyleRepoSelected.Width(width).Render(StyleRepoTitle.Render(truncName)))
+		lines.WriteString("\n")
+		lines.WriteString(StyleRepoSelected.Width(width).Render(StyleMetaText.Render(strings.TrimPrefix(meta, "  "))))
+		return lines.String()
+	}
+
+	truncName := truncateWithEllipsis(name, maxNameWidth)
+	lines.WriteString(StyleFaint.Render(StyleRepoTitle.Render("  " + truncName)))
+	lines.WriteString("\n")
+	lines.WriteString(StyleFaint.Render(StyleMetaText.Render(meta)))
+	return lines.String()
 }
 
 func (m Model) loadingView() string {
@@ -870,14 +884,10 @@ func (m Model) footerView() string {
 	if m.statusMsg != "" {
 		helpContent = StyleStatusMsg.Render(m.statusMsg)
 	} else {
-		ctx := contextualHelp{
-			inFolderColumn: m.focusedColumn == columnFolders,
-			inRepoColumn:   m.focusedColumn == columnRepos,
-		}
-		helpContent = m.keys.ShortHelp(ctx)
+		helpContent = m.keys.ShortHelp(m.focusedColumn)
 	}
 
-	return namespaceBadge + StyleFooterHelp.Width(m.width-badgeWidth).Render(helpContent)
+	return namespaceBadge + StyleFooterHelp.Width(m.width-badgeWidth).MaxHeight(1).Render(helpContent)
 }
 
 func Run(c *client.Client, namespace, server string) error {
