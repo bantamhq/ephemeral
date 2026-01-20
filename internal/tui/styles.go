@@ -34,12 +34,6 @@ var (
 			Background(colorGrayDarker).
 			Foreground(colorWhite).
 			Bold(true)
-
-	StyleFilterLabel = lipgloss.NewStyle().
-				Foreground(colorYellow)
-
-	StyleFilterInput = lipgloss.NewStyle().
-				Foreground(colorWhite)
 )
 
 // Text styles
