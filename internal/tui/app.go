@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/bubbles/help"
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/viewport"
@@ -35,6 +36,7 @@ const (
 	modalDeleteFolder
 	modalCloneDir
 	modalManageFolders
+	modalHelp
 )
 
 type detailTab int
@@ -91,12 +93,15 @@ type Model struct {
 	width   int
 	height  int
 	keys    KeyMap
+	help    help.Model
 }
 
 func NewModel(c *client.Client, namespace, server string) Model {
 	s := spinner.New()
 	s.Spinner = spinner.Dot
 	s.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("205"))
+
+	helpModel := help.New()
 
 	return Model{
 		client:         c,
@@ -105,6 +110,7 @@ func NewModel(c *client.Client, namespace, server string) Model {
 		loading:        true,
 		spinner:        s,
 		keys:           DefaultKeyMap,
+		help:           helpModel,
 		repoFolders:    make(map[string][]client.Folder),
 		folderCounts:   make(map[string]int),
 		detailCache:    make(map[string]*RepoDetail),
@@ -192,10 +198,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.modal == modalHelp {
+		return m.handleHelpKey(msg)
+	}
 	if m.modal != modalNone {
 		return m.handleModalKey(msg)
 	}
 	return m.handleKey(msg)
+}
+
+func (m Model) handleHelpKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc", "q", "?":
+		m.modal = modalNone
+	}
+	return m, nil
 }
 
 func (m Model) handleWindowSize(msg tea.WindowSizeMsg) (tea.Model, tea.Cmd) {
@@ -342,6 +359,10 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case key.Matches(msg, m.keys.Quit):
 		return m, tea.Quit
+
+	case key.Matches(msg, m.keys.Help):
+		m.modal = modalHelp
+		return m, nil
 
 	case key.Matches(msg, m.keys.Escape):
 		return m.handleEscape()
@@ -1226,27 +1247,27 @@ func (m *Model) restoreDetailScroll(tab detailTab) {
 func (m Model) getDetailsContent(width int) string {
 	repo := m.selectedRepo()
 	if repo == nil {
-		return " " + StyleMetaText.Render("Select a repo to see its details")
+		return " " + Styles.Common.MetaText.Render("Select a repo to see its details")
 	}
 
 	var b strings.Builder
 
-	b.WriteString(" " + StyleMetaText.Render("Name") + "\n")
+	b.WriteString(" " + Styles.Common.MetaText.Render("Name") + "\n")
 	b.WriteString(" " + repo.Name + "\n\n")
 
-	b.WriteString(" " + StyleMetaText.Render("Size") + "\n")
+	b.WriteString(" " + Styles.Common.MetaText.Render("Size") + "\n")
 	b.WriteString(" " + formatSize(repo.SizeBytes) + "\n\n")
 
-	b.WriteString(" " + StyleMetaText.Render("Last Pushed") + "\n")
+	b.WriteString(" " + Styles.Common.MetaText.Render("Last Pushed") + "\n")
 	b.WriteString(" " + formatRelativeTime(repo.LastPushAt) + "\n\n")
 
-	b.WriteString(" " + StyleMetaText.Render("Created") + "\n")
+	b.WriteString(" " + Styles.Common.MetaText.Render("Created") + "\n")
 	b.WriteString(" " + repo.CreatedAt.Format("Jan 2, 2006") + "\n\n")
 
 	folders := m.repoFolders[repo.ID]
-	b.WriteString(" " + StyleMetaText.Render("Folders") + "\n")
+	b.WriteString(" " + Styles.Common.MetaText.Render("Folders") + "\n")
 	if len(folders) == 0 {
-		b.WriteString(" " + StyleMetaText.Render("(none)") + "\n")
+		b.WriteString(" " + Styles.Common.MetaText.Render("(none)") + "\n")
 	} else {
 		for _, f := range folders {
 			b.WriteString(" • " + f.Name + "\n")
@@ -1258,7 +1279,7 @@ func (m Model) getDetailsContent(width int) string {
 
 func (m Model) getReadmeContent(width int) string {
 	if m.currentDetail == nil || m.currentDetail.Readme == nil {
-		return " " + StyleMetaText.Render("No README found")
+		return " " + Styles.Common.MetaText.Render("No README found")
 	}
 
 	return m.renderReadme(*m.currentDetail.Readme, m.currentDetail.ReadmeFilename, width)
@@ -1266,11 +1287,11 @@ func (m Model) getReadmeContent(width int) string {
 
 func (m Model) getActivityContent(width int) string {
 	if m.currentDetail == nil || len(m.currentDetail.Commits) == 0 {
-		return " " + StyleMetaText.Render("No commits")
+		return " " + Styles.Common.MetaText.Render("No commits")
 	}
 
 	t := tree.Root(" ⁜ Recent Commits")
-	enumeratorWidth := lipgloss.Width(StyleTreeEnumerator.Render("├─"))
+	enumeratorWidth := lipgloss.Width(Styles.Tree.Enumerator.Render("├─"))
 	for _, commit := range m.currentDetail.Commits {
 		shortSHA := commit.SHA
 		if len(shortSHA) > shortSHAWidth {
@@ -1282,18 +1303,18 @@ func (m Model) getActivityContent(width int) string {
 
 		messageWidth := width - enumeratorWidth - lipgloss.Width(shortSHA) - lipgloss.Width("•") - lipgloss.Width(timeAgo) - 3
 		if messageWidth < 1 {
-			commitLine := StyleCommitHash.Render(shortSHA) + " " + StyleMetaText.Render("•") + " " + StyleMetaText.Render(timeAgo)
+			commitLine := Styles.Commit.Hash.Render(shortSHA) + " " + Styles.Common.MetaText.Render("•") + " " + Styles.Common.MetaText.Render(timeAgo)
 			t.Child(tree.Root(commitLine).Child(renderCommitStats(commit.Stats)))
 			continue
 		}
 
 		message = truncateWithEllipsis(message, messageWidth)
 
-		commitLine := StyleCommitHash.Render(shortSHA) + " " + StyleMetaText.Render("•") + " " + message + " " + StyleMetaText.Render(timeAgo)
+		commitLine := Styles.Commit.Hash.Render(shortSHA) + " " + Styles.Common.MetaText.Render("•") + " " + message + " " + Styles.Common.MetaText.Render(timeAgo)
 		t.Child(tree.Root(commitLine).Child(renderCommitStats(commit.Stats)))
 	}
 
-	t.EnumeratorStyle(StyleTreeEnumerator).
+	t.EnumeratorStyle(Styles.Tree.Enumerator).
 		Enumerator(treeEnumerator).
 		Indenter(treeIndenter)
 
@@ -1316,14 +1337,14 @@ func treeIndenter(children tree.Children, index int) string {
 
 func renderCommitStats(stats *client.CommitStats) string {
 	if stats == nil {
-		return StyleCommitStat.Render("(no stats)")
+		return Styles.Commit.Stat.Render("(no stats)")
 	}
 
-	base := StyleCommitStat.Render(fmt.Sprintf("%d files, %d(", stats.FilesChanged, stats.Additions))
-	added := StyleCommitStatAdded.Render("+")
-	middle := StyleCommitStat.Render(fmt.Sprintf("), %d(", stats.Deletions))
-	removed := StyleCommitStatRemoved.Render("-")
-	end := StyleCommitStat.Render(")")
+	base := Styles.Commit.Stat.Render(fmt.Sprintf("%d files, %d(", stats.FilesChanged, stats.Additions))
+	added := Styles.Commit.StatAdded.Render("+")
+	middle := Styles.Commit.Stat.Render(fmt.Sprintf("), %d(", stats.Deletions))
+	removed := Styles.Commit.StatRemoved.Render("-")
+	end := Styles.Commit.Stat.Render(")")
 
 	return base + added + middle + removed + end
 }
@@ -1337,7 +1358,7 @@ func firstLine(s string) string {
 
 func (m Model) getFilesContent(width int) string {
 	if m.currentDetail == nil || len(m.currentDetail.Tree) == 0 {
-		return " " + StyleMetaText.Render("No files")
+		return " " + Styles.Common.MetaText.Render("No files")
 	}
 
 	entries := sortTreeEntries(m.currentDetail.Tree)
@@ -1348,7 +1369,7 @@ func (m Model) getFilesContent(width int) string {
 		t.Child(children...)
 	}
 
-	t.EnumeratorStyle(StyleTreeEnumerator).
+	t.EnumeratorStyle(Styles.Tree.Enumerator).
 		Enumerator(treeEnumerator).
 		Indenter(treeIndenter)
 
@@ -1381,7 +1402,7 @@ func buildFileTreeChildren(entries []client.TreeEntry) []any {
 	for _, entry := range entries {
 		name := entry.Name
 		if entry.Type == "dir" {
-			name = StyleTreeDir.Render(name)
+			name = Styles.Tree.Dir.Render(name)
 		}
 
 		if len(entry.Children) > 0 {
@@ -1424,9 +1445,12 @@ func (m Model) View() string {
 
 func (m Model) overlayModal(background string) string {
 	var modalView string
-	if m.modal == modalManageFolders {
+	switch m.modal {
+	case modalManageFolders:
 		modalView = m.folderPicker.View()
-	} else {
+	case modalHelp:
+		modalView = m.helpModalView()
+	default:
 		modalView = m.dialog.View()
 	}
 	return overlay.Composite(modalView, background, overlay.Center, overlay.Center, 0, 0)
@@ -1456,7 +1480,7 @@ func (m Model) mainContentView(height int) string {
 func (m Model) renderFolderColumn(width, height int) string {
 	var b strings.Builder
 
-	b.WriteString(StyleHeader.Width(width).Render(" Folders"))
+	b.WriteString(Styles.Common.Header.Width(width).Render(" Folders"))
 	b.WriteString("\n\n")
 
 	viewportHeight := listViewportHeight(height)
@@ -1471,10 +1495,10 @@ func (m Model) renderFolderColumn(width, height int) string {
 		}
 		left := prefix + allReposLabel
 		line := m.rightAlignInWidth(left, countStr, width)
-		b.WriteString(StyleFolderSelected.Width(width).Render(line))
+		b.WriteString(Styles.Folder.Selected.Width(width).Render(line))
 	} else {
 		left := "  " + allReposLabel
-		line := m.rightAlignInWidth(left, StyleMetaText.Render(countStr), width)
+		line := m.rightAlignInWidth(left, Styles.Common.MetaText.Render(countStr), width)
 		b.WriteString(line)
 	}
 	b.WriteString("\n")
@@ -1510,16 +1534,16 @@ func (m Model) renderFolderColumn(width, height int) string {
 		if isEditing {
 			visibleText := truncateEditText(m.editText, maxNameWidth)
 			line := prefix + visibleText + "█"
-			b.WriteString(StyleEditing.Width(width).Render(line))
+			b.WriteString(Styles.Folder.Editing.Width(width).Render(line))
 		} else if isSelected {
 			name := truncateWithEllipsis(folder.Name, maxNameWidth)
 			left := prefix + name
 			line := m.rightAlignInWidth(left, countStr, width)
-			b.WriteString(StyleFolderSelected.Width(width).Render(line))
+			b.WriteString(Styles.Folder.Selected.Width(width).Render(line))
 		} else {
 			name := truncateWithEllipsis(folder.Name, maxNameWidth)
 			left := prefix + name
-			line := m.rightAlignInWidth(left, StyleMetaText.Render(countStr), width)
+			line := m.rightAlignInWidth(left, Styles.Common.MetaText.Render(countStr), width)
 			b.WriteString(line)
 		}
 		b.WriteString("\n")
@@ -1531,11 +1555,11 @@ func (m Model) renderFolderColumn(width, height int) string {
 func (m Model) renderRepoColumn(width, height int) string {
 	var b strings.Builder
 
-	b.WriteString(StyleHeader.Width(width).Render(" Repos"))
+	b.WriteString(Styles.Common.Header.Width(width).Render(" Repos"))
 	b.WriteString("\n\n")
 
 	if len(m.filteredRepos) == 0 {
-		b.WriteString(StyleMetaText.Render("  No repositories"))
+		b.WriteString(Styles.Common.MetaText.Render("  No repositories"))
 		b.WriteString("\n")
 		return lipgloss.NewStyle().Width(width).Height(height).Render(b.String())
 	}
@@ -1576,9 +1600,9 @@ func (m Model) renderTabbedContainer(width, height int, isActive bool) string {
 		height = detailTabMinHeight
 	}
 
-	border := StyleTabBorder
+	border := Styles.Detail.TabBorder
 	if isActive {
-		border = StyleTabBorderActive
+		border = Styles.Detail.TabBorderActive
 	}
 
 	tabHeader := m.renderTabHeader(width, border, isActive)
@@ -1718,24 +1742,28 @@ const (
 func (m Model) renderRepoItem(name, meta string, maxNameWidth, width int, state repoItemState) string {
 	if state == repoStateEditing {
 		visibleText := truncateEditText(m.editText, maxNameWidth)
-		return StyleEditing.Width(width).Render("  "+visibleText+"█") + "\n" + StyleMetaText.Render(meta)
+		return Styles.Repo.Editing.Width(width).Render("  "+visibleText+"█") + "\n" + Styles.Common.MetaText.Render(meta)
 	}
 
 	truncName := truncateWithEllipsis(name, maxNameWidth)
 	metaText := strings.TrimPrefix(meta, "  ")
 
-	var style lipgloss.Style
+	var baseStyle lipgloss.Style
+	var titleStyle lipgloss.Style
 	switch state {
 	case repoStateActive:
-		style = StyleRepoActive
+		baseStyle = Styles.Repo.Active.Base
+		titleStyle = Styles.Repo.Active.Title
 	case repoStateCursor:
-		style = StyleRepoCursor
+		baseStyle = Styles.Repo.Cursor.Base
+		titleStyle = Styles.Repo.Cursor.Title
 	default:
-		style = StyleRepoDefault
+		baseStyle = Styles.Repo.Normal.Base
+		titleStyle = Styles.Repo.Normal.Title
 	}
 
-	titleLine := style.Width(width).Render(StyleRepoTitle.Render(truncName))
-	metaLine := style.Width(width).Render(StyleMetaText.Render(metaText))
+	titleLine := baseStyle.Width(width).Render(titleStyle.Render(truncName))
+	metaLine := baseStyle.Width(width).Render(Styles.Common.MetaText.Render(metaText))
 
 	return titleLine + "\n" + metaLine
 }
@@ -1745,23 +1773,72 @@ func (m Model) loadingView() string {
 }
 
 func (m Model) errorView() string {
-	return StyleError.Render(fmt.Sprintf("\n  Error: %v\n", m.err))
+	return Styles.Common.Error.Render(fmt.Sprintf("\n  Error: %v\n", m.err))
 }
 
 func (m Model) footerView() string {
-	namespaceBadge := StyleFooterNamespace.Render(m.namespace)
+	namespaceBadge := Styles.Footer.Namespace.Render(m.namespace)
 	badgeWidth := lipgloss.Width(namespaceBadge)
-
-	var helpContent string
-	if m.repoLoadingMore {
-		helpContent = StyleStatusMsg.Render("Loading more repos...")
-	} else if m.statusMsg != "" {
-		helpContent = StyleStatusMsg.Render(m.statusMsg)
-	} else {
-		helpContent = m.keys.ShortHelp(m.selectedRepo() != nil)
+	helpWidth := max(m.width-badgeWidth, 0)
+	if helpWidth == 0 {
+		return namespaceBadge
 	}
 
-	return namespaceBadge + StyleFooterHelp.Width(m.width-badgeWidth).MaxHeight(1).Render(helpContent)
+	rightPadding := 1
+	if helpWidth <= rightPadding {
+		return namespaceBadge + Styles.Footer.Help.Width(helpWidth).MaxHeight(1).Render(strings.Repeat(" ", helpWidth))
+	}
+
+	contentWidth := helpWidth - rightPadding
+	helpContent := "? Help"
+	if lipgloss.Width(helpContent) > contentWidth {
+		helpContent = truncateWithEllipsis(helpContent, contentWidth)
+	}
+	leftPadding := contentWidth - lipgloss.Width(helpContent)
+	if leftPadding < 0 {
+		leftPadding = 0
+	}
+	helpContent = strings.Repeat(" ", leftPadding) + helpContent + strings.Repeat(" ", rightPadding)
+
+	return namespaceBadge + Styles.Footer.Help.Width(helpWidth).MaxHeight(1).Render(helpContent)
+}
+
+func (m Model) helpKeyMap() help.KeyMap {
+	return helpKeyMap{
+		KeyMap:         m.keys,
+		hasSelectedRepo: m.selectedRepo() != nil,
+	}
+}
+
+func (m Model) helpContent(width int, showAll bool) string {
+	helpModel := m.help
+	helpModel.Width = width
+	helpModel.ShowAll = showAll
+
+	return strings.TrimRight(helpModel.View(m.helpKeyMap()), "\n")
+}
+
+func (m Model) helpModalView() string {
+	width := m.helpModalWidth()
+	innerWidth := max(width-4, 1)
+
+	var content strings.Builder
+	content.WriteString(Styles.Help.Title.Render("Help"))
+	content.WriteString("\n\n")
+	content.WriteString(m.helpContent(innerWidth, true))
+	content.WriteString("\n\n")
+	content.WriteString(Styles.Dialog.Hint.Render("esc close"))
+
+	return Styles.Help.Box.Width(width).Render(content.String())
+}
+
+func (m Model) helpModalWidth() int {
+	available := max(m.width-4, 1)
+	width := min(available, helpDialogMaxWidth)
+	if width < helpDialogMinWidth {
+		return available
+	}
+	return width
 }
 
 func Run(c *client.Client, namespace, server string) error {

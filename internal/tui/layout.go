@@ -37,6 +37,8 @@ const (
 
 	dialogWidth          = 40
 	dialogInputWidth     = 30
+	helpDialogMinWidth   = 40
+	helpDialogMaxWidth   = 80
 	folderPickerWidth    = 40
 	folderPickerHeight   = 15
 	folderPickerMaxItems = 8

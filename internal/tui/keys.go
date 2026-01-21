@@ -16,6 +16,7 @@ type KeyMap struct {
 	Enter         key.Binding
 	Escape        key.Binding
 	Quit          key.Binding
+	Help          key.Binding
 	NewFolder     key.Binding
 	Rename        key.Binding
 	Delete        key.Binding
@@ -53,6 +54,10 @@ var DefaultKeyMap = KeyMap{
 		key.WithKeys("q", "ctrl+c"),
 		key.WithHelp("q", "quit"),
 	),
+	Help: key.NewBinding(
+		key.WithKeys("?"),
+		key.WithHelp("?", "help"),
+	),
 	NewFolder: key.NewBinding(
 		key.WithKeys("n"),
 		key.WithHelp("n", "new folder"),
@@ -79,9 +84,27 @@ var DefaultKeyMap = KeyMap{
 	),
 }
 
-func (k KeyMap) ShortHelp(hasSelectedRepo bool) string {
-	if hasSelectedRepo {
-		return "c clone • m folders • r rename • d delete"
+type helpKeyMap struct {
+	KeyMap
+	hasSelectedRepo bool
+}
+
+func (h helpKeyMap) ShortHelp() []key.Binding {
+	if h.hasSelectedRepo {
+		return []key.Binding{h.Help, h.Clone, h.ManageFolders, h.Rename, h.Delete, h.Quit}
 	}
-	return "n new folder • r rename • d delete"
+	return []key.Binding{h.Help, h.NewFolder, h.Rename, h.Delete, h.Quit}
+}
+
+func (h helpKeyMap) FullHelp() [][]key.Binding {
+	shortcuts := []key.Binding{h.Up, h.Down, h.Left, h.Right, h.Enter, h.Escape}
+	editActions := []key.Binding{h.NewFolder, h.Rename, h.Delete}
+	meta := []key.Binding{h.Help, h.Quit}
+
+	if !h.hasSelectedRepo {
+		return [][]key.Binding{shortcuts, editActions, meta}
+	}
+
+	repoActions := []key.Binding{h.Clone, h.CloneDir, h.ManageFolders}
+	return [][]key.Binding{shortcuts, editActions, repoActions, meta}
 }

@@ -125,7 +125,7 @@ func (d DialogModel) Update(msg tea.Msg) (DialogModel, tea.Cmd) {
 func (d DialogModel) View() string {
 	var content strings.Builder
 
-	content.WriteString(StyleHeader.Render(d.title))
+	content.WriteString(Styles.Common.Header.Render(d.title))
 	content.WriteString("\n\n")
 
 	if d.message != "" {
@@ -136,14 +136,14 @@ func (d DialogModel) View() string {
 	if d.mode == DialogInput {
 		content.WriteString(d.input.View())
 		content.WriteString("\n\n")
-		content.WriteString(StyleDialogHint.Render("enter submit • esc cancel"))
+		content.WriteString(Styles.Dialog.Hint.Render("enter submit • esc cancel"))
 	} else {
-		confirmStyle := StyleDialogButton
-		cancelStyle := StyleDialogButton
+		confirmStyle := Styles.Dialog.Button
+		cancelStyle := Styles.Dialog.Button
 		if d.focused == 0 {
-			confirmStyle = StyleDialogButtonFocused
+			confirmStyle = Styles.Dialog.ButtonFocused
 		} else {
-			cancelStyle = StyleDialogButtonFocused
+			cancelStyle = Styles.Dialog.ButtonFocused
 		}
 
 		buttons := lipgloss.JoinHorizontal(
@@ -155,7 +155,7 @@ func (d DialogModel) View() string {
 		content.WriteString(buttons)
 	}
 
-	return StyleDialogBox.Width(d.width).Render(content.String())
+	return Styles.Dialog.Box.Width(d.width).Render(content.String())
 }
 
 func (d *DialogModel) SetValue(value string) {
@@ -245,14 +245,14 @@ func (f FolderPickerModel) View() string {
 	if f.repoName != "" {
 		title = "Folders: " + f.repoName
 	}
-	content.WriteString(StyleHeader.Render(title))
+	content.WriteString(Styles.Common.Header.Render(title))
 	content.WriteString("\n\n")
 
 	if len(f.items) == 0 {
-		content.WriteString(StyleMetaText.Render("No folders available"))
+		content.WriteString(Styles.Common.MetaText.Render("No folders available"))
 		content.WriteString("\n\n")
-		content.WriteString(StyleDialogHint.Render("esc close"))
-		return StyleDialogBox.Width(f.width).Render(content.String())
+		content.WriteString(Styles.Dialog.Hint.Render("esc close"))
+		return Styles.Dialog.Box.Width(f.width).Render(content.String())
 	}
 
 	startIdx, endIdx := f.visibleRange()
@@ -263,9 +263,9 @@ func (f FolderPickerModel) View() string {
 		content.WriteString("\n")
 	}
 	content.WriteString("\n")
-	content.WriteString(StyleDialogHint.Render("enter toggle • esc close"))
+	content.WriteString(Styles.Dialog.Hint.Render("enter toggle • esc close"))
 
-	return StyleDialogBox.Width(f.width).Render(content.String())
+	return Styles.Dialog.Box.Width(f.width).Render(content.String())
 }
 
 func (f FolderPickerModel) visibleRange() (start, end int) {
@@ -290,7 +290,7 @@ func (f FolderPickerModel) renderItem(item FolderPickerItem, isCursor bool) stri
 	line := " " + check + " " + item.Name
 
 	if isCursor {
-		return StylePickerSelected.Width(f.width - 4).Render(line)
+		return Styles.Picker.Selected.Width(f.width - 4).Render(line)
 	}
 	return line
 }
