@@ -3,16 +3,12 @@ package tui
 import "github.com/charmbracelet/lipgloss"
 
 type Colors struct {
-	Primary       lipgloss.Color
-	PrimaryDark   lipgloss.Color
-	TextOnPrimary lipgloss.Color
-	Text          lipgloss.Color
-	TextMuted     lipgloss.Color
-	Surface       lipgloss.Color
-	Error         lipgloss.Color
-	CommitHash    lipgloss.Color
-	GitAdded      lipgloss.Color
-	GitRemoved    lipgloss.Color
+	Primary        lipgloss.AdaptiveColor
+	Subdued        lipgloss.AdaptiveColor
+	PrimaryReverse lipgloss.AdaptiveColor
+	Subtle         lipgloss.AdaptiveColor
+	Success        lipgloss.AdaptiveColor
+	Critical       lipgloss.AdaptiveColor
 }
 
 type FolderStyles struct {
@@ -66,8 +62,9 @@ type TreeStyles struct {
 }
 
 type FooterStyles struct {
-	Namespace lipgloss.Style
-	Help      lipgloss.Style
+	Namespace     lipgloss.Style
+	Help          lipgloss.Style
+	StatusMessage lipgloss.Style
 }
 
 type CommonStyles struct {
@@ -94,42 +91,33 @@ var Styles = NewStyles()
 
 func NewStyles() *StyleConfig {
 	colors := Colors{
-		Primary:       lipgloss.Color("62"),
-		PrimaryDark:   lipgloss.Color("60"),
-		TextOnPrimary: lipgloss.Color("230"),
-		Text:          lipgloss.Color("255"),
-		TextMuted:     lipgloss.Color("243"),
-		Surface:       lipgloss.Color("236"),
-		Error:         lipgloss.Color("9"),
-		CommitHash:    lipgloss.Color("109"),
-		GitAdded:      lipgloss.Color("71"),
-		GitRemoved:    lipgloss.Color("203"),
+		Primary:        lipgloss.AdaptiveColor{Light: "240", Dark: "252"},
+		Subdued:        lipgloss.AdaptiveColor{Light: "235", Dark: "249"},
+		PrimaryReverse: lipgloss.AdaptiveColor{Light: "255", Dark: "235"},
+		Subtle:         lipgloss.AdaptiveColor{Light: "243", Dark: "246"},
+		Success:        lipgloss.AdaptiveColor{Light: "2", Dark: "2"},
+		Critical:       lipgloss.AdaptiveColor{Light: "1", Dark: "1"},
 	}
-
-	titleStyle := lipgloss.NewStyle().Foreground(colors.Text)
-	metaStyle := lipgloss.NewStyle().Foreground(colors.TextMuted)
 
 	repoNormal := RepoItemStyles{
 		Base:  lipgloss.NewStyle().PaddingLeft(2).Faint(true),
-		Title: titleStyle,
+		Title: lipgloss.NewStyle(),
 	}
 
 	repoCursor := RepoItemStyles{
 		Base:  lipgloss.NewStyle().PaddingLeft(2),
-		Title: titleStyle,
+		Title: lipgloss.NewStyle(),
 	}
 
 	repoActive := RepoItemStyles{
 		Base: lipgloss.NewStyle().
 			Border(lipgloss.ThickBorder(), false, false, false, true).
-			BorderForeground(colors.PrimaryDark).
+			BorderForeground(colors.Subdued).
 			PaddingLeft(1),
-		Title: titleStyle.Bold(true),
+		Title: lipgloss.NewStyle().Bold(true),
 	}
 
 	editingStyle := lipgloss.NewStyle().
-		Background(colors.Surface).
-		Foreground(colors.Text).
 		Bold(true)
 
 	return &StyleConfig{
@@ -137,8 +125,8 @@ func NewStyles() *StyleConfig {
 
 		Folder: FolderStyles{
 			Selected: lipgloss.NewStyle().
-				Background(colors.PrimaryDark).
-				Foreground(colors.TextOnPrimary).
+				Background(colors.Subdued).
+				Foreground(colors.PrimaryReverse).
 				Bold(true),
 			Editing: editingStyle,
 		},
@@ -152,29 +140,26 @@ func NewStyles() *StyleConfig {
 
 		Detail: DetailStyles{
 			TabBorder: lipgloss.NewStyle().
-				Foreground(colors.TextMuted),
+				Faint(true),
 			TabBorderActive: lipgloss.NewStyle().
-				Foreground(colors.PrimaryDark),
+				Foreground(colors.Subdued),
 		},
 
 		Dialog: DialogStyles{
 			Box: lipgloss.NewStyle().
 				Border(lipgloss.RoundedBorder()).
 				BorderForeground(colors.Primary).
-				Padding(1, 2).
-				Background(colors.Surface),
+				Padding(1, 2),
 			Button: lipgloss.NewStyle().
 				Padding(0, 2).
-				Background(colors.Surface).
-				Foreground(colors.Text).
 				Faint(true),
 			ButtonFocused: lipgloss.NewStyle().
 				Padding(0, 2).
 				Background(colors.Primary).
-				Foreground(colors.TextOnPrimary).
+				Foreground(colors.PrimaryReverse).
 				Bold(true),
 			Hint: lipgloss.NewStyle().
-				Foreground(colors.TextMuted).
+				Faint(true).
 				Italic(true),
 		},
 
@@ -194,46 +179,44 @@ func NewStyles() *StyleConfig {
 
 		Commit: CommitStyles{
 			Hash: lipgloss.NewStyle().
-				Foreground(colors.CommitHash),
+				Foreground(colors.Subtle),
 			Stat: lipgloss.NewStyle().
-				Foreground(colors.TextMuted).
 				Faint(true),
 			StatAdded: lipgloss.NewStyle().
-				Foreground(colors.GitAdded).
+				Foreground(colors.Success).
 				Faint(true),
 			StatRemoved: lipgloss.NewStyle().
-				Foreground(colors.GitRemoved).
+				Foreground(colors.Critical).
 				Faint(true),
 		},
 
 		Tree: TreeStyles{
 			Enumerator: lipgloss.NewStyle().
-				Foreground(colors.TextMuted).
+				Faint(true).
 				Padding(0, 1),
 			Dir: lipgloss.NewStyle().
-				Foreground(colors.Text).
 				Bold(true),
 		},
 
 		Footer: FooterStyles{
 			Namespace: lipgloss.NewStyle().
 				Background(colors.Primary).
-				Foreground(colors.TextOnPrimary).
+				Foreground(colors.PrimaryReverse).
 				Bold(true).
 				Padding(0, 1),
 			Help: lipgloss.NewStyle().
-				Background(colors.Surface).
-				Foreground(colors.TextMuted),
+				Faint(true),
+			StatusMessage: lipgloss.NewStyle().
+				Faint(true),
 		},
 
 		Common: CommonStyles{
 			Header: lipgloss.NewStyle().
 				Bold(true).
-				Foreground(colors.TextOnPrimary).
+				Foreground(colors.PrimaryReverse).
 				Background(colors.Primary),
-			MetaText: metaStyle,
-			Error: lipgloss.NewStyle().
-				Foreground(colors.Error),
+			MetaText: lipgloss.NewStyle().Faint(true),
+			Error:    lipgloss.NewStyle().Foreground(colors.Critical),
 		},
 	}
 }

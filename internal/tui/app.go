@@ -296,10 +296,10 @@ func (m Model) handleFolderDeleted(_ FolderDeletedMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleActionError(msg ActionErrorMsg) (tea.Model, tea.Cmd) {
-	if msg.Operation == "load more repos" {
+	if msg.Operation == "load additional repos" {
 		m.repoLoadingMore = false
 	}
-	m.statusMsg = msg.Operation + " failed: " + msg.Err.Error()
+	m.statusMsg = "Could not " + msg.Operation + ": " + msg.Err.Error()
 	return m, nil
 }
 
@@ -546,7 +546,11 @@ func (m Model) submitEdit() (tea.Model, tea.Cmd) {
 	m.editText = ""
 
 	if editingFolder != nil {
-		if newValue == "" || newValue == editingFolder.Name {
+		if newValue == "" {
+			m.statusMsg = "Empty name not allowed, folder name reset"
+			return m, nil
+		}
+		if newValue == editingFolder.Name {
 			return m, nil
 		}
 		return m, m.renameFolder(editingFolder.ID, newValue)
@@ -560,7 +564,11 @@ func (m Model) submitEdit() (tea.Model, tea.Cmd) {
 			m.updateLocalRepo(editingRepo.ID, func(r *client.Repo) { r.Description = &newValue })
 			return m, m.updateRepoDescription(editingRepo.ID, newValue)
 		}
-		if newValue == "" || newValue == editingRepo.Name {
+		if newValue == "" {
+			m.statusMsg = "Empty name not allowed, repo name reset"
+			return m, nil
+		}
+		if newValue == editingRepo.Name {
 			return m, nil
 		}
 		m.updateLocalRepo(editingRepo.ID, func(r *client.Repo) { r.Name = newValue })
@@ -973,7 +981,7 @@ func (m Model) updateRepoDescription(id, description string) tea.Cmd {
 	return func() tea.Msg {
 		repo, err := m.client.UpdateRepo(id, nil, &description, nil)
 		if err != nil {
-			return ActionErrorMsg{Operation: "update description", Err: err}
+			return ActionErrorMsg{Operation: "update repo description", Err: err}
 		}
 		return RepoUpdatedMsg{Repo: *repo}
 	}
@@ -1129,7 +1137,7 @@ func (m Model) loadMoreRepos() tea.Cmd {
 	return func() tea.Msg {
 		reposWithFolders, hasMore, err := m.client.ListReposWithFolders(cursor, repoPageSize)
 		if err != nil {
-			return ActionErrorMsg{Operation: "load more repos", Err: err}
+			return ActionErrorMsg{Operation: "load additional repos", Err: err}
 		}
 
 		var nextCursor string
@@ -1872,17 +1880,27 @@ func (m Model) footerView() string {
 	}
 
 	contentWidth := helpWidth - rightPadding
-	helpContent := "? Help"
-	if lipgloss.Width(helpContent) > contentWidth {
-		helpContent = truncateWithEllipsis(helpContent, contentWidth)
+
+	var content string
+	var style lipgloss.Style
+	if m.statusMsg != "" {
+		content = m.statusMsg
+		style = Styles.Footer.StatusMessage
+	} else {
+		content = "? Help"
+		style = Styles.Footer.Help
 	}
-	leftPadding := contentWidth - lipgloss.Width(helpContent)
+
+	if lipgloss.Width(content) > contentWidth {
+		content = truncateWithEllipsis(content, contentWidth)
+	}
+	leftPadding := contentWidth - lipgloss.Width(content)
 	if leftPadding < 0 {
 		leftPadding = 0
 	}
-	helpContent = strings.Repeat(" ", leftPadding) + helpContent + strings.Repeat(" ", rightPadding)
+	content = strings.Repeat(" ", leftPadding) + content + strings.Repeat(" ", rightPadding)
 
-	return namespaceBadge + Styles.Footer.Help.Width(helpWidth).MaxHeight(1).Render(helpContent)
+	return namespaceBadge + style.Width(helpWidth).MaxHeight(1).Render(content)
 }
 
 func (m Model) helpKeyMap() help.KeyMap {

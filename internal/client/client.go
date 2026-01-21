@@ -153,15 +153,15 @@ func buildPaginatedPath(basePath, cursor string, limit int) string {
 	return basePath
 }
 
-func (c *Client) decodeError(resp *http.Response, operation string) error {
+func (c *Client) decodeError(resp *http.Response) error {
 	var errResp response
 	if err := json.NewDecoder(resp.Body).Decode(&errResp); err != nil {
-		return fmt.Errorf("%s: status %d", operation, resp.StatusCode)
+		return fmt.Errorf("status %d", resp.StatusCode)
 	}
 	if errResp.Error != "" {
 		return errors.New(errResp.Error)
 	}
-	return fmt.Errorf("%s: status %d", operation, resp.StatusCode)
+	return fmt.Errorf("status %d", resp.StatusCode)
 }
 
 func (c *Client) ListRepos(cursor string, limit int) ([]Repo, bool, error) {
@@ -174,7 +174,7 @@ func (c *Client) ListRepos(cursor string, limit int) ([]Repo, bool, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, false, c.decodeError(resp, "list repos")
+		return nil, false, c.decodeError(resp)
 	}
 
 	var listResp listResponse
@@ -205,7 +205,7 @@ func (c *Client) ListReposWithFolders(cursor string, limit int) ([]RepoWithFolde
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, false, c.decodeError(resp, "list repos")
+		return nil, false, c.decodeError(resp)
 	}
 
 	var listResp listResponse
@@ -229,7 +229,7 @@ func (c *Client) GetNamespaceInfo() (*Namespace, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, c.decodeError(resp, "get namespace")
+		return nil, c.decodeError(resp)
 	}
 
 	var dataResp response
@@ -255,7 +255,7 @@ func (c *Client) ListFolders(cursor string, limit int) ([]Folder, bool, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, false, c.decodeError(resp, "list folders")
+		return nil, false, c.decodeError(resp)
 	}
 
 	var listResp listResponse
@@ -319,7 +319,7 @@ func (c *Client) CreateFolder(name string) (*Folder, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusCreated {
-		return nil, c.decodeError(resp, "create folder")
+		return nil, c.decodeError(resp)
 	}
 
 	var dataResp response
@@ -348,7 +348,7 @@ func (c *Client) DeleteFolder(id string, force bool) error {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusNoContent {
-		return c.decodeError(resp, "delete folder")
+		return c.decodeError(resp)
 	}
 
 	return nil
@@ -367,7 +367,7 @@ func (c *Client) UpdateFolder(id string, name *string) (*Folder, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, c.decodeError(resp, "update folder")
+		return nil, c.decodeError(resp)
 	}
 
 	var dataResp response
@@ -402,7 +402,7 @@ func (c *Client) UpdateRepo(id string, name *string, description *string, public
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, c.decodeError(resp, "update repo")
+		return nil, c.decodeError(resp)
 	}
 
 	var dataResp response
@@ -426,7 +426,7 @@ func (c *Client) DeleteRepo(id string) error {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusNoContent {
-		return c.decodeError(resp, "delete repo")
+		return c.decodeError(resp)
 	}
 
 	return nil
@@ -440,7 +440,7 @@ func (c *Client) ListRepoFolders(repoID string) ([]Folder, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, c.decodeError(resp, "list repo folders")
+		return nil, c.decodeError(resp)
 	}
 
 	var dataResp response
@@ -466,7 +466,7 @@ func (c *Client) AddRepoFolders(repoID string, folderIDs []string) ([]Folder, er
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, c.decodeError(resp, "add repo folders")
+		return nil, c.decodeError(resp)
 	}
 
 	var dataResp response
@@ -490,7 +490,7 @@ func (c *Client) RemoveRepoFolder(repoID, folderID string) error {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusNoContent {
-		return c.decodeError(resp, "remove repo folder")
+		return c.decodeError(resp)
 	}
 
 	return nil
@@ -504,7 +504,7 @@ func (c *Client) ListRefs(repoID string) ([]Ref, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, c.decodeError(resp, "list refs")
+		return nil, c.decodeError(resp)
 	}
 
 	var dataResp response
@@ -544,7 +544,7 @@ func (c *Client) ListCommits(repoID, ref, cursor string, limit int) ([]Commit, b
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, false, c.decodeError(resp, "list commits")
+		return nil, false, c.decodeError(resp)
 	}
 
 	var listResp listResponse
@@ -577,7 +577,7 @@ func (c *Client) GetTreeWithDepth(repoID, ref, path string, depth int) ([]TreeEn
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, c.decodeError(resp, "get tree")
+		return nil, c.decodeError(resp)
 	}
 
 	var dataResp response
@@ -603,7 +603,7 @@ func (c *Client) GetBlob(repoID, ref, path string) (*Blob, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, c.decodeError(resp, "get blob")
+		return nil, c.decodeError(resp)
 	}
 
 	var dataResp response
@@ -635,7 +635,7 @@ func (c *Client) ListNamespaces() ([]NamespaceWithAccess, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, c.decodeError(resp, "list namespaces")
+		return nil, c.decodeError(resp)
 	}
 
 	var dataResp response
@@ -669,7 +669,7 @@ func (c *Client) AdminListNamespaces() ([]Namespace, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, c.decodeError(resp, "list namespaces")
+		return nil, c.decodeError(resp)
 	}
 
 	var dataResp response
@@ -696,7 +696,7 @@ func (c *Client) AdminCreateNamespace(name string) (*Namespace, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusCreated {
-		return nil, c.decodeError(resp, "create namespace")
+		return nil, c.decodeError(resp)
 	}
 
 	var dataResp response
@@ -721,7 +721,7 @@ func (c *Client) AdminDeleteNamespace(id string) error {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusNoContent {
-		return c.decodeError(resp, "delete namespace")
+		return c.decodeError(resp)
 	}
 
 	return nil
@@ -744,7 +744,7 @@ func (c *Client) AdminCreateToken(namespaceID string, name *string, scope string
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusCreated {
-		return nil, c.decodeError(resp, "create token")
+		return nil, c.decodeError(resp)
 	}
 
 	var dataResp response
@@ -774,7 +774,7 @@ func (c *Client) AdminGrantTokenNamespace(tokenID, namespaceID string, isPrimary
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
-		return c.decodeError(resp, "grant token namespace")
+		return c.decodeError(resp)
 	}
 
 	return nil
@@ -789,7 +789,7 @@ func (c *Client) AdminRevokeTokenNamespace(tokenID, namespaceID string) error {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusNoContent {
-		return c.decodeError(resp, "revoke token namespace")
+		return c.decodeError(resp)
 	}
 
 	return nil

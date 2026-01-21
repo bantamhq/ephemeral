@@ -2,7 +2,7 @@
   "document": {
     "block_prefix": "\n",
     "block_suffix": "\n",
-    "color": "255",
+    "color": "7",
     "margin": 1
   },
   "block_quote": {
@@ -15,7 +15,7 @@
   },
   "heading": {
     "block_suffix": "\n",
-    "color": "62",
+    "color": "7",
     "bold": true
   },
   "h1": {
@@ -47,7 +47,6 @@
     "bold": true
   },
   "hr": {
-    "color": "240",
     "format": "\n--------\n"
   },
   "item": {
@@ -61,29 +60,22 @@
     "unticked": "[ ] "
   },
   "link": {
-    "color": "30",
     "underline": true
   },
   "link_text": {
-    "color": "35",
     "bold": true
   },
   "image": {
-    "color": "212",
     "underline": true
   },
   "image_text": {
-    "color": "243",
     "format": "Image: {{.text}} →"
   },
   "code": {
     "prefix": " ",
     "suffix": " ",
-    "color": "203",
-    "background_color": "236"
   },
   "code_block": {
-    "color": "244",
     "margin": 2,
     "chroma": {
       "text": {
