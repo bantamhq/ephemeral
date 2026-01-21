@@ -184,6 +184,13 @@ func TestStore_RepoLifecycle(t *testing.T) {
 		assert.WithinDuration(t, pushTime, *got.LastPushAt, time.Second)
 	})
 
+	t.Run("update size", func(t *testing.T) {
+		require.NoError(t, s.UpdateRepoSize("repo-1", 2048))
+
+		got, _ := s.GetRepoByID("repo-1")
+		assert.Equal(t, 2048, got.SizeBytes)
+	})
+
 	t.Run("list", func(t *testing.T) {
 		repos, err := s.ListRepos(ns.ID, "", 10)
 		require.NoError(t, err)
@@ -561,4 +568,3 @@ func TestStore_OptionalFields(t *testing.T) {
 		assert.Nil(t, got.Color)
 	})
 }
-

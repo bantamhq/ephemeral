@@ -171,39 +171,46 @@ create_repo "resume" private "" "$DOCS"
 create_repo "scripts" private "Collection of useful shell and Python scripts" "$PYTHON"
 
 ###############################################################################
-# Copy pre-made repos with commit history
+# Push pre-made repos with commit history
 ###############################################################################
 echo ""
 echo "Adding commit history to repos..."
 
-DATA_DIR="${EPHEMERAL_DATA_DIR:-$HOME/.ephemeral}"
-NS_ID=$(api GET /namespace | grep -o '"id":"[^"]*"' | cut -d'"' -f4)
-REPO_DIR="$DATA_DIR/repos/$NS_ID"
+NS_JSON=$(api GET /namespace)
+NS_NAME=$(echo "$NS_JSON" | grep -o '"name":"[^"]*"' | head -1 | cut -d'"' -f4)
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SEED_REPOS="$SCRIPT_DIR/seed-repos"
+GIT_HOST="${BASE_URL#http://}"
+GIT_HOST="${GIT_HOST#https://}"
+GIT_SCHEME="http"
+if [[ "$BASE_URL" == https://* ]]; then
+    GIT_SCHEME="https"
+fi
 
-copy_seed_repo() {
+push_seed_repo() {
     local name=$1
     local src="$SEED_REPOS/$name.git"
-    local dest="$REPO_DIR/$name.git"
+    local temp_dir
+    local repo_dir
 
     if [ ! -d "$src" ]; then
         echo "  $name (seed repo not found, skipping)"
         return
     fi
 
-    if [ ! -d "$dest" ]; then
-        echo "  $name (target repo not found, skipping)"
-        return
-    fi
+    temp_dir=$(mktemp -d)
+    repo_dir="$temp_dir/$name"
+    git clone -q "$src" "$repo_dir"
 
-    rm -rf "$dest"
-    cp -r "$src" "$dest"
+    git -C "$repo_dir" remote set-url origin "$GIT_SCHEME://x-token:$TOKEN@$GIT_HOST/git/$NS_NAME/$name.git"
+    git -C "$repo_dir" push -q origin --all
+    git -C "$repo_dir" push -q origin --tags
+    rm -rf "$temp_dir"
     echo "  $name"
 }
 
-copy_seed_repo "admin-panel"
-copy_seed_repo "analytics-pipeline"
+push_seed_repo "admin-panel"
+push_seed_repo "analytics-pipeline"
 
 echo ""
 echo "Seed complete!"

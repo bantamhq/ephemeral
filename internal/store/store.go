@@ -34,6 +34,7 @@ type Store interface {
 	UpdateRepo(repo *Repo) error
 	DeleteRepo(id string) error
 	UpdateRepoLastPush(id string, pushTime time.Time) error
+	UpdateRepoSize(id string, sizeBytes int) error
 
 	// Folder operations
 	CreateFolder(folder *Folder) error

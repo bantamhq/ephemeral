@@ -196,6 +196,30 @@ func (s *SQLiteStore) UpdateRepoLastPush(id string, pushTime time.Time) error {
 	return nil
 }
 
+// UpdateRepoSize updates the stored size of a repository.
+func (s *SQLiteStore) UpdateRepoSize(id string, sizeBytes int) error {
+	query := `
+		UPDATE repos
+		SET size_bytes = ?, updated_at = ?
+		WHERE id = ?
+	`
+
+	result, err := s.db.Exec(query, sizeBytes, time.Now(), id)
+	if err != nil {
+		return fmt.Errorf("update repo size_bytes: %w", err)
+	}
+
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("get rows affected: %w", err)
+	}
+	if rows == 0 {
+		return sql.ErrNoRows
+	}
+
+	return nil
+}
+
 // GetNamespace retrieves a namespace by ID.
 func (s *SQLiteStore) GetNamespace(id string) (*Namespace, error) {
 	query := `

@@ -1269,7 +1269,7 @@ func (m Model) getActivityContent(width int) string {
 		return " " + StyleMetaText.Render("No commits")
 	}
 
-	t := tree.Root(" ⁜ Commits")
+	t := tree.Root(" ⁜ Recent Commits")
 	enumeratorWidth := lipgloss.Width(StyleTreeEnumerator.Render("├─"))
 	for _, commit := range m.currentDetail.Commits {
 		shortSHA := commit.SHA
@@ -1343,7 +1343,7 @@ func (m Model) getFilesContent(width int) string {
 	entries := sortTreeEntries(m.currentDetail.Tree)
 	children := buildFileTreeChildren(entries)
 
-	t := tree.Root(" ⁜")
+	t := tree.Root(" /")
 	if len(children) > 0 {
 		t.Child(children...)
 	}

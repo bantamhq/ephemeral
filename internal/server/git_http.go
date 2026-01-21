@@ -259,7 +259,19 @@ func (h *GitHTTPHandler) handleReceivePack(w http.ResponseWriter, r *http.Reques
 		fmt.Printf("git-receive-pack error: %v\n", err)
 	}
 
-	h.store.UpdateRepoLastPush(repo.ID, time.Now())
+	if err := h.store.UpdateRepoLastPush(repo.ID, time.Now()); err != nil {
+		fmt.Printf("update repo last_push_at error: %v\n", err)
+	}
+
+	sizeBytes, err := repoDiskUsage(repoPath)
+	if err != nil {
+		fmt.Printf("compute repo size error: %v\n", err)
+		return
+	}
+
+	if err := h.store.UpdateRepoSize(repo.ID, sizeBytes); err != nil {
+		fmt.Printf("update repo size_bytes error: %v\n", err)
+	}
 }
 
 func (h *GitHTTPHandler) getRequestBody(w http.ResponseWriter, r *http.Request) (io.Reader, error) {
@@ -345,4 +357,24 @@ func initBareRepo(repoPath string) error {
 	}
 
 	return nil
+}
+
+func repoDiskUsage(path string) (int, error) {
+	var size int64
+
+	err := filepath.Walk(path, func(_ string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if info.IsDir() {
+			return nil
+		}
+		size += info.Size()
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+
+	return int(size), nil
 }
