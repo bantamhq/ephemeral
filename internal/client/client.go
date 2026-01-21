@@ -31,6 +31,7 @@ type Repo struct {
 	ID          string     `json:"id"`
 	NamespaceID string     `json:"namespace_id"`
 	Name        string     `json:"name"`
+	Description *string    `json:"description,omitempty"`
 	Public      bool       `json:"public"`
 	SizeBytes   int        `json:"size_bytes"`
 	LastPushAt  *time.Time `json:"last_push_at,omitempty"`
@@ -66,12 +67,13 @@ type Ref struct {
 }
 
 type Commit struct {
-	SHA        string    `json:"sha"`
-	Message    string    `json:"message"`
-	Author     GitAuthor `json:"author"`
-	Committer  GitAuthor `json:"committer"`
-	ParentSHAs []string  `json:"parent_shas"`
-	TreeSHA    string    `json:"tree_sha"`
+	SHA        string       `json:"sha"`
+	Message    string       `json:"message"`
+	Author     GitAuthor    `json:"author"`
+	Committer  GitAuthor    `json:"committer"`
+	ParentSHAs []string     `json:"parent_shas"`
+	TreeSHA    string       `json:"tree_sha"`
+	Stats      *CommitStats `json:"stats,omitempty"`
 }
 
 type GitAuthor struct {
@@ -80,13 +82,21 @@ type GitAuthor struct {
 	Date  time.Time `json:"date"`
 }
 
+type CommitStats struct {
+	FilesChanged int `json:"files_changed"`
+	Additions    int `json:"additions"`
+	Deletions    int `json:"deletions"`
+}
+
 type TreeEntry struct {
-	Name string `json:"name"`
-	Path string `json:"path"`
-	Type string `json:"type"`
-	Mode string `json:"mode"`
-	SHA  string `json:"sha"`
-	Size *int64 `json:"size,omitempty"`
+	Name        string      `json:"name"`
+	Path        string      `json:"path"`
+	Type        string      `json:"type"`
+	Mode        string      `json:"mode"`
+	SHA         string      `json:"sha"`
+	Size        *int64      `json:"size,omitempty"`
+	HasChildren *bool       `json:"has_children,omitempty"`
+	Children    []TreeEntry `json:"children,omitempty"`
 }
 
 type Blob struct {
@@ -354,10 +364,13 @@ func (c *Client) UpdateFolder(id string, name *string) (*Folder, error) {
 	return &folder, nil
 }
 
-func (c *Client) UpdateRepo(id string, name *string, public *bool) (*Repo, error) {
+func (c *Client) UpdateRepo(id string, name *string, description *string, public *bool) (*Repo, error) {
 	body := make(map[string]any)
 	if name != nil {
 		body["name"] = *name
+	}
+	if description != nil {
+		body["description"] = *description
 	}
 	if public != nil {
 		body["public"] = *public
@@ -529,7 +542,14 @@ func (c *Client) ListCommits(repoID, ref, cursor string, limit int) ([]Commit, b
 }
 
 func (c *Client) GetTree(repoID, ref, path string) ([]TreeEntry, error) {
+	return c.GetTreeWithDepth(repoID, ref, path, 0)
+}
+
+func (c *Client) GetTreeWithDepth(repoID, ref, path string, depth int) ([]TreeEntry, error) {
 	apiPath := "/api/v1/repos/" + repoID + "/tree/" + ref + "/" + path
+	if depth > 0 {
+		apiPath += "?depth=" + strconv.Itoa(depth)
+	}
 
 	resp, err := c.doRequest(http.MethodGet, apiPath)
 	if err != nil {

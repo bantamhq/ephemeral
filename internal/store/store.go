@@ -89,6 +89,7 @@ type Repo struct {
 	ID          string     `json:"id"`
 	NamespaceID string     `json:"namespace_id"`
 	Name        string     `json:"name"`
+	Description *string    `json:"description,omitempty"`
 	Public      bool       `json:"public"`
 	SizeBytes   int        `json:"size_bytes"`
 	LastPushAt  *time.Time `json:"last_push_at,omitempty"`

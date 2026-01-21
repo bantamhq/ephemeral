@@ -123,6 +123,20 @@ expect_contains "$RESPONSE" '"message":"Update README' "default ref returns comm
 RESPONSE=$(auth_curl "$API/repos/$REPO_ID/commits?ref=main")
 expect_contains "$RESPONSE" '"message":"Update README' "ref=main works"
 
+# Commit stats
+expect_contains "$RESPONSE" '"stats"' "commits include stats field"
+expect_contains "$RESPONSE" '"files_changed"' "stats has files_changed"
+expect_contains "$RESPONSE" '"additions"' "stats has additions"
+expect_contains "$RESPONSE" '"deletions"' "stats has deletions"
+
+# Verify stats values are integers
+FILES_CHANGED=$(echo "$RESPONSE" | jq '.data[0].stats.files_changed')
+if [[ "$FILES_CHANGED" =~ ^[0-9]+$ ]]; then
+    pass "stats.files_changed is integer"
+else
+    fail "stats.files_changed is integer" "integer" "$FILES_CHANGED"
+fi
+
 # Pagination
 RESPONSE=$(auth_curl "$API/repos/$REPO_ID/commits?limit=1")
 expect_json "$RESPONSE" '.has_more' "true" "limit=1 has_more=true"
@@ -154,6 +168,49 @@ expect_contains "$RESPONSE" '"name":"main.go"' "src/ contains main.go"
 # Tag ref
 RESPONSE=$(auth_curl "$API/repos/$REPO_ID/tree/v1.0.0/")
 expect_contains "$RESPONSE" '"name":"README.md"' "tag ref works"
+
+###############################################################################
+section "Tree Depth"
+###############################################################################
+
+# Default depth=1 (no children expanded)
+RESPONSE=$(auth_curl "$API/repos/$REPO_ID/tree/main/")
+HAS_CHILDREN=$(echo "$RESPONSE" | jq '[.data[] | select(.type == "dir") | .children // [] | length] | add // 0')
+if [ "$HAS_CHILDREN" = "0" ]; then
+    pass "default depth=1: directories not expanded"
+else
+    fail "default depth=1: directories not expanded" "0 children" "$HAS_CHILDREN"
+fi
+
+# Depth=2 expands one level
+RESPONSE=$(auth_curl "$API/repos/$REPO_ID/tree/main/?depth=2")
+expect_contains "$RESPONSE" '"children"' "depth=2: has children array"
+expect_contains "$RESPONSE" '"has_children"' "depth=2: has has_children field"
+
+# Check src directory has children expanded
+SRC_CHILDREN=$(echo "$RESPONSE" | jq '[.data[] | select(.name == "src") | .children | length] | .[0] // 0')
+if [ "$SRC_CHILDREN" -ge "1" ]; then
+    pass "depth=2: src directory has children"
+else
+    fail "depth=2: src directory has children" ">=1" "$SRC_CHILDREN"
+fi
+
+# Verify main.go is in src's children
+RESPONSE=$(auth_curl "$API/repos/$REPO_ID/tree/main/?depth=2")
+expect_contains "$RESPONSE" '"name":"main.go"' "depth=2: main.go in src children"
+
+# Depth=0 behaves like depth=1 (default)
+RESPONSE=$(auth_curl "$API/repos/$REPO_ID/tree/main/?depth=0")
+HAS_CHILDREN=$(echo "$RESPONSE" | jq '[.data[] | select(.type == "dir") | .children // [] | length] | add // 0')
+if [ "$HAS_CHILDREN" = "0" ]; then
+    pass "depth=0: treated as default (no expansion)"
+else
+    fail "depth=0: treated as default (no expansion)" "0 children" "$HAS_CHILDREN"
+fi
+
+# Large depth is capped at max (10)
+RESPONSE=$(auth_curl "$API/repos/$REPO_ID/tree/main/?depth=100")
+expect_contains "$RESPONSE" '"name":"README.md"' "depth=100: works (capped at max)"
 
 ###############################################################################
 section "Blob"

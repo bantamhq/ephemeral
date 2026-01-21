@@ -93,13 +93,20 @@ echo "Creating repos..."
 create_repo() {
     local name=$1
     local public=$2
-    shift 2
+    local desc=$3
+    shift 3
     local folders=("$@")
 
     local public_flag="false"
     [ "$public" = "public" ] && public_flag="true"
 
-    local id=$(api POST /repos "{\"name\": \"$name\", \"public\": $public_flag}" | get_id)
+    local json="{\"name\": \"$name\", \"public\": $public_flag"
+    if [ -n "$desc" ]; then
+        json="$json, \"description\": \"$desc\""
+    fi
+    json="$json}"
+
+    local id=$(api POST /repos "$json" | get_id)
 
     if [ ${#folders[@]} -gt 0 ]; then
         local folder_json=$(printf ',"%s"' "${folders[@]}")
@@ -111,57 +118,57 @@ create_repo() {
 }
 
 # Web projects (6 repos)
-create_repo "dashboard" private "$WEB" "$TYPESCRIPT"
-create_repo "marketing-site" public "$WEB" "$TYPESCRIPT"
-create_repo "admin-panel" private "$WEB" "$TYPESCRIPT"
-create_repo "docs-site" public "$WEB" "$DOCS" "$TYPESCRIPT"
-create_repo "landing-page" public "$WEB"
-create_repo "component-library" private "$WEB" "$TYPESCRIPT" "$OPENSOURCE"
+create_repo "dashboard" private "Internal analytics and metrics dashboard" "$WEB" "$TYPESCRIPT"
+create_repo "marketing-site" public "Company marketing website with CMS integration" "$WEB" "$TYPESCRIPT"
+create_repo "admin-panel" private "" "$WEB" "$TYPESCRIPT"
+create_repo "docs-site" public "Product documentation built with Docusaurus" "$WEB" "$DOCS" "$TYPESCRIPT"
+create_repo "landing-page" public "" "$WEB"
+create_repo "component-library" private "Shared React component library with Storybook" "$WEB" "$TYPESCRIPT" "$OPENSOURCE"
 
 # Mobile projects (4 repos)
-create_repo "ios-app" private "$MOBILE"
-create_repo "android-app" private "$MOBILE"
-create_repo "react-native-app" private "$MOBILE" "$TYPESCRIPT"
-create_repo "flutter-prototype" private "$MOBILE" "$EXPERIMENTS"
+create_repo "ios-app" private "Native iOS app built with SwiftUI" "$MOBILE"
+create_repo "android-app" private "" "$MOBILE"
+create_repo "react-native-app" private "Cross-platform mobile app for customers" "$MOBILE" "$TYPESCRIPT"
+create_repo "flutter-prototype" private "" "$MOBILE" "$EXPERIMENTS"
 
 # Backend projects (5 repos)
-create_repo "api-gateway" private "$BACKEND" "$GO"
-create_repo "auth-service" private "$BACKEND" "$GO"
-create_repo "notification-service" private "$BACKEND" "$GO"
-create_repo "analytics-pipeline" private "$BACKEND" "$PYTHON"
-create_repo "search-service" private "$BACKEND" "$RUST"
+create_repo "api-gateway" private "Central API gateway with rate limiting and auth" "$BACKEND" "$GO"
+create_repo "auth-service" private "OAuth2 and JWT authentication service" "$BACKEND" "$GO"
+create_repo "notification-service" private "" "$BACKEND" "$GO"
+create_repo "analytics-pipeline" private "Real-time event processing with Apache Kafka" "$BACKEND" "$PYTHON"
+create_repo "search-service" private "" "$BACKEND" "$RUST"
 
 # Infra projects (4 repos)
-create_repo "terraform-modules" private "$INFRA"
-create_repo "k8s-manifests" private "$INFRA"
-create_repo "ci-pipelines" private "$INFRA"
-create_repo "monitoring-stack" private "$INFRA"
+create_repo "terraform-modules" private "Reusable Terraform modules for AWS infrastructure" "$INFRA"
+create_repo "k8s-manifests" private "" "$INFRA"
+create_repo "ci-pipelines" private "GitHub Actions workflows and reusable actions" "$INFRA"
+create_repo "monitoring-stack" private "" "$INFRA"
 
 # Internal libraries (3 repos)
-create_repo "go-kit" private "$INTERNAL" "$GO"
-create_repo "ts-utils" private "$INTERNAL" "$TYPESCRIPT"
-create_repo "python-common" private "$INTERNAL" "$PYTHON"
+create_repo "go-kit" private "Common Go utilities, middleware, and patterns" "$INTERNAL" "$GO"
+create_repo "ts-utils" private "" "$INTERNAL" "$TYPESCRIPT"
+create_repo "python-common" private "Shared Python utilities and data models" "$INTERNAL" "$PYTHON"
 
 # Open source libraries (3 repos)
-create_repo "http-client" public "$OPENSOURCE" "$GO"
-create_repo "react-hooks" public "$OPENSOURCE" "$TYPESCRIPT"
-create_repo "cli-builder" public "$OPENSOURCE" "$RUST"
+create_repo "http-client" public "Lightweight HTTP client with retry and circuit breaker" "$OPENSOURCE" "$GO"
+create_repo "react-hooks" public "" "$OPENSOURCE" "$TYPESCRIPT"
+create_repo "cli-builder" public "Framework for building beautiful CLI applications" "$OPENSOURCE" "$RUST"
 
 # Experiments (3 repos)
-create_repo "raytracer" public "$EXPERIMENTS" "$RUST"
-create_repo "ml-sandbox" private "$EXPERIMENTS" "$PYTHON"
-create_repo "wasm-playground" private "$EXPERIMENTS" "$RUST"
+create_repo "raytracer" public "Weekend raytracer project following Peter Shirley's book" "$EXPERIMENTS" "$RUST"
+create_repo "ml-sandbox" private "" "$EXPERIMENTS" "$PYTHON"
+create_repo "wasm-playground" private "" "$EXPERIMENTS" "$RUST"
 
 # Archive (2 repos)
-create_repo "legacy-api" private "$ARCHIVE" "$GO"
-create_repo "old-website" private "$ARCHIVE" "$TYPESCRIPT"
+create_repo "legacy-api" private "Deprecated v1 API (migrated to api-gateway)" "$ARCHIVE" "$GO"
+create_repo "old-website" private "" "$ARCHIVE" "$TYPESCRIPT"
 
 # Root level repos (no folder) - 5 repos
-create_repo "dotfiles" public
-create_repo "notes" private
-create_repo "blog" public "$TYPESCRIPT"
-create_repo "resume" private "$DOCS"
-create_repo "scripts" private "$PYTHON"
+create_repo "dotfiles" public "Personal dotfiles for macOS and Linux"
+create_repo "notes" private ""
+create_repo "blog" public "Personal blog built with Next.js" "$TYPESCRIPT"
+create_repo "resume" private "" "$DOCS"
+create_repo "scripts" private "Collection of useful shell and Python scripts" "$PYTHON"
 
 ###############################################################################
 # Copy pre-made repos with commit history

@@ -69,8 +69,9 @@ func (s *Server) handleListRepos(w http.ResponseWriter, r *http.Request) {
 }
 
 type createRepoRequest struct {
-	Name   string `json:"name"`
-	Public bool   `json:"public"`
+	Name        string  `json:"name"`
+	Description *string `json:"description,omitempty"`
+	Public      bool    `json:"public"`
 }
 
 func (s *Server) handleCreateRepo(w http.ResponseWriter, r *http.Request) {
@@ -94,6 +95,11 @@ func (s *Server) handleCreateRepo(w http.ResponseWriter, r *http.Request) {
 	}
 	req.Name = strings.ToLower(req.Name)
 
+	if req.Description != nil && len(*req.Description) > 512 {
+		JSONError(w, http.StatusBadRequest, "Description must be 512 characters or less")
+		return
+	}
+
 	existing, err := s.store.GetRepo(token.NamespaceID, req.Name)
 	if err != nil {
 		JSONError(w, http.StatusInternalServerError, "Failed to check existing repo")
@@ -109,6 +115,7 @@ func (s *Server) handleCreateRepo(w http.ResponseWriter, r *http.Request) {
 		ID:          uuid.New().String(),
 		NamespaceID: token.NamespaceID,
 		Name:        req.Name,
+		Description: req.Description,
 		Public:      req.Public,
 		SizeBytes:   0,
 		CreatedAt:   now,
@@ -182,8 +189,9 @@ func (s *Server) handleDeleteRepo(w http.ResponseWriter, r *http.Request) {
 }
 
 type updateRepoRequest struct {
-	Name   *string `json:"name,omitempty"`
-	Public *bool   `json:"public,omitempty"`
+	Name        *string `json:"name,omitempty"`
+	Description *string `json:"description,omitempty"`
+	Public      *bool   `json:"public,omitempty"`
 }
 
 func (s *Server) handleUpdateRepo(w http.ResponseWriter, r *http.Request) {
@@ -228,6 +236,14 @@ func (s *Server) handleUpdateRepo(w http.ResponseWriter, r *http.Request) {
 		}
 
 		repo.Name = *req.Name
+	}
+
+	if req.Description != nil {
+		if len(*req.Description) > 512 {
+			JSONError(w, http.StatusBadRequest, "Description must be 512 characters or less")
+			return
+		}
+		repo.Description = req.Description
 	}
 
 	if req.Public != nil {

@@ -33,6 +33,21 @@ fi
 expect_json "$RESPONSE" '.data.name' "test-repo-1" "name matches"
 expect_json "$RESPONSE" '.data.public' "false" "public=false"
 
+# Create repo with description
+RESPONSE=$(auth_curl -X POST -H "Content-Type: application/json" \
+    -d '{"name":"test-repo-desc","description":"A test repository with description","public":false}' \
+    "$API/repos")
+
+REPO_DESC_ID=$(get_id "$RESPONSE")
+if [ -n "$REPO_DESC_ID" ]; then
+    track_repo "$REPO_DESC_ID"
+    pass "create repo with description"
+else
+    fail "create repo with description" "valid ID" "$RESPONSE"
+fi
+
+expect_json "$RESPONSE" '.data.description' "A test repository with description" "description matches"
+
 # Create a public repo
 RESPONSE=$(auth_curl -X POST -H "Content-Type: application/json" \
     -d '{"name":"test-repo-public","public":true}' \
@@ -82,6 +97,14 @@ RESPONSE=$(auth_curl -X POST -H "Content-Type: application/json" \
     "$API/repos")
 
 expect_contains "$RESPONSE" "cannot contain '..'" "dot-dot rejected"
+
+# Description too long should fail (>512 chars)
+LONG_DESC=$(printf 'x%.0s' {1..513})
+RESPONSE=$(auth_curl -X POST -H "Content-Type: application/json" \
+    -d "{\"name\":\"test-long-desc\",\"description\":\"$LONG_DESC\"}" \
+    "$API/repos")
+
+expect_contains "$RESPONSE" "512 characters" "description >512 chars rejected"
 
 ###############################################################################
 section "Get"
@@ -169,6 +192,28 @@ RESPONSE=$(auth_curl -X PATCH -H "Content-Type: application/json" \
     "$API/repos/$REPO1_ID")
 
 expect_json "$RESPONSE" '.data.public' "true" "public changed to true"
+
+# Update description
+RESPONSE=$(auth_curl -X PATCH -H "Content-Type: application/json" \
+    -d '{"description":"Updated description"}' \
+    "$API/repos/$REPO_DESC_ID")
+
+expect_json "$RESPONSE" '.data.description' "Updated description" "description updated"
+
+# Update description to empty
+RESPONSE=$(auth_curl -X PATCH -H "Content-Type: application/json" \
+    -d '{"description":""}' \
+    "$API/repos/$REPO_DESC_ID")
+
+expect_json "$RESPONSE" '.data.description' "" "description cleared"
+
+# Update description too long should fail
+LONG_DESC=$(printf 'x%.0s' {1..513})
+RESPONSE=$(auth_curl -X PATCH -H "Content-Type: application/json" \
+    -d "{\"description\":\"$LONG_DESC\"}" \
+    "$API/repos/$REPO_DESC_ID")
+
+expect_contains "$RESPONSE" "512 characters" "update: description >512 chars rejected"
 
 # Rename to existing name should fail
 RESPONSE=$(auth_curl -X PATCH -H "Content-Type: application/json" \

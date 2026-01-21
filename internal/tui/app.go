@@ -887,7 +887,7 @@ func (m Model) createFolder(name string) tea.Cmd {
 
 func (m Model) renameRepo(id, name string) tea.Cmd {
 	return func() tea.Msg {
-		repo, err := m.client.UpdateRepo(id, &name, nil)
+		repo, err := m.client.UpdateRepo(id, &name, nil, nil)
 		if err != nil {
 			return ActionErrorMsg{Operation: "rename repo", Err: err}
 		}
@@ -1118,7 +1118,7 @@ func (m Model) loadDetail(repoID string) tea.Cmd {
 			if err != nil {
 				return DetailLoadedMsg{RepoID: repoID, Err: fmt.Errorf("list commits for %s: %w", defaultRef, err)}
 			}
-			tree, err = m.client.GetTree(repoID, defaultRef, "")
+			tree, err = m.client.GetTreeWithDepth(repoID, defaultRef, "", 2)
 			if err != nil {
 				return DetailLoadedMsg{RepoID: repoID, Err: fmt.Errorf("get tree for %s: %w", defaultRef, err)}
 			}
@@ -1283,14 +1283,14 @@ func (m Model) getActivityContent(width int) string {
 		messageWidth := width - enumeratorWidth - lipgloss.Width(shortSHA) - lipgloss.Width("•") - lipgloss.Width(timeAgo) - 3
 		if messageWidth < 1 {
 			commitLine := StyleCommitHash.Render(shortSHA) + " " + StyleMetaText.Render("•") + " " + StyleMetaText.Render(timeAgo)
-			t.Child(tree.Root(commitLine).Child(renderCommitStats(4, 64, 74)))
+			t.Child(tree.Root(commitLine).Child(renderCommitStats(commit.Stats)))
 			continue
 		}
 
 		message = truncateWithEllipsis(message, messageWidth)
 
 		commitLine := StyleCommitHash.Render(shortSHA) + " " + StyleMetaText.Render("•") + " " + message + " " + StyleMetaText.Render(timeAgo)
-		t.Child(tree.Root(commitLine).Child(renderCommitStats(4, 64, 74)))
+		t.Child(tree.Root(commitLine).Child(renderCommitStats(commit.Stats)))
 	}
 
 	t.EnumeratorStyle(StyleTreeEnumerator).
@@ -1314,10 +1314,14 @@ func treeIndenter(children tree.Children, index int) string {
 	return "│ "
 }
 
-func renderCommitStats(files, additions, deletions int) string {
-	base := StyleCommitStat.Render(fmt.Sprintf("%d files, %d(", files, additions))
+func renderCommitStats(stats *client.CommitStats) string {
+	if stats == nil {
+		return StyleCommitStat.Render("(no stats)")
+	}
+
+	base := StyleCommitStat.Render(fmt.Sprintf("%d files, %d(", stats.FilesChanged, stats.Additions))
 	added := StyleCommitStatAdded.Render("+")
-	middle := StyleCommitStat.Render(fmt.Sprintf("), %d(", deletions))
+	middle := StyleCommitStat.Render(fmt.Sprintf("), %d(", stats.Deletions))
 	removed := StyleCommitStatRemoved.Render("-")
 	end := StyleCommitStat.Render(")")
 
@@ -1337,14 +1341,11 @@ func (m Model) getFilesContent(width int) string {
 	}
 
 	entries := sortTreeEntries(m.currentDetail.Tree)
+	children := buildFileTreeChildren(entries)
 
 	t := tree.Root(" ⁜")
-	for _, entry := range entries {
-		name := entry.Name
-		if entry.Type == "dir" {
-			name = StyleTreeDir.Render(name)
-		}
-		t.Child(name)
+	if len(children) > 0 {
+		t.Child(children...)
 	}
 
 	t.EnumeratorStyle(StyleTreeEnumerator).
@@ -1365,7 +1366,38 @@ func sortTreeEntries(entries []client.TreeEntry) []client.TreeEntry {
 		return strings.ToLower(sorted[i].Name) < strings.ToLower(sorted[j].Name)
 	})
 
+	for i := range sorted {
+		if len(sorted[i].Children) > 0 {
+			sorted[i].Children = sortTreeEntries(sorted[i].Children)
+		}
+	}
+
 	return sorted
+}
+
+func buildFileTreeChildren(entries []client.TreeEntry) []any {
+	children := make([]any, 0, len(entries))
+
+	for _, entry := range entries {
+		name := entry.Name
+		if entry.Type == "dir" {
+			name = StyleTreeDir.Render(name)
+		}
+
+		if len(entry.Children) > 0 {
+			node := tree.Root(name)
+			nodeChildren := buildFileTreeChildren(entry.Children)
+			if len(nodeChildren) > 0 {
+				node.Child(nodeChildren...)
+			}
+			children = append(children, node)
+			continue
+		}
+
+		children = append(children, name)
+	}
+
+	return children
 }
 
 

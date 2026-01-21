@@ -109,15 +109,16 @@ func (s *SQLiteStore) GetTokenByLookup(namespaceID, lookup string) (*Token, erro
 func (s *SQLiteStore) CreateRepo(repo *Repo) error {
 	query := `
 		INSERT INTO repos (
-			id, namespace_id, name, public,
+			id, namespace_id, name, description, public,
 			size_bytes, last_push_at, created_at, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
 
 	_, err := s.db.Exec(query,
 		repo.ID,
 		repo.NamespaceID,
 		repo.Name,
+		ToNullString(repo.Description),
 		repo.Public,
 		repo.SizeBytes,
 		ToNullTime(repo.LastPushAt),
@@ -133,7 +134,7 @@ func (s *SQLiteStore) CreateRepo(repo *Repo) error {
 // GetRepo retrieves a repository by namespace and name.
 func (s *SQLiteStore) GetRepo(namespaceID, name string) (*Repo, error) {
 	query := `
-		SELECT id, namespace_id, name, public,
+		SELECT id, namespace_id, name, description, public,
 			   size_bytes, last_push_at, created_at, updated_at
 		FROM repos
 		WHERE namespace_id = ? AND name = ?
@@ -144,7 +145,7 @@ func (s *SQLiteStore) GetRepo(namespaceID, name string) (*Repo, error) {
 // GetRepoByID retrieves a repository by ID.
 func (s *SQLiteStore) GetRepoByID(id string) (*Repo, error) {
 	query := `
-		SELECT id, namespace_id, name, public,
+		SELECT id, namespace_id, name, description, public,
 			   size_bytes, last_push_at, created_at, updated_at
 		FROM repos
 		WHERE id = ?
@@ -154,12 +155,14 @@ func (s *SQLiteStore) GetRepoByID(id string) (*Repo, error) {
 
 func (s *SQLiteStore) scanRepo(row *sql.Row) (*Repo, error) {
 	var repo Repo
+	var description sql.NullString
 	var lastPushAt sql.NullTime
 
 	err := row.Scan(
 		&repo.ID,
 		&repo.NamespaceID,
 		&repo.Name,
+		&description,
 		&repo.Public,
 		&repo.SizeBytes,
 		&lastPushAt,
@@ -173,6 +176,7 @@ func (s *SQLiteStore) scanRepo(row *sql.Row) (*Repo, error) {
 		return nil, fmt.Errorf("scan repo: %w", err)
 	}
 
+	repo.Description = FromNullString(description)
 	repo.LastPushAt = FromNullTime(lastPushAt)
 
 	return &repo, nil
@@ -442,7 +446,7 @@ func (s *SQLiteStore) ListRepos(namespaceID, cursor string, limit int) ([]Repo, 
 
 	if limit > 0 {
 		query := `
-			SELECT id, namespace_id, name, public,
+			SELECT id, namespace_id, name, description, public,
 				   size_bytes, last_push_at, created_at, updated_at
 			FROM repos
 			WHERE namespace_id = ? AND name > ?
@@ -452,7 +456,7 @@ func (s *SQLiteStore) ListRepos(namespaceID, cursor string, limit int) ([]Repo, 
 		rows, err = s.db.Query(query, namespaceID, cursor, limit)
 	} else {
 		query := `
-			SELECT id, namespace_id, name, public,
+			SELECT id, namespace_id, name, description, public,
 				   size_bytes, last_push_at, created_at, updated_at
 			FROM repos
 			WHERE namespace_id = ? AND name > ?
@@ -468,12 +472,14 @@ func (s *SQLiteStore) ListRepos(namespaceID, cursor string, limit int) ([]Repo, 
 	var repos []Repo
 	for rows.Next() {
 		var repo Repo
+		var description sql.NullString
 		var lastPushAt sql.NullTime
 
 		if err := rows.Scan(
 			&repo.ID,
 			&repo.NamespaceID,
 			&repo.Name,
+			&description,
 			&repo.Public,
 			&repo.SizeBytes,
 			&lastPushAt,
@@ -483,6 +489,7 @@ func (s *SQLiteStore) ListRepos(namespaceID, cursor string, limit int) ([]Repo, 
 			return nil, fmt.Errorf("scan repo: %w", err)
 		}
 
+		repo.Description = FromNullString(description)
 		repo.LastPushAt = FromNullTime(lastPushAt)
 		repos = append(repos, repo)
 	}
@@ -553,12 +560,13 @@ func (s *SQLiteStore) ListReposWithFolders(namespaceID, cursor string, limit int
 func (s *SQLiteStore) UpdateRepo(repo *Repo) error {
 	query := `
 		UPDATE repos
-		SET name = ?, public = ?, updated_at = ?
+		SET name = ?, description = ?, public = ?, updated_at = ?
 		WHERE id = ?
 	`
 
 	result, err := s.db.Exec(query,
 		repo.Name,
+		ToNullString(repo.Description),
 		repo.Public,
 		time.Now(),
 		repo.ID,
@@ -833,7 +841,7 @@ func (s *SQLiteStore) ListRepoFolders(repoID string) ([]Folder, error) {
 // ListFolderRepos lists all repos in a folder.
 func (s *SQLiteStore) ListFolderRepos(folderID string) ([]Repo, error) {
 	query := `
-		SELECT r.id, r.namespace_id, r.name, r.public,
+		SELECT r.id, r.namespace_id, r.name, r.description, r.public,
 			   r.size_bytes, r.last_push_at, r.created_at, r.updated_at
 		FROM repos r
 		JOIN repo_folders rf ON r.id = rf.repo_id
@@ -850,12 +858,14 @@ func (s *SQLiteStore) ListFolderRepos(folderID string) ([]Repo, error) {
 	var repos []Repo
 	for rows.Next() {
 		var repo Repo
+		var description sql.NullString
 		var lastPushAt sql.NullTime
 
 		if err := rows.Scan(
 			&repo.ID,
 			&repo.NamespaceID,
 			&repo.Name,
+			&description,
 			&repo.Public,
 			&repo.SizeBytes,
 			&lastPushAt,
@@ -865,6 +875,7 @@ func (s *SQLiteStore) ListFolderRepos(folderID string) ([]Repo, error) {
 			return nil, fmt.Errorf("scan repo: %w", err)
 		}
 
+		repo.Description = FromNullString(description)
 		repo.LastPushAt = FromNullTime(lastPushAt)
 		repos = append(repos, repo)
 	}

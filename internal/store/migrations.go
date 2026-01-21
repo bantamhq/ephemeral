@@ -78,6 +78,7 @@ func (s *SQLiteStore) createSchema() error {
 		id TEXT PRIMARY KEY,
 		namespace_id TEXT NOT NULL REFERENCES namespaces(id) ON DELETE CASCADE,
 		name TEXT NOT NULL,
+		description TEXT,
 
 		-- Visibility
 		public BOOLEAN DEFAULT FALSE,  -- If true, anonymous read access allowed

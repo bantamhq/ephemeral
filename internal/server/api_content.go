@@ -28,12 +28,13 @@ type RefResponse struct {
 }
 
 type CommitResponse struct {
-	SHA        string    `json:"sha"`
-	Message    string    `json:"message"`
-	Author     GitAuthor `json:"author"`
-	Committer  GitAuthor `json:"committer"`
-	ParentSHAs []string  `json:"parent_shas"`
-	TreeSHA    string    `json:"tree_sha"`
+	SHA        string       `json:"sha"`
+	Message    string       `json:"message"`
+	Author     GitAuthor    `json:"author"`
+	Committer  GitAuthor    `json:"committer"`
+	ParentSHAs []string     `json:"parent_shas"`
+	TreeSHA    string       `json:"tree_sha"`
+	Stats      *CommitStats `json:"stats,omitempty"`
 }
 
 type GitAuthor struct {
@@ -42,13 +43,21 @@ type GitAuthor struct {
 	Date  time.Time `json:"date"`
 }
 
+type CommitStats struct {
+	FilesChanged int `json:"files_changed"`
+	Additions    int `json:"additions"`
+	Deletions    int `json:"deletions"`
+}
+
 type TreeEntryResponse struct {
-	Name string `json:"name"`
-	Path string `json:"path"`
-	Type string `json:"type"`
-	Mode string `json:"mode"`
-	SHA  string `json:"sha"`
-	Size *int64 `json:"size,omitempty"`
+	Name        string              `json:"name"`
+	Path        string              `json:"path"`
+	Type        string              `json:"type"`
+	Mode        string              `json:"mode"`
+	SHA         string              `json:"sha"`
+	Size        *int64              `json:"size,omitempty"`
+	HasChildren *bool               `json:"has_children,omitempty"`
+	Children    []TreeEntryResponse `json:"children,omitempty"`
 }
 
 type BlobResponse struct {
@@ -61,6 +70,11 @@ type BlobResponse struct {
 }
 
 const maxBlobSize = 1024 * 1024
+
+const (
+	defaultTreeDepth = 1
+	maxTreeDepth     = 10
+)
 
 var mimeTypesByExt = map[string]string{
 	".go":   "text/plain; charset=utf-8",
@@ -257,6 +271,44 @@ func (s *Server) handleListRefs(w http.ResponseWriter, r *http.Request) {
 	JSON(w, http.StatusOK, refs)
 }
 
+func computeCommitStats(commit *object.Commit) *CommitStats {
+	stats := &CommitStats{}
+
+	currentTree, err := commit.Tree()
+	if err != nil {
+		return stats
+	}
+
+	var parentTree *object.Tree
+	if commit.NumParents() > 0 {
+		parent, err := commit.Parent(0)
+		if err == nil {
+			parentTree, _ = parent.Tree()
+		}
+	}
+
+	changes, err := object.DiffTree(parentTree, currentTree)
+	if err != nil {
+		return stats
+	}
+
+	stats.FilesChanged = len(changes)
+
+	for _, change := range changes {
+		patch, err := change.Patch()
+		if err != nil {
+			continue
+		}
+
+		for _, fileStat := range patch.Stats() {
+			stats.Additions += fileStat.Addition
+			stats.Deletions += fileStat.Deletion
+		}
+	}
+
+	return stats
+}
+
 func (s *Server) handleListCommits(w http.ResponseWriter, r *http.Request) {
 	repo, _, ok := s.checkRepoAccess(w, r)
 	if !ok {
@@ -271,14 +323,7 @@ func (s *Server) handleListCommits(w http.ResponseWriter, r *http.Request) {
 
 	refStr := r.URL.Query().Get("ref")
 	cursor := r.URL.Query().Get("cursor")
-	limitStr := r.URL.Query().Get("limit")
-
-	limit := defaultPageSize
-	if limitStr != "" {
-		if l, err := strconv.Atoi(limitStr); err == nil && l > 0 && l <= 100 {
-			limit = l
-		}
-	}
+	limit := parseLimit(r.URL.Query().Get("limit"), defaultPageSize)
 
 	hash, err := resolveRef(gitRepo, refStr)
 	if err != nil {
@@ -286,16 +331,13 @@ func (s *Server) handleListCommits(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var startFrom plumbing.Hash
+	startFrom := *hash
 	if cursor != "" {
 		startFrom = plumbing.NewHash(cursor)
-		// Validate cursor exists
 		if _, err := gitRepo.CommitObject(startFrom); err != nil {
 			JSONError(w, http.StatusBadRequest, "Invalid cursor: commit not found")
 			return
 		}
-	} else {
-		startFrom = *hash
 	}
 
 	commitIter, err := gitRepo.Log(&git.LogOptions{From: startFrom})
@@ -344,6 +386,7 @@ func (s *Server) handleListCommits(w http.ResponseWriter, r *http.Request) {
 			},
 			ParentSHAs: parentSHAs,
 			TreeSHA:    commit.TreeHash.String(),
+			Stats:      computeCommitStats(commit),
 		})
 	}
 
@@ -356,6 +399,72 @@ func (s *Server) handleListCommits(w http.ResponseWriter, r *http.Request) {
 	}
 
 	JSONList(w, commits, nextCursor, hasMore)
+}
+
+func buildTreeEntries(gitRepo *git.Repository, tree *object.Tree, basePath string, depth int) []TreeEntryResponse {
+	var entries []TreeEntryResponse
+
+	for _, entry := range tree.Entries {
+		entryPath := entry.Name
+		if basePath != "" {
+			entryPath = basePath + "/" + entry.Name
+		}
+
+		resp := TreeEntryResponse{
+			Name: entry.Name,
+			Path: entryPath,
+			Mode: fmt.Sprintf("%06o", entry.Mode),
+			SHA:  entry.Hash.String(),
+		}
+
+		switch {
+		case entry.Mode.IsFile():
+			resp.Type = "file"
+			blob, err := gitRepo.BlobObject(entry.Hash)
+			if err == nil {
+				size := blob.Size
+				resp.Size = &size
+			}
+		case entry.Mode == 0040000:
+			resp.Type = "dir"
+			if depth > 1 {
+				subTree, err := gitRepo.TreeObject(entry.Hash)
+				if err == nil {
+					hasChildren := len(subTree.Entries) > 0
+					resp.HasChildren = &hasChildren
+					resp.Children = buildTreeEntries(gitRepo, subTree, entryPath, depth-1)
+				}
+			}
+		case entry.Mode == 0120000:
+			resp.Type = "symlink"
+		case entry.Mode == 0160000:
+			resp.Type = "submodule"
+		default:
+			resp.Type = "file"
+		}
+
+		entries = append(entries, resp)
+	}
+
+	return entries
+}
+
+func sortTreeEntries(entries []TreeEntryResponse) {
+	sort.Slice(entries, func(i, j int) bool {
+		if entries[i].Type == "dir" && entries[j].Type != "dir" {
+			return true
+		}
+		if entries[i].Type != "dir" && entries[j].Type == "dir" {
+			return false
+		}
+		return entries[i].Name < entries[j].Name
+	})
+
+	for i := range entries {
+		if len(entries[i].Children) > 0 {
+			sortTreeEntries(entries[i].Children)
+		}
+	}
 }
 
 func (s *Server) handleGetTree(w http.ResponseWriter, r *http.Request) {
@@ -372,6 +481,16 @@ func (s *Server) handleGetTree(w http.ResponseWriter, r *http.Request) {
 
 	refStr := chi.URLParam(r, "ref")
 	pathParam := strings.Trim(chi.URLParam(r, "*"), "/")
+
+	depth := defaultTreeDepth
+	if depthStr := r.URL.Query().Get("depth"); depthStr != "" {
+		if d, err := strconv.Atoi(depthStr); err == nil && d > 0 {
+			depth = d
+			if depth > maxTreeDepth {
+				depth = maxTreeDepth
+			}
+		}
+	}
 
 	hash, err := resolveRef(gitRepo, refStr)
 	if err != nil {
@@ -411,50 +530,8 @@ func (s *Server) handleGetTree(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	var entries []TreeEntryResponse
-	for _, entry := range tree.Entries {
-		entryPath := entry.Name
-		if pathParam != "" {
-			entryPath = pathParam + "/" + entry.Name
-		}
-
-		resp := TreeEntryResponse{
-			Name: entry.Name,
-			Path: entryPath,
-			Mode: fmt.Sprintf("%06o", entry.Mode),
-			SHA:  entry.Hash.String(),
-		}
-
-		switch {
-		case entry.Mode.IsFile():
-			resp.Type = "file"
-			blob, err := gitRepo.BlobObject(entry.Hash)
-			if err == nil {
-				size := blob.Size
-				resp.Size = &size
-			}
-		case entry.Mode == 0040000:
-			resp.Type = "dir"
-		case entry.Mode == 0120000:
-			resp.Type = "symlink"
-		case entry.Mode == 0160000:
-			resp.Type = "submodule"
-		default:
-			resp.Type = "file"
-		}
-
-		entries = append(entries, resp)
-	}
-
-	sort.Slice(entries, func(i, j int) bool {
-		if entries[i].Type == "dir" && entries[j].Type != "dir" {
-			return true
-		}
-		if entries[i].Type != "dir" && entries[j].Type == "dir" {
-			return false
-		}
-		return entries[i].Name < entries[j].Name
-	})
+	entries := buildTreeEntries(gitRepo, tree, pathParam, depth)
+	sortTreeEntries(entries)
 
 	JSON(w, http.StatusOK, entries)
 }
