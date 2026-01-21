@@ -476,6 +476,7 @@ func (m Model) handleRight() (tea.Model, tea.Cmd) {
 		m.focusedColumn = columnRepos
 		if m.repoCursor < 0 && len(m.filteredRepos) > 0 {
 			m.repoCursor = 0
+			m.repoScroll = 0
 		}
 		return m, m.maybeLoadDetail()
 	case columnRepos:
