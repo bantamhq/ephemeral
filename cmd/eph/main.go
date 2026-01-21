@@ -8,6 +8,7 @@ import (
 
 	"github.com/BurntSushi/toml"
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 
 	"ephemeral/internal/client"
 	"ephemeral/internal/config"
@@ -24,6 +25,11 @@ type Config struct {
 	Storage struct {
 		DataDir string `toml:"data_dir"`
 	} `toml:"storage"`
+	Auth struct {
+		WebAuthURL            string `toml:"web_auth_url"`
+		ExchangeValidationURL string `toml:"exchange_validation_url"`
+		ExchangeSecret        string `toml:"exchange_secret"`
+	} `toml:"auth"`
 }
 
 func main() {
@@ -77,16 +83,16 @@ func runTUI(cmd *cobra.Command, args []string) error {
 }
 
 func runServe(cmd *cobra.Command, args []string) error {
-	config, err := loadConfig("server.toml")
+	cfg, err := loadConfig("server.toml")
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
 
-	if err := os.MkdirAll(config.Storage.DataDir, 0755); err != nil {
+	if err := os.MkdirAll(cfg.Storage.DataDir, 0755); err != nil {
 		return fmt.Errorf("create data directory: %w", err)
 	}
 
-	dbPath := filepath.Join(config.Storage.DataDir, "ephemeral.db")
+	dbPath := filepath.Join(cfg.Storage.DataDir, "ephemeral.db")
 
 	st, err := store.NewSQLiteStore(dbPath)
 	if err != nil {
@@ -99,33 +105,59 @@ func runServe(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("initialize schema: %w", err)
 	}
 
-	token, err := st.GenerateAdminToken()
+	isFirstRun, err := checkFirstRun(st)
 	if err != nil {
-		return fmt.Errorf("generate admin token: %w", err)
+		return fmt.Errorf("check first run: %w", err)
 	}
 
-	if token != "" {
-		tokenPath := filepath.Join(config.Storage.DataDir, "admin-token")
-		if err := os.WriteFile(tokenPath, []byte(token), 0600); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: failed to save admin token to file: %v\n", err)
+	if isFirstRun && term.IsTerminal(int(os.Stdout.Fd())) {
+		wizard := NewSetupWizard(st, cfg.Storage.DataDir)
+		if _, err := wizard.Run(); err != nil {
+			return fmt.Errorf("setup wizard: %w", err)
+		}
+	} else {
+		token, err := st.GenerateAdminToken()
+		if err != nil {
+			return fmt.Errorf("generate admin token: %w", err)
 		}
 
-		fmt.Println("\n" + strings.Repeat("=", 60))
-		fmt.Println("ADMIN TOKEN GENERATED")
-		fmt.Println("Saved to: " + tokenPath)
-		fmt.Println(strings.Repeat("=", 60))
-		fmt.Println(token)
-		fmt.Println(strings.Repeat("=", 60) + "\n")
+		if token != "" {
+			tokenPath := filepath.Join(cfg.Storage.DataDir, "admin-token")
+			if err := os.WriteFile(tokenPath, []byte(token), 0600); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: failed to save admin token to file: %v\n", err)
+			}
+
+			fmt.Println("\n" + strings.Repeat("=", 60))
+			fmt.Println("ADMIN TOKEN GENERATED")
+			fmt.Println("Saved to: " + tokenPath)
+			fmt.Println(strings.Repeat("=", 60))
+			fmt.Println(token)
+			fmt.Println(strings.Repeat("=", 60) + "\n")
+		}
 	}
 
-	srv := server.NewServer(st, config.Storage.DataDir)
+	authOpts := server.AuthOptions{
+		WebAuthURL:            cfg.Auth.WebAuthURL,
+		ExchangeValidationURL: cfg.Auth.ExchangeValidationURL,
+		ExchangeSecret:        cfg.Auth.ExchangeSecret,
+	}
 
-	fmt.Printf("Starting Ephemeral server on %s:%d\n", config.Server.Host, config.Server.Port)
-	fmt.Printf("Data directory: %s\n", config.Storage.DataDir)
+	srv := server.NewServer(st, cfg.Storage.DataDir, authOpts)
+
+	fmt.Printf("Starting Ephemeral server on %s:%d\n", cfg.Server.Host, cfg.Server.Port)
+	fmt.Printf("Data directory: %s\n", cfg.Storage.DataDir)
 	fmt.Println("\nServer is ready to accept connections.")
 	fmt.Println("Example: git clone http://x-token:<token>@localhost:8080/git/<namespace>/myrepo.git")
 
-	return srv.Start(config.Server.Host, config.Server.Port)
+	return srv.Start(cfg.Server.Host, cfg.Server.Port)
+}
+
+func checkFirstRun(st store.Store) (bool, error) {
+	namespaces, err := st.ListNamespaces("", 1)
+	if err != nil {
+		return false, err
+	}
+	return len(namespaces) == 0, nil
 }
 
 func loadConfig(path string) (*Config, error) {

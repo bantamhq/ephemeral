@@ -11,19 +11,28 @@ import (
 	"ephemeral/internal/store"
 )
 
+// AuthOptions configures platform authentication settings.
+type AuthOptions struct {
+	WebAuthURL            string
+	ExchangeValidationURL string
+	ExchangeSecret        string
+}
+
 // Server is the HTTP server for Ephemeral.
 type Server struct {
-	store   store.Store
-	dataDir string
-	router  *chi.Mux
+	store    store.Store
+	dataDir  string
+	authOpts AuthOptions
+	router   *chi.Mux
 }
 
 // NewServer creates a new server instance.
-func NewServer(st store.Store, dataDir string) *Server {
+func NewServer(st store.Store, dataDir string, authOpts AuthOptions) *Server {
 	s := &Server{
-		store:   st,
-		dataDir: dataDir,
-		router:  chi.NewRouter(),
+		store:    st,
+		dataDir:  dataDir,
+		authOpts: authOpts,
+		router:   chi.NewRouter(),
 	}
 	s.setupRoutes()
 	return s
@@ -36,6 +45,10 @@ func (s *Server) setupRoutes() {
 	s.router.Get("/health", s.handleHealth)
 
 	s.router.Route("/api/v1", func(r chi.Router) {
+		// Auth routes - no auth required
+		r.Get("/auth/config", s.handleAuthConfig)
+		r.Post("/auth/exchange", s.handleAuthExchange)
+
 		// Admin routes - requires admin token
 		r.Route("/admin", func(r chi.Router) {
 			r.Use(BearerAuthMiddleware(s.store))

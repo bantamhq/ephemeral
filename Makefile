@@ -1,4 +1,4 @@
-.PHONY: build run clean test test-api test-repos test-tokens test-namespaces test-folders test-content workspace-setup dev dev-tui seed watch
+.PHONY: build run clean test test-api test-auth test-repos test-tokens test-namespaces test-folders test-content workspace-setup dev dev-tui seed watch
 
 # Build the binary
 build:
@@ -55,6 +55,9 @@ test-folders:
 
 test-content:
 	@./scripts/tests/content.sh $(TOKEN)
+
+test-auth:
+	@./scripts/tests/auth.sh
 
 # Seed test data (server must be running)
 # Usage: make seed TOKEN=eph_xxx

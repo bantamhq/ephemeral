@@ -24,6 +24,7 @@ type Store interface {
 	ListTokens(cursor string, limit int) ([]Token, error)
 	DeleteToken(id string) error
 	GenerateAdminToken() (string, error)
+	GenerateUserToken(namespaceID string, name *string, scope string) (string, *Token, error)
 
 	// Token namespace access operations
 	GrantTokenNamespaceAccess(access *TokenNamespaceAccess) error

@@ -165,6 +165,7 @@ run_suite() {
 
 # Run each test suite
 run_suite "System" "system.sh"
+run_suite "Auth" "auth.sh"
 run_suite "Repos" "repos.sh"
 run_suite "Admin-Tokens" "tokens.sh"
 run_suite "Admin-Namespaces" "namespaces.sh"

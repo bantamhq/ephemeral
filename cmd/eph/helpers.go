@@ -2,6 +2,11 @@ package main
 
 import (
 	"bufio"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
+	"fmt"
 	"io"
 	"net/url"
 	"os"
@@ -11,8 +16,7 @@ import (
 	"golang.org/x/term"
 )
 
-// parseCredentialInput reads git credential protocol format from stdin.
-// Format: "key=value\n" pairs terminated by empty line.
+// parseCredentialInput parses git credential protocol input (key=value pairs terminated by empty line).
 func parseCredentialInput(r io.Reader) map[string]string {
 	result := make(map[string]string)
 	scanner := bufio.NewScanner(r)
@@ -32,8 +36,6 @@ func parseCredentialInput(r io.Reader) map[string]string {
 	return result
 }
 
-// hostMatches checks if a server URL matches the given git host.
-// Normalizes URLs by stripping default ports and trailing slashes.
 func hostMatches(serverURL, gitHost string) bool {
 	parsed, err := url.Parse(serverURL)
 	if err != nil {
@@ -84,4 +86,34 @@ func unconfigureGitHelper(serverURL string) error {
 	cmd := exec.Command("git", "config", "--global", "--unset",
 		"credential."+serverURL+".helper")
 	return cmd.Run()
+}
+
+func generateSessionID() (string, error) {
+	bytes := make([]byte, 16)
+	if _, err := rand.Read(bytes); err != nil {
+		return "", fmt.Errorf("generate random bytes: %w", err)
+	}
+	return hex.EncodeToString(bytes), nil
+}
+
+func generateCodeVerifier() (string, error) {
+	bytes := make([]byte, 48)
+	if _, err := rand.Read(bytes); err != nil {
+		return "", fmt.Errorf("generate random bytes: %w", err)
+	}
+	return base64.RawURLEncoding.EncodeToString(bytes), nil
+}
+
+func generateCodeChallenge(codeVerifier string) string {
+	hash := sha256.Sum256([]byte(codeVerifier))
+	return base64.RawURLEncoding.EncodeToString(hash[:])
+}
+
+func readLine() (string, error) {
+	reader := bufio.NewReader(os.Stdin)
+	line, err := reader.ReadString('\n')
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(line), nil
 }

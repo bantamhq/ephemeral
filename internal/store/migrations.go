@@ -167,3 +167,59 @@ func (s *SQLiteStore) GenerateAdminToken() (string, error) {
 
 	return "", fmt.Errorf("create admin token: %w", ErrTokenLookupCollision)
 }
+
+// GenerateUserToken creates a new user token with access to the specified namespace.
+// Returns both the raw token (for display) and the Token struct.
+func (s *SQLiteStore) GenerateUserToken(namespaceID string, name *string, scope string) (string, *Token, error) {
+	const tokenCreateAttempts = 5
+
+	for attempt := 0; attempt < tokenCreateAttempts; attempt++ {
+		tokenID := uuid.New().String()
+		tokenLookup := tokenID[:8]
+
+		secret, err := core.GenerateTokenSecret(24)
+		if err != nil {
+			return "", nil, fmt.Errorf("generate token secret: %w", err)
+		}
+
+		tokenValue := core.BuildToken(tokenLookup, secret)
+
+		tokenHash, err := core.HashToken(tokenValue)
+		if err != nil {
+			return "", nil, fmt.Errorf("hash token: %w", err)
+		}
+
+		token := &Token{
+			ID:          tokenID,
+			TokenHash:   tokenHash,
+			TokenLookup: tokenLookup,
+			Name:        name,
+			IsAdmin:     false,
+			Scope:       scope,
+			CreatedAt:   time.Now(),
+		}
+
+		if err := s.CreateToken(token); err != nil {
+			if errors.Is(err, ErrTokenLookupCollision) {
+				continue
+			}
+			return "", nil, fmt.Errorf("create user token: %w", err)
+		}
+
+		access := &TokenNamespaceAccess{
+			TokenID:     tokenID,
+			NamespaceID: namespaceID,
+			IsPrimary:   true,
+			CreatedAt:   time.Now(),
+		}
+
+		if err := s.GrantTokenNamespaceAccess(access); err != nil {
+			s.DeleteToken(tokenID)
+			return "", nil, fmt.Errorf("grant namespace access: %w", err)
+		}
+
+		return tokenValue, token, nil
+	}
+
+	return "", nil, fmt.Errorf("create user token: %w", ErrTokenLookupCollision)
+}

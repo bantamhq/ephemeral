@@ -79,12 +79,9 @@ fi
 
 echo "Creating client config..."
 cat > client.toml << EOF
-current_context = "dev"
-
-[contexts.dev]
 server = "http://localhost:8080"
 token = "$USER_TOKEN"
-namespace = "dev"
+default_namespace = "dev"
 EOF
 
 echo "Seeding data..."
