@@ -7,9 +7,9 @@ const (
 
 	nameMaxLength = 128
 
-	contentPaddingWidth = 6
+	contentPaddingWidth = 2
 	contentMinWidth     = 30
-	listColumnWidth     = 28
+	listColumnMaxWidth  = 28
 	columnGapWidth      = 2
 
 	listHeaderHeight = 2
@@ -52,13 +52,19 @@ type layoutSizes struct {
 
 func (m Model) layoutSizes() layoutSizes {
 	contentWidth := max(m.width-contentPaddingWidth, contentMinWidth)
-	listColumnsWidth := 2*listColumnWidth + 2*columnGapWidth
+
+	columnWidth := min(listColumnMaxWidth, m.width/3)
+	if columnWidth < 1 {
+		columnWidth = 1
+	}
+
+	listColumnsWidth := 2*columnWidth + 2*columnGapWidth
 	detailWidth := max(contentWidth-listColumnsWidth, 1)
 
 	return layoutSizes{
 		contentWidth: contentWidth,
-		folderWidth:  listColumnWidth,
-		repoWidth:    listColumnWidth,
+		folderWidth:  columnWidth,
+		repoWidth:    columnWidth,
 		detailWidth:  detailWidth,
 	}
 }
