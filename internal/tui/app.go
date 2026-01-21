@@ -556,11 +556,13 @@ func (m Model) submitEdit() (tea.Model, tea.Cmd) {
 			if newValue == repoDescription(editingRepo) {
 				return m, nil
 			}
+			m.updateLocalRepo(editingRepo.ID, func(r *client.Repo) { r.Description = &newValue })
 			return m, m.updateRepoDescription(editingRepo.ID, newValue)
 		}
 		if newValue == "" || newValue == editingRepo.Name {
 			return m, nil
 		}
+		m.updateLocalRepo(editingRepo.ID, func(r *client.Repo) { r.Name = newValue })
 		return m, m.renameRepo(editingRepo.ID, newValue)
 	}
 
@@ -626,6 +628,21 @@ func (m *Model) maybeLoadMoreRepos() tea.Cmd {
 
 	m.repoLoadingMore = true
 	return m.loadMoreRepos()
+}
+
+func (m *Model) updateLocalRepo(id string, mutate func(*client.Repo)) {
+	for i := range m.repos {
+		if m.repos[i].ID == id {
+			mutate(&m.repos[i])
+			break
+		}
+	}
+	for i := range m.filteredRepos {
+		if m.filteredRepos[i].ID == id {
+			mutate(&m.filteredRepos[i])
+			break
+		}
+	}
 }
 
 func (m *Model) filterRepos() {
