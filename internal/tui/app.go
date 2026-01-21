@@ -70,9 +70,10 @@ type Model struct {
 	repoHasMore     bool
 	repoLoadingMore bool
 
-	editingFolder *client.Folder
-	editingRepo   *client.Repo
-	editText      string
+	editingFolder      *client.Folder
+	editingRepo        *client.Repo
+	editingDescription bool
+	editText           string
 
 	modal        modalState
 	dialog       DialogModel
@@ -414,6 +415,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, m.keys.Rename):
 		return m.startRename()
 
+	case key.Matches(msg, m.keys.EditDescription):
+		return m.startEditDescription()
+
 	case key.Matches(msg, m.keys.Delete):
 		return m.openDelete()
 
@@ -492,11 +496,12 @@ func (m Model) handleEditMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case tea.KeyEscape:
 		m.editingFolder = nil
 		m.editingRepo = nil
+		m.editingDescription = false
 		m.editText = ""
 		return m, nil
 
 	case tea.KeyEnter:
-		return m.submitRename()
+		return m.submitEdit()
 
 	case tea.KeyBackspace:
 		if len(m.editText) > 0 {
@@ -504,45 +509,59 @@ func (m Model) handleEditMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case tea.KeySpace:
+		if m.editingDescription {
+			m.editText += " "
+		}
+		return m, nil
+
 	case tea.KeyRunes:
-		if len(m.editText) >= nameMaxLength {
-			return m, nil
+		if m.editingDescription {
+			m.editText += string(msg.Runes)
+		} else {
+			if len(m.editText) >= nameMaxLength {
+				return m, nil
+			}
+			if !validateNameInput(msg.Runes, m.editText) {
+				return m, nil
+			}
+			m.editText += string(msg.Runes)
 		}
-		if !validateNameInput(msg.Runes, m.editText) {
-			return m, nil
-		}
-		m.editText += string(msg.Runes)
 		return m, nil
 	}
 
 	return m, nil
 }
 
-func (m Model) submitRename() (tea.Model, tea.Cmd) {
-	newName := m.editText
+func (m Model) submitEdit() (tea.Model, tea.Cmd) {
+	newValue := m.editText
 	editingFolder := m.editingFolder
 	editingRepo := m.editingRepo
+	editingDescription := m.editingDescription
 
 	m.editingFolder = nil
 	m.editingRepo = nil
+	m.editingDescription = false
 	m.editText = ""
 
-	if newName == "" {
-		return m, nil
-	}
-
 	if editingFolder != nil {
-		if newName == editingFolder.Name {
+		if newValue == "" || newValue == editingFolder.Name {
 			return m, nil
 		}
-		return m, m.renameFolder(editingFolder.ID, newName)
+		return m, m.renameFolder(editingFolder.ID, newValue)
 	}
 
 	if editingRepo != nil {
-		if newName == editingRepo.Name {
+		if editingDescription {
+			if newValue == repoDescription(editingRepo) {
+				return m, nil
+			}
+			return m, m.updateRepoDescription(editingRepo.ID, newValue)
+		}
+		if newValue == "" || newValue == editingRepo.Name {
 			return m, nil
 		}
-		return m, m.renameRepo(editingRepo.ID, newName)
+		return m, m.renameRepo(editingRepo.ID, newValue)
 	}
 
 	return m, nil
@@ -734,6 +753,22 @@ func (m Model) startRename() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m Model) startEditDescription() (tea.Model, tea.Cmd) {
+	if m.focusedColumn == columnFolders {
+		return m, nil
+	}
+
+	repo := m.selectedRepo()
+	if repo == nil {
+		return m, nil
+	}
+
+	m.editingRepo = repo
+	m.editingDescription = true
+	m.editText = repoDescription(repo)
+	return m, nil
+}
+
 func (m Model) openDelete() (tea.Model, tea.Cmd) {
 	if m.focusedColumn == columnFolders {
 		folder := m.selectedFolder()
@@ -911,6 +946,16 @@ func (m Model) renameRepo(id, name string) tea.Cmd {
 		repo, err := m.client.UpdateRepo(id, &name, nil, nil)
 		if err != nil {
 			return ActionErrorMsg{Operation: "rename repo", Err: err}
+		}
+		return RepoUpdatedMsg{Repo: *repo}
+	}
+}
+
+func (m Model) updateRepoDescription(id, description string) tea.Cmd {
+	return func() tea.Msg {
+		repo, err := m.client.UpdateRepo(id, nil, &description, nil)
+		if err != nil {
+			return ActionErrorMsg{Operation: "update description", Err: err}
 		}
 		return RepoUpdatedMsg{Repo: *repo}
 	}
@@ -1255,6 +1300,18 @@ func (m Model) getDetailsContent(width int) string {
 	b.WriteString(" " + Styles.Common.MetaText.Render("Name") + "\n")
 	b.WriteString(" " + repo.Name + "\n\n")
 
+	b.WriteString(" " + Styles.Common.MetaText.Render("Description") + "\n")
+	desc := repoDescription(repo)
+	if desc == "" {
+		b.WriteString(" " + Styles.Common.MetaText.Render("No description") + "\n\n")
+	} else {
+		wrapped := lipgloss.NewStyle().Width(width - 2).Render(desc)
+		for _, line := range strings.Split(wrapped, "\n") {
+			b.WriteString(" " + line + "\n")
+		}
+		b.WriteString("\n")
+	}
+
 	b.WriteString(" " + Styles.Common.MetaText.Render("Size") + "\n")
 	b.WriteString(" " + formatSize(repo.SizeBytes) + "\n\n")
 
@@ -1421,7 +1478,6 @@ func buildFileTreeChildren(entries []client.TreeEntry) []any {
 	return children
 }
 
-
 func (m Model) View() string {
 	if m.width == 0 {
 		return ""
@@ -1577,10 +1633,10 @@ func (m Model) renderRepoColumn(width, height int) string {
 	for i := startIdx; i < endIdx; i++ {
 		repo := m.filteredRepos[i]
 		state := m.repoItemState(i, repo.ID)
-		meta := formatRepoMeta(repo)
+		description := formatRepoDescription(repo)
 		maxNameWidth := width - 3
 
-		b.WriteString(m.renderRepoItem(repo.Name, meta, maxNameWidth, width, state))
+		b.WriteString(m.renderRepoItem(repo.Name, description, maxNameWidth, width, state))
 		b.WriteString("\n\n")
 	}
 
@@ -1739,14 +1795,22 @@ const (
 	repoStateEditing
 )
 
-func (m Model) renderRepoItem(name, meta string, maxNameWidth, width int, state repoItemState) string {
+func (m Model) renderRepoItem(name, description string, maxNameWidth, width int, state repoItemState) string {
 	if state == repoStateEditing {
+		if m.editingDescription {
+			truncName := truncateWithEllipsis(name, maxNameWidth)
+			titleLine := Styles.Repo.Active.Base.Width(width).Render(Styles.Repo.Active.Title.Render(truncName))
+			visibleText := truncateEditText(m.editText, maxNameWidth)
+			descLine := Styles.Repo.Editing.Width(width).Render("  " + visibleText + "█")
+			return titleLine + "\n" + descLine
+		}
 		visibleText := truncateEditText(m.editText, maxNameWidth)
-		return Styles.Repo.Editing.Width(width).Render("  "+visibleText+"█") + "\n" + Styles.Common.MetaText.Render(meta)
+		descText := truncateWithEllipsis(description, maxNameWidth)
+		return Styles.Repo.Editing.Width(width).Render("  "+visibleText+"█") + "\n" + Styles.Common.MetaText.Render("  "+descText)
 	}
 
 	truncName := truncateWithEllipsis(name, maxNameWidth)
-	metaText := strings.TrimPrefix(meta, "  ")
+	descText := truncateWithEllipsis(description, maxNameWidth)
 
 	var baseStyle lipgloss.Style
 	var titleStyle lipgloss.Style
@@ -1763,9 +1827,9 @@ func (m Model) renderRepoItem(name, meta string, maxNameWidth, width int, state 
 	}
 
 	titleLine := baseStyle.Width(width).Render(titleStyle.Render(truncName))
-	metaLine := baseStyle.Width(width).Render(Styles.Common.MetaText.Render(metaText))
+	descLine := baseStyle.Width(width).Render(Styles.Common.MetaText.Render(descText))
 
-	return titleLine + "\n" + metaLine
+	return titleLine + "\n" + descLine
 }
 
 func (m Model) loadingView() string {
@@ -1851,8 +1915,19 @@ func Run(c *client.Client, namespace, server string) error {
 	return err
 }
 
-func formatRepoMeta(repo client.Repo) string {
-	return fmt.Sprintf("  size: %s • pushed: %s", formatSize(repo.SizeBytes), formatRelativeTime(repo.LastPushAt))
+func formatRepoDescription(repo client.Repo) string {
+	desc := repoDescription(&repo)
+	if desc == "" {
+		return "No description"
+	}
+	return desc
+}
+
+func repoDescription(repo *client.Repo) string {
+	if repo.Description == nil {
+		return ""
+	}
+	return *repo.Description
 }
 
 func (m Model) repoItemState(index int, repoID string) repoItemState {

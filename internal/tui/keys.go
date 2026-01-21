@@ -9,20 +9,21 @@ const (
 )
 
 type KeyMap struct {
-	Up            key.Binding
-	Down          key.Binding
-	Left          key.Binding
-	Right         key.Binding
-	Enter         key.Binding
-	Escape        key.Binding
-	Quit          key.Binding
-	Help          key.Binding
-	NewFolder     key.Binding
-	Rename        key.Binding
-	Delete        key.Binding
-	Clone         key.Binding
-	CloneDir      key.Binding
-	ManageFolders key.Binding
+	Up              key.Binding
+	Down            key.Binding
+	Left            key.Binding
+	Right           key.Binding
+	Enter           key.Binding
+	Escape          key.Binding
+	Quit            key.Binding
+	Help            key.Binding
+	NewFolder       key.Binding
+	Rename          key.Binding
+	EditDescription key.Binding
+	Delete          key.Binding
+	Clone           key.Binding
+	CloneDir        key.Binding
+	ManageFolders   key.Binding
 }
 
 var DefaultKeyMap = KeyMap{
@@ -66,6 +67,10 @@ var DefaultKeyMap = KeyMap{
 		key.WithKeys("r"),
 		key.WithHelp("r", "rename"),
 	),
+	EditDescription: key.NewBinding(
+		key.WithKeys("R"),
+		key.WithHelp("R", "edit description"),
+	),
 	Delete: key.NewBinding(
 		key.WithKeys("d"),
 		key.WithHelp("d", "delete"),
@@ -105,6 +110,6 @@ func (h helpKeyMap) FullHelp() [][]key.Binding {
 		return [][]key.Binding{shortcuts, editActions, meta}
 	}
 
-	repoActions := []key.Binding{h.Clone, h.CloneDir, h.ManageFolders}
+	repoActions := []key.Binding{h.Clone, h.CloneDir, h.ManageFolders, h.EditDescription}
 	return [][]key.Binding{shortcuts, editActions, repoActions, meta}
 }
