@@ -65,13 +65,13 @@ func createTestFolder(t *testing.T, s *SQLiteStore, nsID, name string, color *st
 	return folder
 }
 
-func createTestToken(t *testing.T, s *SQLiteStore, nsID, id, lookup, hash string) *Token {
+func createTestToken(t *testing.T, s *SQLiteStore, id, lookup, hash string, isAdmin bool) *Token {
 	t.Helper()
 	token := &Token{
 		ID:          id,
 		TokenHash:   hash,
 		TokenLookup: lookup,
-		NamespaceID: nsID,
+		IsAdmin:     isAdmin,
 		Scope:       ScopeFull,
 		CreatedAt:   time.Now(),
 	}
@@ -117,12 +117,26 @@ func TestStore_NamespaceLifecycle(t *testing.T) {
 		assert.GreaterOrEqual(t, len(namespaces), 1)
 	})
 
-	t.Run("delete cascades", func(t *testing.T) {
+	t.Run("delete blocked by token access", func(t *testing.T) {
 		repo := createTestRepo(t, s, ns.ID, "cascade-test")
 		folder := createTestFolder(t, s, ns.ID, "cascade-folder", nil)
 		s.AddRepoFolder(repo.ID, folder.ID)
-		createTestToken(t, s, ns.ID, "cascade-token", "cascade0", "hash")
 
+		// Create token with namespace access - deletion should be blocked
+		token := createTestToken(t, s, "cascade-token", "cascade0", "hash", false)
+		require.NoError(t, s.GrantTokenNamespaceAccess(&TokenNamespaceAccess{
+			TokenID:     token.ID,
+			NamespaceID: ns.ID,
+			IsPrimary:   true,
+		}))
+
+		// Should fail because namespace has token access
+		err := s.DeleteNamespace("ns-1")
+		assert.Error(t, err)
+
+		// Remove token access and repos, then delete should work
+		require.NoError(t, s.RevokeTokenNamespaceAccess(token.ID, ns.ID))
+		require.NoError(t, s.DeleteRepo(repo.ID))
 		require.NoError(t, s.DeleteNamespace("ns-1"))
 
 		got, _ := s.GetNamespace("ns-1")
@@ -342,20 +356,28 @@ func TestStore_TokenLifecycle(t *testing.T) {
 
 	var token *Token
 
-	t.Run("create", func(t *testing.T) {
+	t.Run("create user token", func(t *testing.T) {
 		token = &Token{
 			ID:          "token-1",
 			TokenHash:   "hash123",
 			TokenLookup: "lookup01",
-			NamespaceID: ns.ID,
+			IsAdmin:     false,
 			Scope:       ScopeFull,
 			CreatedAt:   time.Now(),
 		}
 		require.NoError(t, s.CreateToken(token))
 	})
 
+	t.Run("grant namespace access", func(t *testing.T) {
+		require.NoError(t, s.GrantTokenNamespaceAccess(&TokenNamespaceAccess{
+			TokenID:     token.ID,
+			NamespaceID: ns.ID,
+			IsPrimary:   true,
+		}))
+	})
+
 	t.Run("get by lookup", func(t *testing.T) {
-		got, err := s.GetTokenByLookup(ns.ID, "lookup01")
+		got, err := s.GetTokenByLookup("lookup01")
 		require.NoError(t, err)
 		require.NotNil(t, got)
 		assert.Equal(t, "token-1", got.ID)
@@ -366,12 +388,37 @@ func TestStore_TokenLifecycle(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, got)
 		assert.Equal(t, ScopeFull, got.Scope)
+		assert.False(t, got.IsAdmin)
 	})
 
 	t.Run("list", func(t *testing.T) {
-		tokens, err := s.ListTokens(ns.ID, "", 10)
+		tokens, err := s.ListTokens("", 10)
 		require.NoError(t, err)
 		assert.Len(t, tokens, 1)
+	})
+
+	t.Run("list token namespaces", func(t *testing.T) {
+		namespaces, err := s.ListTokenNamespaces(token.ID)
+		require.NoError(t, err)
+		assert.Len(t, namespaces, 1)
+		assert.True(t, namespaces[0].IsPrimary)
+	})
+
+	t.Run("get primary namespace", func(t *testing.T) {
+		primary, err := s.GetTokenPrimaryNamespace(token.ID)
+		require.NoError(t, err)
+		require.NotNil(t, primary)
+		assert.Equal(t, ns.ID, primary.ID)
+	})
+
+	t.Run("has namespace access", func(t *testing.T) {
+		has, err := s.HasTokenNamespaceAccess(token.ID, ns.ID)
+		require.NoError(t, err)
+		assert.True(t, has)
+
+		has, err = s.HasTokenNamespaceAccess(token.ID, "nonexistent")
+		require.NoError(t, err)
+		assert.False(t, has)
 	})
 
 	t.Run("delete", func(t *testing.T) {
@@ -485,26 +532,23 @@ func TestStore_NotFound(t *testing.T) {
 	})
 }
 
-func TestStore_GenerateRootToken(t *testing.T) {
+func TestStore_GenerateAdminToken(t *testing.T) {
 	s := newTestStore(t)
 
-	t.Run("creates default namespace and token", func(t *testing.T) {
-		rawToken, err := s.GenerateRootToken()
+	t.Run("creates admin token", func(t *testing.T) {
+		rawToken, err := s.GenerateAdminToken()
 		require.NoError(t, err)
 		assert.NotEmpty(t, rawToken)
 
-		ns, err := s.GetNamespaceByName("default")
-		require.NoError(t, err)
-		require.NotNil(t, ns)
-
-		tokens, err := s.ListTokens(ns.ID, "", 10)
+		// Should have one admin token
+		tokens, err := s.ListTokens("", 10)
 		require.NoError(t, err)
 		assert.Len(t, tokens, 1)
-		assert.Equal(t, ScopeAdmin, tokens[0].Scope)
+		assert.True(t, tokens[0].IsAdmin)
 	})
 
 	t.Run("second call returns empty string", func(t *testing.T) {
-		token, err := s.GenerateRootToken()
+		token, err := s.GenerateAdminToken()
 		require.NoError(t, err)
 		assert.Empty(t, token)
 	})
@@ -533,14 +577,13 @@ func TestStore_OptionalFields(t *testing.T) {
 	})
 
 	t.Run("token with expiry", func(t *testing.T) {
-		ns := createTestNamespace(t, s, "ns-token")
 		expiry := time.Now().Add(24 * time.Hour)
 		name := "test-token"
 		token := &Token{
 			ID:          "token-expiry",
 			TokenHash:   "hash-expiry",
 			TokenLookup: "token-ex",
-			NamespaceID: ns.ID,
+			IsAdmin:     false,
 			Scope:       ScopeReadOnly,
 			Name:        &name,
 			ExpiresAt:   &expiry,

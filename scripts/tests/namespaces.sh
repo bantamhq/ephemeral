@@ -1,11 +1,12 @@
 #!/bin/bash
-# Namespaces API Tests
+# Namespaces API Tests (Admin + User)
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$SCRIPT_DIR/lib.sh"
 
 require_token
+require_admin_token
 trap cleanup EXIT
 
 echo ""
@@ -14,31 +15,21 @@ echo -e "${BLUE}  Namespaces API Tests${NC}"
 echo -e "${BLUE}═══════════════════════════════════════${NC}"
 
 ###############################################################################
-section "List"
+section "Admin: List Namespaces"
 ###############################################################################
 
-RESPONSE=$(auth_curl "$API/namespaces")
-expect_contains "$RESPONSE" '"data"' "returns data array"
-expect_contains "$RESPONSE" '"default"' "contains default namespace"
+RESPONSE=$(admin_curl "$ADMIN_API/namespaces")
+expect_contains "$RESPONSE" '"data"' "admin can list namespaces"
+expect_contains "$RESPONSE" '"test"' "contains test namespace"
 
 ###############################################################################
-section "Current Namespace"
-###############################################################################
-
-RESPONSE=$(auth_curl "$API/namespace")
-expect_json "$RESPONSE" '.data.name' "default" "current namespace returned"
-
-RESPONSE=$(anon_curl "$API/namespace")
-expect_contains "$RESPONSE" "Authentication required" "anonymous current namespace denied"
-
-###############################################################################
-section "Create"
+section "Admin: Create Namespace"
 ###############################################################################
 
 # Create a namespace
-RESPONSE=$(auth_curl -X POST -H "Content-Type: application/json" \
+RESPONSE=$(admin_curl -X POST -H "Content-Type: application/json" \
     -d '{"name":"test-namespace"}' \
-    "$API/namespaces")
+    "$ADMIN_API/namespaces")
 
 NS_ID=$(get_id "$RESPONSE")
 if [ -n "$NS_ID" ]; then
@@ -51,9 +42,9 @@ fi
 expect_json "$RESPONSE" '.data.name' "test-namespace" "name matches"
 
 # Create with limits
-RESPONSE=$(auth_curl -X POST -H "Content-Type: application/json" \
+RESPONSE=$(admin_curl -X POST -H "Content-Type: application/json" \
     -d '{"name":"test-ns-limits","repo_limit":10,"storage_limit_bytes":1073741824}' \
-    "$API/namespaces")
+    "$ADMIN_API/namespaces")
 
 NS2_ID=$(get_id "$RESPONSE")
 if [ -n "$NS2_ID" ]; then
@@ -63,85 +54,93 @@ expect_json "$RESPONSE" '.data.repo_limit' "10" "repo_limit set"
 expect_json "$RESPONSE" '.data.storage_limit_bytes' "1073741824" "storage_limit set"
 
 # Duplicate name should fail
-RESPONSE=$(auth_curl -X POST -H "Content-Type: application/json" \
+RESPONSE=$(admin_curl -X POST -H "Content-Type: application/json" \
     -d '{"name":"test-namespace"}' \
-    "$API/namespaces")
+    "$ADMIN_API/namespaces")
 
 expect_contains "$RESPONSE" "already exists" "duplicate name rejected"
 
 # Empty name should fail
-RESPONSE=$(auth_curl -X POST -H "Content-Type: application/json" \
+RESPONSE=$(admin_curl -X POST -H "Content-Type: application/json" \
     -d '{"name":""}' \
-    "$API/namespaces")
+    "$ADMIN_API/namespaces")
 
 expect_contains "$RESPONSE" "required" "empty name rejected"
 
 # Invalid name should fail
-RESPONSE=$(auth_curl -X POST -H "Content-Type: application/json" \
+RESPONSE=$(admin_curl -X POST -H "Content-Type: application/json" \
     -d '{"name":"bad/name"}' \
-    "$API/namespaces")
+    "$ADMIN_API/namespaces")
 
 expect_contains "$RESPONSE" "path separators" "invalid name rejected"
 
 ###############################################################################
-section "Get"
+section "Admin: Get Namespace"
 ###############################################################################
 
 # Get namespace by ID
-RESPONSE=$(auth_curl "$API/namespaces/$NS_ID")
+RESPONSE=$(admin_curl "$ADMIN_API/namespaces/$NS_ID")
 expect_json "$RESPONSE" '.data.id' "$NS_ID" "returns correct namespace"
 expect_json "$RESPONSE" '.data.name' "test-namespace" "name matches"
 
 # Get non-existent namespace
-RESPONSE=$(auth_curl "$API/namespaces/nonexistent-id")
+RESPONSE=$(admin_curl "$ADMIN_API/namespaces/nonexistent-id")
 expect_contains "$RESPONSE" "not found" "non-existent returns 404"
 
 ###############################################################################
-section "Delete"
+section "Admin: Delete Namespace"
 ###############################################################################
 
 # Create a namespace to delete
-RESPONSE=$(auth_curl -X POST -H "Content-Type: application/json" \
+RESPONSE=$(admin_curl -X POST -H "Content-Type: application/json" \
     -d '{"name":"test-ns-delete"}' \
-    "$API/namespaces")
+    "$ADMIN_API/namespaces")
 
 DELETE_NS_ID=$(get_id "$RESPONSE")
 
 # Delete it
-auth_curl -X DELETE "$API/namespaces/$DELETE_NS_ID" > /dev/null
+admin_curl -X DELETE "$ADMIN_API/namespaces/$DELETE_NS_ID" > /dev/null
 pass "namespace deleted"
 
 # Verify it's gone
-RESPONSE=$(auth_curl "$API/namespaces/$DELETE_NS_ID")
+RESPONSE=$(admin_curl "$ADMIN_API/namespaces/$DELETE_NS_ID")
 expect_contains "$RESPONSE" "not found" "namespace no longer exists"
 
 ###############################################################################
-section "Auth (Admin Required)"
+section "User: List My Namespaces"
 ###############################################################################
 
-# Create a repos-scoped token
-RESPONSE=$(auth_curl -X POST -H "Content-Type: application/json" \
-    -d '{"name":"test-repos-ns","scope":"repos"}' \
-    "$API/tokens")
+RESPONSE=$(auth_curl "$API/namespaces")
+expect_contains "$RESPONSE" '"data"' "user can list their namespaces"
+expect_contains "$RESPONSE" '"is_primary"' "includes is_primary field"
 
-REPOS_TOKEN=$(echo "$RESPONSE" | jq -r '.data.token')
-REPOS_TOKEN_ID=$(get_id "$RESPONSE")
-track_token "$REPOS_TOKEN_ID"
+###############################################################################
+section "User: Current Namespace"
+###############################################################################
 
-# repos scope cannot list namespaces
-RESPONSE=$(auth_curl_with "$REPOS_TOKEN" "$API/namespaces")
-expect_contains "$RESPONSE" "Admin access required\|Forbidden" "repos cannot list namespaces"
+RESPONSE=$(auth_curl "$API/namespace")
+expect_json "$RESPONSE" '.data.name' "test" "current namespace returned"
 
-# repos scope cannot create namespaces
-RESPONSE=$(auth_curl_with "$REPOS_TOKEN" -X POST \
+RESPONSE=$(anon_curl "$API/namespace")
+expect_contains "$RESPONSE" "Authentication required" "anonymous current namespace denied"
+
+###############################################################################
+section "Admin Token Enforcement"
+###############################################################################
+
+# User token cannot access admin namespace endpoints
+RESPONSE=$(auth_curl "$ADMIN_API/namespaces")
+expect_contains "$RESPONSE" "Admin access required" "user cannot list admin namespaces"
+
+RESPONSE=$(auth_curl -X POST \
     -H "Content-Type: application/json" \
     -d '{"name":"should-fail"}' \
-    "$API/namespaces")
-expect_contains "$RESPONSE" "Admin access required\|Forbidden" "repos cannot create namespaces"
+    "$ADMIN_API/namespaces")
+expect_contains "$RESPONSE" "Admin access required" "user cannot create namespaces"
 
-# repos scope can access current namespace
-RESPONSE=$(auth_curl_with "$REPOS_TOKEN" "$API/namespace")
-expect_json "$RESPONSE" '.data.name' "default" "repos can access current namespace"
+# Admin token cannot access user endpoints
+RESPONSE=$(admin_curl "$API/repos")
+expect_contains "$RESPONSE" "Admin token cannot be used for this operation" "admin cannot access user routes"
 
 ###############################################################################
 summary

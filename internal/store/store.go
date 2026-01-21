@@ -19,11 +19,20 @@ type Store interface {
 
 	// Token operations
 	CreateToken(token *Token) error
-	GetTokenByLookup(namespaceID, lookup string) (*Token, error)
+	GetTokenByLookup(lookup string) (*Token, error)
 	GetTokenByID(id string) (*Token, error)
-	ListTokens(namespaceID, cursor string, limit int) ([]Token, error)
+	ListTokens(cursor string, limit int) ([]Token, error)
 	DeleteToken(id string) error
-	GenerateRootToken() (string, error)
+	GenerateAdminToken() (string, error)
+
+	// Token namespace access operations
+	GrantTokenNamespaceAccess(access *TokenNamespaceAccess) error
+	RevokeTokenNamespaceAccess(tokenID, namespaceID string) error
+	GetTokenNamespaceAccess(tokenID, namespaceID string) (*TokenNamespaceAccess, error)
+	ListTokenNamespaces(tokenID string) ([]NamespaceWithAccess, error)
+	GetTokenPrimaryNamespace(tokenID string) (*Namespace, error)
+	HasTokenNamespaceAccess(tokenID, namespaceID string) (bool, error)
+	CountNamespaceTokens(namespaceID string) (int, error)
 
 	// Repo operations
 	CreateRepo(repo *Repo) error
@@ -77,13 +86,23 @@ type Token struct {
 	TokenHash   string     `json:"-"`
 	TokenLookup string     `json:"-"`
 	Name        *string    `json:"name,omitempty"`
-	NamespaceID string     `json:"namespace_id"`
+	IsAdmin     bool       `json:"is_admin"`
 	Scope       string     `json:"scope"`
-	RepoIDs     *string    `json:"repo_ids,omitempty"`
 	CreatedAt   time.Time  `json:"created_at"`
 	ExpiresAt   *time.Time `json:"expires_at,omitempty"`
 	LastUsedAt  *time.Time `json:"last_used_at,omitempty"`
-	ExternalID  *string    `json:"external_id,omitempty"`
+}
+
+type TokenNamespaceAccess struct {
+	TokenID     string    `json:"token_id"`
+	NamespaceID string    `json:"namespace_id"`
+	IsPrimary   bool      `json:"is_primary"`
+	CreatedAt   time.Time `json:"created_at"`
+}
+
+type NamespaceWithAccess struct {
+	Namespace
+	IsPrimary bool `json:"is_primary"`
 }
 
 type Repo struct {

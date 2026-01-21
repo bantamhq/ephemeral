@@ -12,9 +12,10 @@ import (
 )
 
 type Client struct {
-	baseURL string
-	token   string
-	http    *http.Client
+	baseURL   string
+	token     string
+	namespace string
+	http      *http.Client
 }
 
 func New(baseURL, token string) *Client {
@@ -25,6 +26,21 @@ func New(baseURL, token string) *Client {
 			Timeout: 30 * time.Second,
 		},
 	}
+}
+
+// WithNamespace returns a new client configured to use the specified namespace.
+func (c *Client) WithNamespace(namespace string) *Client {
+	return &Client{
+		baseURL:   c.baseURL,
+		token:     c.token,
+		namespace: namespace,
+		http:      c.http,
+	}
+}
+
+// Namespace returns the currently configured namespace.
+func (c *Client) Namespace() string {
+	return c.namespace
 }
 
 type Repo struct {
@@ -272,6 +288,9 @@ func (c *Client) doRequestWithBody(method, path string, body any) (*http.Respons
 	req.Header.Set("Accept", "application/json")
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
+	}
+	if c.namespace != "" {
+		req.Header.Set("X-Namespace", c.namespace)
 	}
 
 	resp, err := c.http.Do(req)
@@ -598,4 +617,180 @@ func (c *Client) GetBlob(repoID, ref, path string) (*Blob, error) {
 	}
 
 	return &blob, nil
+}
+
+type NamespaceWithAccess struct {
+	ID        string    `json:"id"`
+	Name      string    `json:"name"`
+	CreatedAt time.Time `json:"created_at"`
+	IsPrimary bool      `json:"is_primary"`
+}
+
+// ListNamespaces lists all namespaces the current token has access to.
+func (c *Client) ListNamespaces() ([]NamespaceWithAccess, error) {
+	resp, err := c.doRequest(http.MethodGet, "/api/v1/namespaces")
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, c.decodeError(resp, "list namespaces")
+	}
+
+	var dataResp response
+	if err := json.NewDecoder(resp.Body).Decode(&dataResp); err != nil {
+		return nil, fmt.Errorf("decode response: %w", err)
+	}
+
+	var namespaces []NamespaceWithAccess
+	if err := json.Unmarshal(dataResp.Data, &namespaces); err != nil {
+		return nil, fmt.Errorf("decode namespaces: %w", err)
+	}
+
+	return namespaces, nil
+}
+
+type TokenResponse struct {
+	ID        string     `json:"id"`
+	Name      *string    `json:"name,omitempty"`
+	Scope     string     `json:"scope"`
+	CreatedAt time.Time  `json:"created_at"`
+	ExpiresAt *time.Time `json:"expires_at,omitempty"`
+	Token     string     `json:"token"`
+}
+
+// AdminListNamespaces lists all namespaces (admin only).
+func (c *Client) AdminListNamespaces() ([]Namespace, error) {
+	resp, err := c.doRequest(http.MethodGet, "/api/v1/admin/namespaces")
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, c.decodeError(resp, "list namespaces")
+	}
+
+	var dataResp response
+	if err := json.NewDecoder(resp.Body).Decode(&dataResp); err != nil {
+		return nil, fmt.Errorf("decode response: %w", err)
+	}
+
+	var namespaces []Namespace
+	if err := json.Unmarshal(dataResp.Data, &namespaces); err != nil {
+		return nil, fmt.Errorf("decode namespaces: %w", err)
+	}
+
+	return namespaces, nil
+}
+
+// AdminCreateNamespace creates a new namespace (admin only).
+func (c *Client) AdminCreateNamespace(name string) (*Namespace, error) {
+	body := map[string]any{"name": name}
+
+	resp, err := c.doRequestWithBody(http.MethodPost, "/api/v1/admin/namespaces", body)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated {
+		return nil, c.decodeError(resp, "create namespace")
+	}
+
+	var dataResp response
+	if err := json.NewDecoder(resp.Body).Decode(&dataResp); err != nil {
+		return nil, fmt.Errorf("decode response: %w", err)
+	}
+
+	var ns Namespace
+	if err := json.Unmarshal(dataResp.Data, &ns); err != nil {
+		return nil, fmt.Errorf("decode namespace: %w", err)
+	}
+
+	return &ns, nil
+}
+
+// AdminDeleteNamespace deletes a namespace (admin only).
+func (c *Client) AdminDeleteNamespace(id string) error {
+	resp, err := c.doRequest(http.MethodDelete, "/api/v1/admin/namespaces/"+id)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNoContent {
+		return c.decodeError(resp, "delete namespace")
+	}
+
+	return nil
+}
+
+// AdminCreateToken creates a new user token with access to a namespace (admin only).
+func (c *Client) AdminCreateToken(namespaceID string, name *string, scope string) (*TokenResponse, error) {
+	body := map[string]any{
+		"namespace_id": namespaceID,
+		"scope":        scope,
+	}
+	if name != nil {
+		body["name"] = *name
+	}
+
+	resp, err := c.doRequestWithBody(http.MethodPost, "/api/v1/admin/tokens", body)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated {
+		return nil, c.decodeError(resp, "create token")
+	}
+
+	var dataResp response
+	if err := json.NewDecoder(resp.Body).Decode(&dataResp); err != nil {
+		return nil, fmt.Errorf("decode response: %w", err)
+	}
+
+	var token TokenResponse
+	if err := json.Unmarshal(dataResp.Data, &token); err != nil {
+		return nil, fmt.Errorf("decode token: %w", err)
+	}
+
+	return &token, nil
+}
+
+// AdminGrantTokenNamespace grants a token access to a namespace (admin only).
+func (c *Client) AdminGrantTokenNamespace(tokenID, namespaceID string, isPrimary bool) error {
+	body := map[string]any{
+		"namespace_id": namespaceID,
+		"is_primary":   isPrimary,
+	}
+
+	resp, err := c.doRequestWithBody(http.MethodPost, "/api/v1/admin/tokens/"+tokenID+"/namespaces", body)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
+		return c.decodeError(resp, "grant token namespace")
+	}
+
+	return nil
+}
+
+// AdminRevokeTokenNamespace revokes a token's access to a namespace (admin only).
+func (c *Client) AdminRevokeTokenNamespace(tokenID, namespaceID string) error {
+	resp, err := c.doRequest(http.MethodDelete, "/api/v1/admin/tokens/"+tokenID+"/namespaces/"+namespaceID)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNoContent {
+		return c.decodeError(resp, "revoke token namespace")
+	}
+
+	return nil
 }

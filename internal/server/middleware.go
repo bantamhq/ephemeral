@@ -13,7 +13,10 @@ import (
 
 type contextKey string
 
-const tokenContextKey contextKey = "token"
+const (
+	tokenContextKey     contextKey = "token"
+	namespaceContextKey contextKey = "namespace"
+)
 
 // authError represents an authentication error with an associated HTTP status code.
 type authError struct {
@@ -83,14 +86,14 @@ func BearerAuthMiddleware(st store.Store) func(http.Handler) http.Handler {
 	}
 }
 
-// lookupToken parses the token, looks up by namespace and lookup key, and verifies.
+// lookupToken parses the token, looks up by lookup key, and verifies.
 func lookupToken(st store.Store, rawToken string) (*store.Token, error) {
-	namespaceID, lookup, _, err := core.ParseToken(rawToken)
+	lookup, _, err := core.ParseToken(rawToken)
 	if err != nil {
 		return nil, &authError{"Invalid token format", http.StatusUnauthorized}
 	}
 
-	token, err := st.GetTokenByLookup(namespaceID, lookup)
+	token, err := st.GetTokenByLookup(lookup)
 	if err != nil {
 		return nil, &authError{"Internal server error", http.StatusInternalServerError}
 	}

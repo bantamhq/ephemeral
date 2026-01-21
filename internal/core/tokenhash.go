@@ -93,22 +93,22 @@ func GenerateTokenSecret(length int) (string, error) {
 }
 
 // BuildToken constructs a token string from its components.
-// Format: eph_<namespace>_<lookup>_<secret>
-func BuildToken(namespacePrefix, lookup, secret string) string {
-	return fmt.Sprintf("eph_%s_%s_%s", namespacePrefix, lookup, secret)
+// Format: eph_<lookup>_<secret>
+func BuildToken(lookup, secret string) string {
+	return fmt.Sprintf("eph_%s_%s", lookup, secret)
 }
 
 // ParseToken extracts components from a token string.
-// Returns namespace prefix, lookup key, and secret.
-func ParseToken(token string) (namespacePrefix, lookup, secret string, err error) {
+// Returns lookup key and secret.
+func ParseToken(token string) (lookup, secret string, err error) {
 	if !strings.HasPrefix(token, "eph_") {
-		return "", "", "", ErrInvalidToken
+		return "", "", ErrInvalidToken
 	}
 
 	parts := strings.Split(token, "_")
-	if len(parts) != 4 {
-		return "", "", "", ErrInvalidToken
+	if len(parts) != 3 {
+		return "", "", ErrInvalidToken
 	}
 
-	return parts[1], parts[2], parts[3], nil
+	return parts[1], parts[2], nil
 }

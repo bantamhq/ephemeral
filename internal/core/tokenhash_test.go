@@ -6,7 +6,7 @@ import (
 )
 
 func TestHashToken(t *testing.T) {
-	token := "eph_default_abc12345_secretsecretsecretsecret"
+	token := "eph_abc12345_secretsecretsecretsecret"
 
 	hash, err := HashToken(token)
 	if err != nil {
@@ -17,7 +17,6 @@ func TestHashToken(t *testing.T) {
 		t.Errorf("HashToken() hash should start with $argon2id$, got %s", hash)
 	}
 
-	// Hashing the same token twice should produce different hashes (different salts)
 	hash2, err := HashToken(token)
 	if err != nil {
 		t.Fatalf("HashToken() second call error = %v", err)
@@ -29,19 +28,17 @@ func TestHashToken(t *testing.T) {
 }
 
 func TestVerifyToken(t *testing.T) {
-	token := "eph_default_abc12345_secretsecretsecretsecret"
+	token := "eph_abc12345_secretsecretsecretsecret"
 
 	hash, err := HashToken(token)
 	if err != nil {
 		t.Fatalf("HashToken() error = %v", err)
 	}
 
-	// Correct token should verify
 	if err := VerifyToken(token, hash); err != nil {
 		t.Errorf("VerifyToken() with correct token error = %v", err)
 	}
 
-	// Wrong token should fail
 	if err := VerifyToken("wrong-token", hash); err != ErrHashMismatch {
 		t.Errorf("VerifyToken() with wrong token error = %v, want ErrHashMismatch", err)
 	}
@@ -77,7 +74,6 @@ func TestGenerateTokenSecret(t *testing.T) {
 		t.Errorf("GenerateTokenSecret() length = %d, want 24", len(secret1))
 	}
 
-	// Should be different each time
 	secret2, err := GenerateTokenSecret(24)
 	if err != nil {
 		t.Fatalf("GenerateTokenSecret() second call error = %v", err)
@@ -89,8 +85,8 @@ func TestGenerateTokenSecret(t *testing.T) {
 }
 
 func TestBuildToken(t *testing.T) {
-	token := BuildToken("default", "abc12345", "secretsecretsecretsecret")
-	expected := "eph_default_abc12345_secretsecretsecretsecret"
+	token := BuildToken("abc12345", "secretsecretsecretsecret")
+	expected := "eph_abc12345_secretsecretsecretsecret"
 
 	if token != expected {
 		t.Errorf("BuildToken() = %s, want %s", token, expected)
@@ -99,14 +95,11 @@ func TestBuildToken(t *testing.T) {
 
 func TestParseToken(t *testing.T) {
 	t.Run("valid token", func(t *testing.T) {
-		ns, lookup, secret, err := ParseToken("eph_default_abc12345_secretsecretsecretsecret")
+		lookup, secret, err := ParseToken("eph_abc12345_secretsecretsecretsecret")
 		if err != nil {
 			t.Fatalf("ParseToken() error = %v", err)
 		}
 
-		if ns != "default" {
-			t.Errorf("ParseToken() namespace = %s, want default", ns)
-		}
 		if lookup != "abc12345" {
 			t.Errorf("ParseToken() lookup = %s, want abc12345", lookup)
 		}
@@ -116,14 +109,14 @@ func TestParseToken(t *testing.T) {
 	})
 
 	t.Run("invalid prefix", func(t *testing.T) {
-		_, _, _, err := ParseToken("xyz_default_abc_secret")
+		_, _, err := ParseToken("xyz_abc_secret")
 		if err != ErrInvalidToken {
 			t.Errorf("ParseToken() error = %v, want ErrInvalidToken", err)
 		}
 	})
 
 	t.Run("wrong number of parts", func(t *testing.T) {
-		_, _, _, err := ParseToken("eph_default_abc")
+		_, _, err := ParseToken("eph_abc")
 		if err != ErrInvalidToken {
 			t.Errorf("ParseToken() error = %v, want ErrInvalidToken", err)
 		}

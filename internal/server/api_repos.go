@@ -17,8 +17,13 @@ import (
 const defaultPageSize = 20
 
 func (s *Server) handleListRepos(w http.ResponseWriter, r *http.Request) {
-	token := s.requireAuth(w, r)
+	token := s.requireUserToken(w, r)
 	if token == nil {
+		return
+	}
+
+	nsID := s.getActiveNamespaceID(w, r, token)
+	if nsID == "" {
 		return
 	}
 
@@ -27,7 +32,7 @@ func (s *Server) handleListRepos(w http.ResponseWriter, r *http.Request) {
 	expand := r.URL.Query().Get("expand")
 
 	if expand == "folders" {
-		repos, err := s.store.ListReposWithFolders(token.NamespaceID, cursor, limit+1)
+		repos, err := s.store.ListReposWithFolders(nsID, cursor, limit+1)
 		if err != nil {
 			JSONError(w, http.StatusInternalServerError, "Failed to list repos")
 			return
@@ -48,7 +53,7 @@ func (s *Server) handleListRepos(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	repos, err := s.store.ListRepos(token.NamespaceID, cursor, limit+1)
+	repos, err := s.store.ListRepos(nsID, cursor, limit+1)
 	if err != nil {
 		JSONError(w, http.StatusInternalServerError, "Failed to list repos")
 		return
@@ -75,11 +80,16 @@ type createRepoRequest struct {
 }
 
 func (s *Server) handleCreateRepo(w http.ResponseWriter, r *http.Request) {
-	token := s.requireAuth(w, r)
+	token := s.requireUserToken(w, r)
 	if token == nil {
 		return
 	}
 	if !s.requireScope(w, token, store.ScopeRepos) {
+		return
+	}
+
+	nsID := s.getActiveNamespaceID(w, r, token)
+	if nsID == "" {
 		return
 	}
 
@@ -100,7 +110,7 @@ func (s *Server) handleCreateRepo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	existing, err := s.store.GetRepo(token.NamespaceID, req.Name)
+	existing, err := s.store.GetRepo(nsID, req.Name)
 	if err != nil {
 		JSONError(w, http.StatusInternalServerError, "Failed to check existing repo")
 		return
@@ -113,7 +123,7 @@ func (s *Server) handleCreateRepo(w http.ResponseWriter, r *http.Request) {
 	now := time.Now()
 	repo := &store.Repo{
 		ID:          uuid.New().String(),
-		NamespaceID: token.NamespaceID,
+		NamespaceID: nsID,
 		Name:        req.Name,
 		Description: req.Description,
 		Public:      req.Public,
@@ -122,7 +132,7 @@ func (s *Server) handleCreateRepo(w http.ResponseWriter, r *http.Request) {
 		UpdatedAt:   now,
 	}
 
-	repoPath, err := SafeRepoPath(s.dataDir, token.NamespaceID, req.Name)
+	repoPath, err := SafeRepoPath(s.dataDir, nsID, req.Name)
 	if err != nil {
 		JSONError(w, http.StatusBadRequest, err.Error())
 		return
@@ -143,7 +153,7 @@ func (s *Server) handleCreateRepo(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleGetRepo(w http.ResponseWriter, r *http.Request) {
-	token := s.requireAuth(w, r)
+	token := s.requireUserToken(w, r)
 	if token == nil {
 		return
 	}
@@ -157,7 +167,7 @@ func (s *Server) handleGetRepo(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDeleteRepo(w http.ResponseWriter, r *http.Request) {
-	token := s.requireAuth(w, r)
+	token := s.requireUserToken(w, r)
 	if token == nil {
 		return
 	}
@@ -195,7 +205,7 @@ type updateRepoRequest struct {
 }
 
 func (s *Server) handleUpdateRepo(w http.ResponseWriter, r *http.Request) {
-	token := s.requireAuth(w, r)
+	token := s.requireUserToken(w, r)
 	if token == nil {
 		return
 	}
@@ -286,7 +296,7 @@ func (s *Server) renameRepoOnDisk(namespaceID, oldName, newName string) error {
 }
 
 func (s *Server) handleListRepoFolders(w http.ResponseWriter, r *http.Request) {
-	token := s.requireAuth(w, r)
+	token := s.requireUserToken(w, r)
 	if token == nil {
 		return
 	}
@@ -330,7 +340,7 @@ func (s *Server) validateFolderIDs(w http.ResponseWriter, folderIDs []string, na
 }
 
 func (s *Server) handleAddRepoFolders(w http.ResponseWriter, r *http.Request) {
-	token := s.requireAuth(w, r)
+	token := s.requireUserToken(w, r)
 	if token == nil {
 		return
 	}
@@ -349,7 +359,7 @@ func (s *Server) handleAddRepoFolders(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !s.validateFolderIDs(w, req.FolderIDs, token.NamespaceID) {
+	if !s.validateFolderIDs(w, req.FolderIDs, repo.NamespaceID) {
 		return
 	}
 
@@ -368,7 +378,7 @@ func (s *Server) handleAddRepoFolders(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleSetRepoFolders(w http.ResponseWriter, r *http.Request) {
-	token := s.requireAuth(w, r)
+	token := s.requireUserToken(w, r)
 	if token == nil {
 		return
 	}
@@ -387,7 +397,7 @@ func (s *Server) handleSetRepoFolders(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !s.validateFolderIDs(w, req.FolderIDs, token.NamespaceID) {
+	if !s.validateFolderIDs(w, req.FolderIDs, repo.NamespaceID) {
 		return
 	}
 
@@ -406,7 +416,7 @@ func (s *Server) handleSetRepoFolders(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleRemoveRepoFolder(w http.ResponseWriter, r *http.Request) {
-	token := s.requireAuth(w, r)
+	token := s.requireUserToken(w, r)
 	if token == nil {
 		return
 	}

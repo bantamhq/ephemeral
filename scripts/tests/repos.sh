@@ -6,6 +6,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$SCRIPT_DIR/lib.sh"
 
 require_token
+require_admin_token
 trap cleanup EXIT
 
 echo ""
@@ -271,10 +272,10 @@ RESPONSE=$(anon_curl -X POST -H "Content-Type: application/json" \
     "$API/repos")
 expect_contains "$RESPONSE" "Authentication required\|Unauthorized" "anonymous create denied"
 
-# Create read-only token
-RESPONSE=$(auth_curl -X POST -H "Content-Type: application/json" \
-    -d '{"name":"repo-readonly","scope":"read-only"}' \
-    "$API/tokens")
+# Create read-only token via admin API
+RESPONSE=$(admin_curl -X POST -H "Content-Type: application/json" \
+    -d "{\"namespace_id\":\"$NS_ID\",\"name\":\"repo-readonly\",\"scope\":\"read-only\"}" \
+    "$ADMIN_API/tokens")
 
 RO_TOKEN=$(echo "$RESPONSE" | jq -r '.data.token')
 RO_TOKEN_ID=$(get_id "$RESPONSE")

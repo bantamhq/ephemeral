@@ -6,6 +6,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$SCRIPT_DIR/lib.sh"
 
 require_token
+require_admin_token
 trap cleanup EXIT
 
 echo ""
@@ -269,14 +270,16 @@ CREATED_FOLDERS=$(echo "$CREATED_FOLDERS" | sed "s/$FOLDER2_ID//g")
 section "Auth"
 ###############################################################################
 
-# Create read-only token
-RESPONSE=$(auth_curl -X POST -H "Content-Type: application/json" \
-    -d '{"name":"test-ro-folders","scope":"read-only"}' \
-    "$API/tokens")
+# Create read-only token via admin API
+RESPONSE=$(admin_curl -X POST -H "Content-Type: application/json" \
+    -d "{\"namespace_id\":\"$NS_ID\",\"name\":\"test-ro-folders\",\"scope\":\"read-only\"}" \
+    "$ADMIN_API/tokens")
 
 RO_TOKEN=$(echo "$RESPONSE" | jq -r '.data.token')
 RO_TOKEN_ID=$(get_id "$RESPONSE")
-track_token "$RO_TOKEN_ID"
+if [ -n "$RO_TOKEN_ID" ]; then
+    track_token "$RO_TOKEN_ID"
+fi
 
 # read-only can list folders
 RESPONSE=$(auth_curl_with "$RO_TOKEN" "$API/folders")

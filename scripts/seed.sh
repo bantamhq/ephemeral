@@ -176,8 +176,13 @@ create_repo "scripts" private "Collection of useful shell and Python scripts" "$
 echo ""
 echo "Adding commit history to repos..."
 
-NS_JSON=$(api GET /namespace)
-NS_NAME=$(echo "$NS_JSON" | grep -o '"name":"[^"]*"' | head -1 | cut -d'"' -f4)
+# Get primary namespace from user's accessible namespaces
+NS_JSON=$(api GET /namespaces)
+NS_NAME=$(echo "$NS_JSON" | jq -r '.data[] | select(.is_primary == true) | .name' 2>/dev/null)
+if [ -z "$NS_NAME" ]; then
+    # Fall back to first namespace if no primary found
+    NS_NAME=$(echo "$NS_JSON" | jq -r '.data[0].name' 2>/dev/null)
+fi
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SEED_REPOS="$SCRIPT_DIR/seed-repos"
 GIT_HOST="${BASE_URL#http://}"
@@ -220,4 +225,4 @@ echo "  Folders: 13"
 echo "  Repos: 35"
 echo "  Repos with history: 2"
 echo ""
-echo "Run the TUI to see the data: ./ephemeral"
+echo "Run the TUI to see the data: eph"

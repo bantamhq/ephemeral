@@ -17,6 +17,18 @@ echo -e "${BLUE}═════════════════════�
 section "Setup"
 ###############################################################################
 
+# Get primary namespace name
+NS_JSON=$(auth_curl "$API/namespaces")
+NS_NAME=$(echo "$NS_JSON" | jq -r '.data[] | select(.is_primary == true) | .name' 2>/dev/null)
+if [ -z "$NS_NAME" ]; then
+    NS_NAME=$(echo "$NS_JSON" | jq -r '.data[0].name' 2>/dev/null)
+fi
+if [ -z "$NS_NAME" ] || [ "$NS_NAME" = "null" ]; then
+    echo "Failed to get namespace name"
+    exit 1
+fi
+info "Using namespace: $NS_NAME"
+
 info "Creating test repository..."
 RESPONSE=$(auth_curl -X POST -H "Content-Type: application/json" \
     -d '{"name":"test-content-api","public":false}' \
@@ -47,7 +59,7 @@ info "Created empty repo: $EMPTY_REPO_ID"
 TMPDIR=$(mktemp -d)
 cd "$TMPDIR"
 
-git clone -q "http://x-token:$TOKEN@${BASE_URL#http://}/git/default/test-content-api.git" repo 2>/dev/null
+git clone -q "http://x-token:$TOKEN@${BASE_URL#http://}/git/$NS_NAME/test-content-api.git" repo 2>/dev/null
 cd repo
 
 # Create test files

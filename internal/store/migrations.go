@@ -10,14 +10,10 @@ import (
 	"ephemeral/internal/core"
 )
 
-// Initialize creates the database schema and initial data.
+// Initialize creates the database schema.
 func (s *SQLiteStore) Initialize() error {
 	if err := s.createSchema(); err != nil {
 		return fmt.Errorf("create schema: %w", err)
-	}
-
-	if err := s.createDefaultNamespace(); err != nil {
-		return fmt.Errorf("create default namespace: %w", err)
 	}
 
 	return nil
@@ -43,23 +39,26 @@ func (s *SQLiteStore) createSchema() error {
 	CREATE TABLE IF NOT EXISTS tokens (
 		id TEXT PRIMARY KEY,
 		token_hash TEXT NOT NULL,          -- argon2id hash with embedded salt
-		token_lookup TEXT NOT NULL,        -- first 8 chars of ID for fast lookup
+		token_lookup TEXT NOT NULL,        -- first 8 chars of ID for fast lookup (global, not per-namespace)
 		name TEXT,                         -- human-friendly label
-		namespace_id TEXT NOT NULL REFERENCES namespaces(id) ON DELETE CASCADE,
+		is_admin BOOLEAN NOT NULL DEFAULT FALSE,  -- admin tokens only access /api/v1/admin/* routes
 
-		-- Scope
-		scope TEXT NOT NULL DEFAULT 'full',  -- 'full' | 'repos' | 'read-only' | 'admin'
-
-		-- Optional: limit to specific repos (NULL = all in namespace)
-		repo_ids TEXT,  -- JSON array, NULL means all
+		-- Scope for user tokens
+		scope TEXT NOT NULL DEFAULT 'full',  -- 'full' | 'repos' | 'read-only'
 
 		-- Lifecycle
 		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 		expires_at TIMESTAMP,            -- NULL = never
-		last_used_at TIMESTAMP,
+		last_used_at TIMESTAMP
+	);
 
-		-- For platform correlation
-		external_id TEXT                 -- e.g., platform token record id
+	-- Junction table for token namespace access (user tokens only)
+	CREATE TABLE IF NOT EXISTS token_namespace_access (
+		token_id TEXT NOT NULL REFERENCES tokens(id) ON DELETE CASCADE,
+		namespace_id TEXT NOT NULL REFERENCES namespaces(id) ON DELETE RESTRICT,
+		is_primary BOOLEAN NOT NULL DEFAULT FALSE,
+		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		PRIMARY KEY (token_id, namespace_id)
 	);
 
 	-- Folders for organizing repos (flat, no nesting)
@@ -101,43 +100,26 @@ func (s *SQLiteStore) createSchema() error {
 
 	-- Create indexes
 	CREATE INDEX IF NOT EXISTS idx_repos_namespace ON repos(namespace_id);
-	CREATE UNIQUE INDEX IF NOT EXISTS idx_tokens_lookup ON tokens(namespace_id, token_lookup);
+	CREATE UNIQUE INDEX IF NOT EXISTS idx_tokens_lookup ON tokens(token_lookup);
 	CREATE INDEX IF NOT EXISTS idx_folders_namespace ON folders(namespace_id);
+
+	-- Ensure each token has at most one primary namespace
+	CREATE UNIQUE INDEX IF NOT EXISTS idx_token_primary_ns
+		ON token_namespace_access(token_id) WHERE is_primary = TRUE;
 	`
 
 	_, err := s.db.Exec(schema)
 	return err
 }
 
-func (s *SQLiteStore) createDefaultNamespace() error {
+
+// GenerateAdminToken creates and returns an admin token for first-time setup.
+// Returns empty string if an admin token already exists.
+func (s *SQLiteStore) GenerateAdminToken() (string, error) {
 	var count int
-	err := s.db.QueryRow("SELECT COUNT(*) FROM namespaces WHERE id = 'default'").Scan(&count)
+	err := s.db.QueryRow("SELECT COUNT(*) FROM tokens WHERE is_admin = TRUE").Scan(&count)
 	if err != nil {
-		return fmt.Errorf("check default namespace: %w", err)
-	}
-
-	if count > 0 {
-		return nil
-	}
-
-	_, err = s.db.Exec(`
-		INSERT INTO namespaces (id, name, created_at)
-		VALUES ('default', 'default', ?)
-	`, time.Now())
-	if err != nil {
-		return fmt.Errorf("insert default namespace: %w", err)
-	}
-
-	return nil
-}
-
-// GenerateRootToken creates and returns the root token for first-time setup.
-// Returns empty string if a root token already exists.
-func (s *SQLiteStore) GenerateRootToken() (string, error) {
-	var count int
-	err := s.db.QueryRow("SELECT COUNT(*) FROM tokens WHERE scope = 'admin' AND namespace_id = 'default'").Scan(&count)
-	if err != nil {
-		return "", fmt.Errorf("check existing root token: %w", err)
+		return "", fmt.Errorf("check existing admin token: %w", err)
 	}
 
 	if count > 0 {
@@ -155,21 +137,21 @@ func (s *SQLiteStore) GenerateRootToken() (string, error) {
 			return "", fmt.Errorf("generate token secret: %w", err)
 		}
 
-		tokenValue := core.BuildToken("default", tokenLookup, secret)
+		tokenValue := core.BuildToken(tokenLookup, secret)
 
 		tokenHash, err := core.HashToken(tokenValue)
 		if err != nil {
 			return "", fmt.Errorf("hash token: %w", err)
 		}
 
-		name := "Root Token"
+		name := "Admin Token"
 		token := &Token{
 			ID:          tokenID,
 			TokenHash:   tokenHash,
 			TokenLookup: tokenLookup,
 			Name:        &name,
-			NamespaceID: "default",
-			Scope:       "admin",
+			IsAdmin:     true,
+			Scope:       ScopeFull,
 			CreatedAt:   time.Now(),
 		}
 
@@ -177,11 +159,11 @@ func (s *SQLiteStore) GenerateRootToken() (string, error) {
 			if errors.Is(err, ErrTokenLookupCollision) {
 				continue
 			}
-			return "", fmt.Errorf("create root token: %w", err)
+			return "", fmt.Errorf("create admin token: %w", err)
 		}
 
 		return tokenValue, nil
 	}
 
-	return "", fmt.Errorf("create root token: %w", ErrTokenLookupCollision)
+	return "", fmt.Errorf("create admin token: %w", ErrTokenLookupCollision)
 }

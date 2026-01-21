@@ -36,8 +36,32 @@ func (s *Server) setupRoutes() {
 	s.router.Get("/health", s.handleHealth)
 
 	s.router.Route("/api/v1", func(r chi.Router) {
+		// Admin routes - requires admin token
+		r.Route("/admin", func(r chi.Router) {
+			r.Use(BearerAuthMiddleware(s.store))
+
+			// Namespaces
+			r.Get("/namespaces", s.handleAdminListNamespaces)
+			r.Post("/namespaces", s.handleAdminCreateNamespace)
+			r.Get("/namespaces/{id}", s.handleAdminGetNamespace)
+			r.Delete("/namespaces/{id}", s.handleAdminDeleteNamespace)
+
+			// Tokens
+			r.Get("/tokens", s.handleAdminListTokens)
+			r.Post("/tokens", s.handleAdminCreateToken)
+			r.Get("/tokens/{id}", s.handleAdminGetToken)
+			r.Delete("/tokens/{id}", s.handleAdminDeleteToken)
+			r.Post("/tokens/{id}/namespaces", s.handleAdminGrantTokenNamespace)
+			r.Delete("/tokens/{id}/namespaces/{nsID}", s.handleAdminRevokeTokenNamespace)
+		})
+
+		// User routes - requires user token (non-admin)
 		r.Group(func(r chi.Router) {
 			r.Use(BearerAuthMiddleware(s.store))
+
+			// Current user info
+			r.Get("/namespaces", s.handleListNamespaces)
+			r.Get("/namespace", s.handleGetCurrentNamespace)
 
 			// Repos
 			r.Get("/repos", s.handleListRepos)
@@ -76,29 +100,6 @@ func (s *Server) setupRoutes() {
 			r.Get("/repos/{id}/blob/{ref}/*", s.handleGetBlob)
 			r.Get("/repos/{id}/blame/{ref}/*", s.handleGetBlame)
 			r.Get("/repos/{id}/archive/{ref}", s.handleGetArchive)
-		})
-
-		// Tokens - requires auth
-		r.Group(func(r chi.Router) {
-			r.Use(BearerAuthMiddleware(s.store))
-			r.Get("/tokens", s.handleListTokens)
-			r.Post("/tokens", s.handleCreateToken)
-			r.Delete("/tokens/{id}", s.handleDeleteToken)
-		})
-
-		// Current namespace - requires auth (any scope)
-		r.Group(func(r chi.Router) {
-			r.Use(BearerAuthMiddleware(s.store))
-			r.Get("/namespace", s.handleGetCurrentNamespace)
-		})
-
-		// Namespaces admin - requires admin scope
-		r.Group(func(r chi.Router) {
-			r.Use(BearerAuthMiddleware(s.store))
-			r.Get("/namespaces", s.handleListNamespaces)
-			r.Post("/namespaces", s.handleCreateNamespace)
-			r.Get("/namespaces/{id}", s.handleGetNamespace)
-			r.Delete("/namespaces/{id}", s.handleDeleteNamespace)
 		})
 	})
 

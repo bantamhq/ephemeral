@@ -84,7 +84,7 @@ func refExists(repo *git.Repository, refName plumbing.ReferenceName) (bool, erro
 }
 
 func (s *Server) handleCreateRef(w http.ResponseWriter, r *http.Request) {
-	token := s.requireAuth(w, r)
+	token := s.requireUserToken(w, r)
 	if token == nil {
 		return
 	}
@@ -158,7 +158,7 @@ func (s *Server) handleCreateRef(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleUpdateRef(w http.ResponseWriter, r *http.Request) {
-	token := s.requireAuth(w, r)
+	token := s.requireUserToken(w, r)
 	if token == nil {
 		return
 	}
@@ -264,7 +264,7 @@ func (s *Server) handleUpdateRef(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDeleteRef(w http.ResponseWriter, r *http.Request) {
-	token := s.requireAuth(w, r)
+	token := s.requireUserToken(w, r)
 	if token == nil {
 		return
 	}
@@ -312,7 +312,7 @@ func (s *Server) handleDeleteRef(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleSetDefaultBranch(w http.ResponseWriter, r *http.Request) {
-	token := s.requireAuth(w, r)
+	token := s.requireUserToken(w, r)
 	if token == nil {
 		return
 	}

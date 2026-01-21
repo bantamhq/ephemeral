@@ -46,9 +46,9 @@ func (s *SQLiteStore) Close() error {
 func (s *SQLiteStore) CreateToken(token *Token) error {
 	query := `
 		INSERT INTO tokens (
-			id, token_hash, token_lookup, name, namespace_id, scope,
-			repo_ids, created_at, expires_at, external_id
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			id, token_hash, token_lookup, name, is_admin, scope,
+			created_at, expires_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 	`
 
 	_, err := s.db.Exec(query,
@@ -56,12 +56,10 @@ func (s *SQLiteStore) CreateToken(token *Token) error {
 		token.TokenHash,
 		token.TokenLookup,
 		ToNullString(token.Name),
-		token.NamespaceID,
+		token.IsAdmin,
 		token.Scope,
-		ToNullString(token.RepoIDs),
 		token.CreatedAt,
 		ToNullTime(token.ExpiresAt),
-		ToNullString(token.ExternalID),
 	)
 
 	if err != nil {
@@ -82,16 +80,16 @@ func isTokenLookupCollision(err error) bool {
 	return sqliteErr.Code() == sqlite3.SQLITE_CONSTRAINT_UNIQUE
 }
 
-// GetTokenByLookup retrieves a token by namespace and lookup key.
-func (s *SQLiteStore) GetTokenByLookup(namespaceID, lookup string) (*Token, error) {
+// GetTokenByLookup retrieves a token by lookup key.
+func (s *SQLiteStore) GetTokenByLookup(lookup string) (*Token, error) {
 	query := `
-		SELECT id, token_hash, token_lookup, name, namespace_id, scope,
-			   repo_ids, created_at, expires_at, last_used_at, external_id
+		SELECT id, token_hash, token_lookup, name, is_admin, scope,
+			   created_at, expires_at, last_used_at
 		FROM tokens
-		WHERE namespace_id = ? AND token_lookup = ?
+		WHERE token_lookup = ?
 	`
 
-	token, err := s.scanToken(s.db.QueryRow(query, namespaceID, lookup))
+	token, err := s.scanToken(s.db.QueryRow(query, lookup))
 	if err != nil || token == nil {
 		return token, err
 	}
@@ -353,8 +351,8 @@ func (s *SQLiteStore) DeleteNamespace(id string) error {
 // GetTokenByID retrieves a token by ID.
 func (s *SQLiteStore) GetTokenByID(id string) (*Token, error) {
 	query := `
-		SELECT id, token_hash, token_lookup, name, namespace_id, scope,
-			   repo_ids, created_at, expires_at, last_used_at, external_id
+		SELECT id, token_hash, token_lookup, name, is_admin, scope,
+			   created_at, expires_at, last_used_at
 		FROM tokens
 		WHERE id = ?
 	`
@@ -363,7 +361,7 @@ func (s *SQLiteStore) GetTokenByID(id string) (*Token, error) {
 
 func (s *SQLiteStore) scanToken(row *sql.Row) (*Token, error) {
 	var token Token
-	var name, repoIDs, externalID sql.NullString
+	var name sql.NullString
 	var expiresAt, lastUsedAt sql.NullTime
 
 	err := row.Scan(
@@ -371,13 +369,11 @@ func (s *SQLiteStore) scanToken(row *sql.Row) (*Token, error) {
 		&token.TokenHash,
 		&token.TokenLookup,
 		&name,
-		&token.NamespaceID,
+		&token.IsAdmin,
 		&token.Scope,
-		&repoIDs,
 		&token.CreatedAt,
 		&expiresAt,
 		&lastUsedAt,
-		&externalID,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
@@ -387,26 +383,24 @@ func (s *SQLiteStore) scanToken(row *sql.Row) (*Token, error) {
 	}
 
 	token.Name = FromNullString(name)
-	token.RepoIDs = FromNullString(repoIDs)
 	token.ExpiresAt = FromNullTime(expiresAt)
 	token.LastUsedAt = FromNullTime(lastUsedAt)
-	token.ExternalID = FromNullString(externalID)
 
 	return &token, nil
 }
 
-// ListTokens lists tokens in a namespace with cursor-based pagination.
-func (s *SQLiteStore) ListTokens(namespaceID, cursor string, limit int) ([]Token, error) {
+// ListTokens lists all tokens with cursor-based pagination.
+func (s *SQLiteStore) ListTokens(cursor string, limit int) ([]Token, error) {
 	query := `
-		SELECT id, token_hash, token_lookup, name, namespace_id, scope,
-			   repo_ids, created_at, expires_at, last_used_at, external_id
+		SELECT id, token_hash, token_lookup, name, is_admin, scope,
+			   created_at, expires_at, last_used_at
 		FROM tokens
-		WHERE namespace_id = ? AND id > ?
+		WHERE id > ?
 		ORDER BY id
 		LIMIT ?
 	`
 
-	rows, err := s.db.Query(query, namespaceID, cursor, limit)
+	rows, err := s.db.Query(query, cursor, limit)
 	if err != nil {
 		return nil, fmt.Errorf("query tokens: %w", err)
 	}
@@ -415,7 +409,7 @@ func (s *SQLiteStore) ListTokens(namespaceID, cursor string, limit int) ([]Token
 	var tokens []Token
 	for rows.Next() {
 		var token Token
-		var name, repoIDs, externalID sql.NullString
+		var name sql.NullString
 		var expiresAt, lastUsedAt sql.NullTime
 
 		if err := rows.Scan(
@@ -423,22 +417,18 @@ func (s *SQLiteStore) ListTokens(namespaceID, cursor string, limit int) ([]Token
 			&token.TokenHash,
 			&token.TokenLookup,
 			&name,
-			&token.NamespaceID,
+			&token.IsAdmin,
 			&token.Scope,
-			&repoIDs,
 			&token.CreatedAt,
 			&expiresAt,
 			&lastUsedAt,
-			&externalID,
 		); err != nil {
 			return nil, fmt.Errorf("scan token: %w", err)
 		}
 
 		token.Name = FromNullString(name)
-		token.RepoIDs = FromNullString(repoIDs)
 		token.ExpiresAt = FromNullTime(expiresAt)
 		token.LastUsedAt = FromNullTime(lastUsedAt)
-		token.ExternalID = FromNullString(externalID)
 		tokens = append(tokens, token)
 	}
 
@@ -943,4 +933,170 @@ func (s *SQLiteStore) AddRepoFolders(repoID string, folderIDs []string) error {
 	}
 
 	return tx.Commit()
+}
+
+// GrantTokenNamespaceAccess grants or updates a token's access to a namespace.
+func (s *SQLiteStore) GrantTokenNamespaceAccess(access *TokenNamespaceAccess) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	if access.IsPrimary {
+		_, err := tx.Exec(
+			"UPDATE token_namespace_access SET is_primary = FALSE WHERE token_id = ? AND is_primary = TRUE",
+			access.TokenID,
+		)
+		if err != nil {
+			return fmt.Errorf("clear existing primary: %w", err)
+		}
+	}
+
+	query := `
+		INSERT INTO token_namespace_access (token_id, namespace_id, is_primary, created_at)
+		VALUES (?, ?, ?, ?)
+		ON CONFLICT (token_id, namespace_id) DO UPDATE SET
+			is_primary = excluded.is_primary
+	`
+
+	_, err = tx.Exec(query,
+		access.TokenID,
+		access.NamespaceID,
+		access.IsPrimary,
+		access.CreatedAt,
+	)
+	if err != nil {
+		return fmt.Errorf("grant token namespace access: %w", err)
+	}
+
+	return tx.Commit()
+}
+
+// RevokeTokenNamespaceAccess removes a token's access to a namespace.
+func (s *SQLiteStore) RevokeTokenNamespaceAccess(tokenID, namespaceID string) error {
+	result, err := s.db.Exec(
+		"DELETE FROM token_namespace_access WHERE token_id = ? AND namespace_id = ?",
+		tokenID, namespaceID,
+	)
+	if err != nil {
+		return fmt.Errorf("revoke token namespace access: %w", err)
+	}
+
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("get rows affected: %w", err)
+	}
+	if rows == 0 {
+		return sql.ErrNoRows
+	}
+
+	return nil
+}
+
+// GetTokenNamespaceAccess retrieves a token-namespace access record.
+func (s *SQLiteStore) GetTokenNamespaceAccess(tokenID, namespaceID string) (*TokenNamespaceAccess, error) {
+	query := `
+		SELECT token_id, namespace_id, is_primary, created_at
+		FROM token_namespace_access
+		WHERE token_id = ? AND namespace_id = ?
+	`
+
+	var access TokenNamespaceAccess
+	err := s.db.QueryRow(query, tokenID, namespaceID).Scan(
+		&access.TokenID,
+		&access.NamespaceID,
+		&access.IsPrimary,
+		&access.CreatedAt,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("scan token namespace access: %w", err)
+	}
+
+	return &access, nil
+}
+
+// ListTokenNamespaces lists namespaces a token can access, primary first.
+func (s *SQLiteStore) ListTokenNamespaces(tokenID string) ([]NamespaceWithAccess, error) {
+	query := `
+		SELECT n.id, n.name, n.created_at, n.repo_limit, n.storage_limit_bytes, n.external_id,
+			   a.is_primary
+		FROM token_namespace_access a
+		JOIN namespaces n ON n.id = a.namespace_id
+		WHERE a.token_id = ?
+		ORDER BY a.is_primary DESC, n.name
+	`
+
+	rows, err := s.db.Query(query, tokenID)
+	if err != nil {
+		return nil, fmt.Errorf("query token namespaces: %w", err)
+	}
+	defer rows.Close()
+
+	var namespaces []NamespaceWithAccess
+	for rows.Next() {
+		var nwa NamespaceWithAccess
+		var repoLimit, storageLimit sql.NullInt64
+		var externalID sql.NullString
+
+		if err := rows.Scan(
+			&nwa.ID,
+			&nwa.Name,
+			&nwa.CreatedAt,
+			&repoLimit,
+			&storageLimit,
+			&externalID,
+			&nwa.IsPrimary,
+		); err != nil {
+			return nil, fmt.Errorf("scan namespace: %w", err)
+		}
+
+		nwa.RepoLimit = FromNullInt64(repoLimit)
+		nwa.StorageLimitBytes = FromNullInt64(storageLimit)
+		nwa.ExternalID = FromNullString(externalID)
+		namespaces = append(namespaces, nwa)
+	}
+
+	return namespaces, rows.Err()
+}
+
+// GetTokenPrimaryNamespace returns the token's primary namespace.
+func (s *SQLiteStore) GetTokenPrimaryNamespace(tokenID string) (*Namespace, error) {
+	query := `
+		SELECT n.id, n.name, n.created_at, n.repo_limit, n.storage_limit_bytes, n.external_id
+		FROM token_namespace_access a
+		JOIN namespaces n ON n.id = a.namespace_id
+		WHERE a.token_id = ? AND a.is_primary = TRUE
+	`
+
+	return s.scanNamespace(s.db.QueryRow(query, tokenID))
+}
+
+// HasTokenNamespaceAccess returns true if the token can access the namespace.
+func (s *SQLiteStore) HasTokenNamespaceAccess(tokenID, namespaceID string) (bool, error) {
+	var count int
+	err := s.db.QueryRow(
+		"SELECT COUNT(*) FROM token_namespace_access WHERE token_id = ? AND namespace_id = ?",
+		tokenID, namespaceID,
+	).Scan(&count)
+	if err != nil {
+		return false, fmt.Errorf("check token namespace access: %w", err)
+	}
+	return count > 0, nil
+}
+
+// CountNamespaceTokens returns the number of tokens with access to a namespace.
+func (s *SQLiteStore) CountNamespaceTokens(namespaceID string) (int, error) {
+	var count int
+	err := s.db.QueryRow(
+		"SELECT COUNT(*) FROM token_namespace_access WHERE namespace_id = ?",
+		namespaceID,
+	).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("count namespace tokens: %w", err)
+	}
+	return count, nil
 }

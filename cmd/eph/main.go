@@ -28,7 +28,7 @@ type Config struct {
 
 func main() {
 	rootCmd := &cobra.Command{
-		Use:   "ephemeral",
+		Use:   "eph",
 		Short: "A minimal, terminal-native git hosting service",
 		Long:  `Ephemeral is a minimal git hosting service with a terminal-first approach.`,
 		RunE:  runTUI,
@@ -40,7 +40,15 @@ func main() {
 		RunE:  runServe,
 	}
 
-	rootCmd.AddCommand(serveCmd)
+	rootCmd.AddCommand(
+		serveCmd,
+		newLoginCmd(),
+		newLogoutCmd(),
+		newContextCmd(),
+		newCredentialCmd(),
+		newNamespaceCmd(),
+		newAdminCmd(),
+	)
 
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -53,14 +61,7 @@ func runTUI(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "Configuration not found.")
 		fmt.Fprintln(os.Stderr, "")
-		fmt.Fprintln(os.Stderr, "Create a config file at ~/.config/ephemeral/config.toml:")
-		fmt.Fprintln(os.Stderr, "")
-		fmt.Fprintln(os.Stderr, `  current_context = "default"`)
-		fmt.Fprintln(os.Stderr, "")
-		fmt.Fprintln(os.Stderr, "  [contexts.default]")
-		fmt.Fprintln(os.Stderr, `  server = "http://localhost:8080"`)
-		fmt.Fprintln(os.Stderr, `  token = "eph_xxx"  # your token from 'ephemeral serve'`)
-		fmt.Fprintln(os.Stderr, `  namespace = "default"`)
+		fmt.Fprintln(os.Stderr, "Run 'eph login' to authenticate with a server.")
 		return fmt.Errorf("config not found: %w", err)
 	}
 
@@ -78,6 +79,9 @@ func runTUI(cmd *cobra.Command, args []string) error {
 	}
 
 	c := client.New(ctx.Server, ctx.Token)
+	if ctx.Namespace != "" {
+		c = c.WithNamespace(ctx.Namespace)
+	}
 
 	return tui.Run(c, ctx.Namespace, ctx.Server)
 }
@@ -105,14 +109,21 @@ func runServe(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("initialize schema: %w", err)
 	}
 
-	token, err := st.GenerateRootToken()
+	token, err := st.GenerateAdminToken()
 	if err != nil {
-		return fmt.Errorf("generate root token: %w", err)
+		return fmt.Errorf("generate admin token: %w", err)
 	}
 
 	if token != "" {
+		tokenPath := filepath.Join(config.Storage.DataDir, "admin-token")
+		if err := os.WriteFile(tokenPath, []byte(token), 0600); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to save admin token to file: %v\n", err)
+		}
+
 		fmt.Println("\n" + strings.Repeat("=", 60))
-		fmt.Println("ROOT TOKEN GENERATED (save this, it won't be shown again):")
+		fmt.Println("ADMIN TOKEN GENERATED")
+		fmt.Println("Saved to: " + tokenPath)
+		fmt.Println(strings.Repeat("=", 60))
 		fmt.Println(token)
 		fmt.Println(strings.Repeat("=", 60) + "\n")
 	}
@@ -122,15 +133,20 @@ func runServe(cmd *cobra.Command, args []string) error {
 	fmt.Printf("Starting Ephemeral server on %s:%d\n", config.Server.Host, config.Server.Port)
 	fmt.Printf("Data directory: %s\n", config.Storage.DataDir)
 	fmt.Println("\nServer is ready to accept connections.")
-	fmt.Println("Example: git clone http://x-token:<token>@localhost:8080/git/default/myrepo.git")
+	fmt.Println("Example: git clone http://x-token:<token>@localhost:8080/git/<namespace>/myrepo.git")
 
 	return srv.Start(config.Server.Host, config.Server.Port)
 }
 
 func loadConfig(path string) (*Config, error) {
 	config := Config{
-		Server:  struct{ Port int `toml:"port"`; Host string `toml:"host"` }{Port: 8080, Host: "0.0.0.0"},
-		Storage: struct{ DataDir string `toml:"data_dir"` }{DataDir: "./data"},
+		Server: struct {
+			Port int    `toml:"port"`
+			Host string `toml:"host"`
+		}{Port: 8080, Host: "0.0.0.0"},
+		Storage: struct {
+			DataDir string `toml:"data_dir"`
+		}{DataDir: "./data"},
 	}
 
 	if _, err := os.Stat(path); err == nil {

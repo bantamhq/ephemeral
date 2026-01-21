@@ -12,8 +12,13 @@ import (
 )
 
 func (s *Server) handleListFolders(w http.ResponseWriter, r *http.Request) {
-	token := s.requireAuth(w, r)
+	token := s.requireUserToken(w, r)
 	if token == nil {
+		return
+	}
+
+	nsID := s.getActiveNamespaceID(w, r, token)
+	if nsID == "" {
 		return
 	}
 
@@ -25,7 +30,7 @@ func (s *Server) handleListFolders(w http.ResponseWriter, r *http.Request) {
 		fetchLimit = limit + 1
 	}
 
-	folders, err := s.store.ListFolders(token.NamespaceID, cursor, fetchLimit)
+	folders, err := s.store.ListFolders(nsID, cursor, fetchLimit)
 	if err != nil {
 		JSONError(w, http.StatusInternalServerError, "Failed to list folders")
 		return
@@ -54,11 +59,16 @@ type createFolderRequest struct {
 }
 
 func (s *Server) handleCreateFolder(w http.ResponseWriter, r *http.Request) {
-	token := s.requireAuth(w, r)
+	token := s.requireUserToken(w, r)
 	if token == nil {
 		return
 	}
 	if !s.requireScope(w, token, store.ScopeRepos) {
+		return
+	}
+
+	nsID := s.getActiveNamespaceID(w, r, token)
+	if nsID == "" {
 		return
 	}
 
@@ -74,7 +84,7 @@ func (s *Server) handleCreateFolder(w http.ResponseWriter, r *http.Request) {
 	}
 	req.Name = strings.ToLower(req.Name)
 
-	existing, err := s.store.GetFolderByName(token.NamespaceID, req.Name)
+	existing, err := s.store.GetFolderByName(nsID, req.Name)
 	if err != nil {
 		JSONError(w, http.StatusInternalServerError, "Failed to check existing folder")
 		return
@@ -86,7 +96,7 @@ func (s *Server) handleCreateFolder(w http.ResponseWriter, r *http.Request) {
 
 	folder := &store.Folder{
 		ID:          uuid.New().String(),
-		NamespaceID: token.NamespaceID,
+		NamespaceID: nsID,
 		Name:        req.Name,
 		Color:       req.Color,
 		CreatedAt:   time.Now(),
@@ -101,7 +111,7 @@ func (s *Server) handleCreateFolder(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleGetFolder(w http.ResponseWriter, r *http.Request) {
-	token := s.requireAuth(w, r)
+	token := s.requireUserToken(w, r)
 	if token == nil {
 		return
 	}
@@ -120,7 +130,7 @@ type updateFolderRequest struct {
 }
 
 func (s *Server) handleUpdateFolder(w http.ResponseWriter, r *http.Request) {
-	token := s.requireAuth(w, r)
+	token := s.requireUserToken(w, r)
 	if token == nil {
 		return
 	}
@@ -179,7 +189,7 @@ func (s *Server) handleUpdateFolder(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDeleteFolder(w http.ResponseWriter, r *http.Request) {
-	token := s.requireAuth(w, r)
+	token := s.requireUserToken(w, r)
 	if token == nil {
 		return
 	}

@@ -59,22 +59,44 @@ func (h *GitHTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	token := GetTokenFromContext(r.Context())
 	isWrite := h.isWriteOperation(r)
 
+	// Admin tokens cannot be used for git operations
+	if token != nil && token.IsAdmin {
+		http.Error(w, "Admin token cannot be used for git operations", http.StatusForbidden)
+		return
+	}
+
 	if isWrite {
 		if token == nil {
 			w.Header().Set("WWW-Authenticate", `Basic realm="Ephemeral"`)
 			http.Error(w, "Authentication required", http.StatusUnauthorized)
 			return
 		}
-		if token.NamespaceID != ns.ID {
+
+		// Check token has access to namespace via junction table
+		hasAccess, err := h.store.HasTokenNamespaceAccess(token.ID, ns.ID)
+		if err != nil {
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return
+		}
+		if !hasAccess {
 			http.Error(w, "Access denied", http.StatusForbidden)
 			return
 		}
 	} else {
-		if token != nil && token.NamespaceID != ns.ID {
-			http.Error(w, "Access denied", http.StatusForbidden)
-			return
+		// For read operations, check namespace access if token is provided
+		if token != nil {
+			hasAccess, err := h.store.HasTokenNamespaceAccess(token.ID, ns.ID)
+			if err != nil {
+				http.Error(w, "Internal server error", http.StatusInternalServerError)
+				return
+			}
+			if !hasAccess {
+				http.Error(w, "Access denied", http.StatusForbidden)
+				return
+			}
 		}
 
+		// Allow anonymous read for public repos
 		if token == nil {
 			repo, err := h.store.GetRepo(ns.ID, repoName)
 			if err != nil {

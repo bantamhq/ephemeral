@@ -136,7 +136,19 @@ func (s *Server) checkRepoAccess(w http.ResponseWriter, r *http.Request) (*store
 		return nil, nil, false
 	}
 
-	if token.NamespaceID != repo.NamespaceID && !HasScope(token, store.ScopeAdmin) {
+	// Admin tokens cannot be used for content access
+	if token.IsAdmin {
+		JSONError(w, http.StatusForbidden, "Admin token cannot be used for this operation")
+		return nil, nil, false
+	}
+
+	// Check token has access to the repo's namespace
+	hasAccess, err := s.store.HasTokenNamespaceAccess(token.ID, repo.NamespaceID)
+	if err != nil {
+		JSONError(w, http.StatusInternalServerError, "Failed to check access")
+		return nil, nil, false
+	}
+	if !hasAccess {
 		JSONError(w, http.StatusForbidden, "Access denied")
 		return nil, nil, false
 	}

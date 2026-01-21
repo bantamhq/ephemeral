@@ -2,15 +2,15 @@
 
 # Build the binary
 build:
-	go build -o workspace/ephemeral ./cmd/ephemeral
+	go build -o workspace/eph ./cmd/eph
 
 # Run the server (from workspace)
 run: build
-	cd workspace && ./ephemeral serve
+	cd workspace && ./eph serve
 
 # Clean build artifacts and test data
 clean:
-	rm -rf workspace/ephemeral workspace/data workspace/client.toml
+	rm -rf workspace/eph workspace/data workspace/client.toml
 
 # Full clean (including test repos)
 clean-all:
@@ -28,7 +28,7 @@ dev: clean workspace-setup build
 
 # Run TUI with dev config
 dev-tui:
-	@cd workspace && EPHEMERAL_CONFIG=./client.toml ./ephemeral
+	@cd workspace && EPHEMERAL_CONFIG=./client.toml ./eph
 
 # Run unit tests
 test:

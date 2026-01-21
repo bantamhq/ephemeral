@@ -8,6 +8,7 @@ workspace/
 
 # Build artifacts
 /ephemeral
+/eph
 
 # Data directory (when run from root)
 data/

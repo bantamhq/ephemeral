@@ -44,9 +44,9 @@ TEST_DIR=$(mktemp -d)
 echo -e "${BLUE}Test directory: $TEST_DIR${NC}"
 
 # Build the binary
-echo -e "${BLUE}Building ephemeral...${NC}"
+echo -e "${BLUE}Building eph...${NC}"
 cd "$PROJECT_ROOT"
-go build -o "$TEST_DIR/ephemeral" ./cmd/ephemeral
+go build -o "$TEST_DIR/eph" ./cmd/eph
 
 # Create config
 cat > "$TEST_DIR/server.toml" << EOF
@@ -61,23 +61,28 @@ EOF
 # Start server and capture output
 echo -e "${BLUE}Starting server...${NC}"
 cd "$TEST_DIR"
-./ephemeral serve > server.log 2>&1 &
+./eph serve > server.log 2>&1 &
 SERVER_PID=$!
 
-# Wait for server to start and extract token
-TOKEN=""
+# Wait for server to start and extract admin token
+ADMIN_TOKEN=""
 for i in {1..30}; do
     if [ -f server.log ]; then
-        TOKEN=$(grep -A1 "ROOT TOKEN GENERATED" server.log 2>/dev/null | tail -1 | tr -d ' ' || true)
-        if [ -n "$TOKEN" ] && [[ "$TOKEN" == eph_* ]]; then
+        ADMIN_TOKEN=$(grep -m1 "^eph_" server.log 2>/dev/null | tr -d ' ' || true)
+        if [ -n "$ADMIN_TOKEN" ] && [[ "$ADMIN_TOKEN" == eph_* ]]; then
             break
         fi
     fi
     sleep 0.2
 done
 
-if [ -z "$TOKEN" ] || [[ "$TOKEN" != eph_* ]]; then
-    echo -e "${RED}Failed to get token from server${NC}"
+# Also try reading from file
+if [ -z "$ADMIN_TOKEN" ] && [ -f data/admin-token ]; then
+    ADMIN_TOKEN=$(cat data/admin-token)
+fi
+
+if [ -z "$ADMIN_TOKEN" ] || [[ "$ADMIN_TOKEN" != eph_* ]]; then
+    echo -e "${RED}Failed to get admin token from server${NC}"
     echo "Server log:"
     cat server.log
     exit 1
@@ -100,8 +105,42 @@ fi
 
 echo -e "${GREEN}Server ready${NC}"
 
+# Create test namespace
+echo -e "${BLUE}Creating test namespace...${NC}"
+NS_RESPONSE=$(curl -s -X POST \
+    -H "Authorization: Bearer $ADMIN_TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"name":"test"}' \
+    "http://127.0.0.1:$TEST_PORT/api/v1/admin/namespaces")
+
+NS_ID=$(echo "$NS_RESPONSE" | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
+
+if [ -z "$NS_ID" ]; then
+    echo -e "${RED}Failed to create test namespace${NC}"
+    echo "$NS_RESPONSE"
+    exit 1
+fi
+
+# Create user token for tests
+echo -e "${BLUE}Creating user token...${NC}"
+TOKEN_RESPONSE=$(curl -s -X POST \
+    -H "Authorization: Bearer $ADMIN_TOKEN" \
+    -H "Content-Type: application/json" \
+    -d "{\"namespace_id\":\"$NS_ID\",\"name\":\"test-token\",\"scope\":\"full\"}" \
+    "http://127.0.0.1:$TEST_PORT/api/v1/admin/tokens")
+
+TOKEN=$(echo "$TOKEN_RESPONSE" | grep -o '"token":"[^"]*"' | head -1 | cut -d'"' -f4)
+
+if [ -z "$TOKEN" ]; then
+    echo -e "${RED}Failed to create user token${NC}"
+    echo "$TOKEN_RESPONSE"
+    exit 1
+fi
+
 # Export for test scripts
 export TOKEN
+export ADMIN_TOKEN
+export NS_ID
 export BASE_URL="http://127.0.0.1:$TEST_PORT"
 
 echo ""
@@ -110,6 +149,7 @@ echo -e "${BLUE}║     Ephemeral API Integration Tests   ║${NC}"
 echo -e "${BLUE}╚═══════════════════════════════════════╝${NC}"
 echo ""
 echo -e "Server: ${YELLOW}$BASE_URL${NC}"
+echo -e "Namespace: ${YELLOW}test${NC}"
 echo ""
 
 FAILED_SUITES=""
@@ -126,8 +166,8 @@ run_suite() {
 # Run each test suite
 run_suite "System" "system.sh"
 run_suite "Repos" "repos.sh"
-run_suite "Tokens" "tokens.sh"
-run_suite "Namespaces" "namespaces.sh"
+run_suite "Admin-Tokens" "tokens.sh"
+run_suite "Admin-Namespaces" "namespaces.sh"
 run_suite "Folders" "folders.sh"
 run_suite "Content" "content.sh"
 

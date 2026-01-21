@@ -3,6 +3,7 @@
 
 BASE_URL="${BASE_URL:-http://localhost:8080}"
 API="$BASE_URL/api/v1"
+ADMIN_API="$BASE_URL/api/v1/admin"
 
 # Colors
 RED='\033[0;31m'
@@ -19,7 +20,6 @@ FAIL=0
 CREATED_REPOS=""
 CREATED_TOKENS=""
 CREATED_FOLDERS=""
-CREATED_LABELS=""
 CREATED_NAMESPACES=""
 
 pass() {
@@ -43,8 +43,14 @@ info() {
     echo -e "${BLUE}→${NC} $1"
 }
 
+# User token API calls
 auth_curl() {
     curl -s -H "Authorization: Bearer $TOKEN" "$@"
+}
+
+# Admin token API calls
+admin_curl() {
+    curl -s -H "Authorization: Bearer $ADMIN_TOKEN" "$@"
 }
 
 # auth_curl_with takes a token as first arg, rest are passed to curl
@@ -134,15 +140,11 @@ track_folder() {
     CREATED_FOLDERS="$CREATED_FOLDERS $1"
 }
 
-track_label() {
-    CREATED_LABELS="$CREATED_LABELS $1"
-}
-
 track_namespace() {
     CREATED_NAMESPACES="$CREATED_NAMESPACES $1"
 }
 
-# Cleanup all tracked resources
+# Cleanup all tracked resources (uses admin token for admin resources)
 cleanup() {
     echo ""
     section "Cleanup"
@@ -153,7 +155,7 @@ cleanup() {
     done
 
     for id in $CREATED_TOKENS; do
-        auth_curl -X DELETE "$API/tokens/$id" > /dev/null 2>&1 || true
+        admin_curl -X DELETE "$ADMIN_API/tokens/$id" > /dev/null 2>&1 || true
         info "Deleted token: $id"
     done
 
@@ -162,13 +164,8 @@ cleanup() {
         info "Deleted folder: $id"
     done
 
-    for id in $CREATED_LABELS; do
-        auth_curl -X DELETE "$API/labels/$id" > /dev/null 2>&1 || true
-        info "Deleted label: $id"
-    done
-
     for id in $CREATED_NAMESPACES; do
-        auth_curl -X DELETE "$API/namespaces/$id" > /dev/null 2>&1 || true
+        admin_curl -X DELETE "$ADMIN_API/namespaces/$id" > /dev/null 2>&1 || true
         info "Deleted namespace: $id"
     done
 }
@@ -186,11 +183,20 @@ summary() {
     return 0
 }
 
-# Check token is set
+# Check user token is set
 require_token() {
     if [ -z "$TOKEN" ]; then
         echo "Error: TOKEN environment variable is required"
         echo "Usage: TOKEN=eph_xxx $0"
+        exit 1
+    fi
+}
+
+# Check admin token is set
+require_admin_token() {
+    if [ -z "$ADMIN_TOKEN" ]; then
+        echo "Error: ADMIN_TOKEN environment variable is required"
+        echo "Usage: ADMIN_TOKEN=eph_xxx $0"
         exit 1
     fi
 }
