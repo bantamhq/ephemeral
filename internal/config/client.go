@@ -9,14 +9,9 @@ import (
 )
 
 type ClientConfig struct {
-	CurrentContext string             `toml:"current_context"`
-	Contexts       map[string]Context `toml:"contexts"`
-}
-
-type Context struct {
-	Server    string `toml:"server"`
-	Token     string `toml:"token"`
-	Namespace string `toml:"namespace"`
+	Server           string `toml:"server"`
+	Token            string `toml:"token"`
+	DefaultNamespace string `toml:"default_namespace"`
 }
 
 const globalConfigPath = ".config/ephemeral/config.toml"
@@ -49,9 +44,7 @@ func Load() (*ClientConfig, error) {
 		return nil, fmt.Errorf("access config: %w", err)
 	}
 
-	config := &ClientConfig{
-		Contexts: make(map[string]Context),
-	}
+	config := &ClientConfig{}
 
 	if _, err := toml.DecodeFile(path, config); err != nil {
 		return nil, fmt.Errorf("decode config: %w", err)
@@ -87,15 +80,19 @@ func (c *ClientConfig) Save() error {
 	return nil
 }
 
-func (c *ClientConfig) Current() *Context {
-	if c.CurrentContext == "" {
-		return nil
+func (c *ClientConfig) IsConfigured() bool {
+	return c.Server != "" && c.Token != ""
+}
+
+func Delete() error {
+	path, err := configPath()
+	if err != nil {
+		return err
 	}
 
-	ctx, ok := c.Contexts[c.CurrentContext]
-	if !ok {
-		return nil
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("remove config: %w", err)
 	}
 
-	return &ctx
+	return nil
 }

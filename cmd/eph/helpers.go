@@ -57,19 +57,6 @@ func stripDefaultPort(host, scheme string) string {
 	return host
 }
 
-func generateContextName(serverURL string) string {
-	parsed, err := url.Parse(serverURL)
-	if err != nil {
-		return "default"
-	}
-
-	host := parsed.Host
-	host = strings.ReplaceAll(host, ":", "-")
-	host = strings.ReplaceAll(host, ".", "-")
-
-	return host
-}
-
 func readToken() (string, error) {
 	if term.IsTerminal(int(os.Stdin.Fd())) {
 		tokenBytes, err := term.ReadPassword(int(os.Stdin.Fd()))

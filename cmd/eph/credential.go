@@ -50,12 +50,13 @@ func runCredentialGet(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	for _, ctx := range cfg.Contexts {
-		if hostMatches(ctx.Server, host) {
-			fmt.Printf("username=x-token\n")
-			fmt.Printf("password=%s\n", ctx.Token)
-			return nil
-		}
+	if !cfg.IsConfigured() {
+		return nil
+	}
+
+	if hostMatches(cfg.Server, host) {
+		fmt.Printf("username=x-token\n")
+		fmt.Printf("password=%s\n", cfg.Token)
 	}
 
 	return nil

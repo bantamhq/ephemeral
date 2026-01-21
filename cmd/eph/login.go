@@ -24,6 +24,11 @@ If no server is specified, defaults to http://localhost:8080.`,
 }
 
 func runLogin(cmd *cobra.Command, args []string) error {
+	cfg, _ := config.Load()
+	if cfg != nil && cfg.IsConfigured() {
+		return fmt.Errorf("already logged in to %s. Run 'eph logout' first to switch servers", cfg.Server)
+	}
+
 	serverURL := "http://localhost:8080"
 	if len(args) > 0 {
 		serverURL = args[0]
@@ -66,20 +71,11 @@ func runLogin(cmd *cobra.Command, args []string) error {
 		primaryNs = namespaces[0].Name
 	}
 
-	cfg, err := config.Load()
-	if err != nil {
-		cfg = &config.ClientConfig{
-			Contexts: make(map[string]config.Context),
-		}
+	cfg = &config.ClientConfig{
+		Server:           serverURL,
+		Token:            token,
+		DefaultNamespace: primaryNs,
 	}
-
-	contextName := generateContextName(serverURL)
-	cfg.Contexts[contextName] = config.Context{
-		Server:    serverURL,
-		Token:     token,
-		Namespace: primaryNs,
-	}
-	cfg.CurrentContext = contextName
 
 	if err := cfg.Save(); err != nil {
 		return fmt.Errorf("save config: %w", err)
@@ -89,9 +85,8 @@ func runLogin(cmd *cobra.Command, args []string) error {
 		fmt.Fprintf(os.Stderr, "Warning: failed to configure git credential helper: %v\n", err)
 	}
 
-	fmt.Printf("Logged in to %s as namespace %q\n", serverURL, primaryNs)
-	fmt.Printf("Context %q saved and set as current.\n", contextName)
-	fmt.Printf("Git credential helper configured for %s\n", serverURL)
+	fmt.Printf("Logged in to %s\n", serverURL)
+	fmt.Printf("Default namespace: %s\n", primaryNs)
 	if len(namespaces) > 1 {
 		fmt.Printf("You have access to %d namespaces. Use 'eph namespace' to list them.\n", len(namespaces))
 	}

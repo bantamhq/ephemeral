@@ -44,7 +44,6 @@ func main() {
 		serveCmd,
 		newLoginCmd(),
 		newLogoutCmd(),
-		newContextCmd(),
 		newCredentialCmd(),
 		newNamespaceCmd(),
 		newAdminCmd(),
@@ -59,31 +58,22 @@ func main() {
 func runTUI(cmd *cobra.Command, args []string) error {
 	cfg, err := config.Load()
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "Configuration not found.")
+		fmt.Fprintln(os.Stderr, "Not logged in.")
 		fmt.Fprintln(os.Stderr, "")
-		fmt.Fprintln(os.Stderr, "Run 'eph login' to authenticate with a server.")
+		fmt.Fprintln(os.Stderr, "Run 'eph login <server>' to authenticate.")
 		return fmt.Errorf("config not found: %w", err)
 	}
 
-	ctx := cfg.Current()
-	if ctx == nil {
-		return fmt.Errorf("no current context configured")
+	if !cfg.IsConfigured() {
+		return fmt.Errorf("not logged in - run 'eph login <server>' to authenticate")
 	}
 
-	if ctx.Server == "" {
-		return fmt.Errorf("server not configured in context")
+	c := client.New(cfg.Server, cfg.Token)
+	if cfg.DefaultNamespace != "" {
+		c = c.WithNamespace(cfg.DefaultNamespace)
 	}
 
-	if ctx.Token == "" {
-		return fmt.Errorf("token not configured in context")
-	}
-
-	c := client.New(ctx.Server, ctx.Token)
-	if ctx.Namespace != "" {
-		c = c.WithNamespace(ctx.Namespace)
-	}
-
-	return tui.Run(c, ctx.Namespace, ctx.Server)
+	return tui.Run(c, cfg.DefaultNamespace, cfg.Server)
 }
 
 func runServe(cmd *cobra.Command, args []string) error {

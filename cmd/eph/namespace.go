@@ -32,15 +32,14 @@ func newNamespaceCmd() *cobra.Command {
 func runNamespaceList(cmd *cobra.Command, args []string) error {
 	cfg, err := config.Load()
 	if err != nil {
-		return fmt.Errorf("load config: %w", err)
+		return fmt.Errorf("not logged in - run 'eph login <server>' to authenticate")
 	}
 
-	ctx := cfg.Current()
-	if ctx == nil {
-		return fmt.Errorf("no current context configured")
+	if !cfg.IsConfigured() {
+		return fmt.Errorf("not logged in - run 'eph login <server>' to authenticate")
 	}
 
-	c := client.New(ctx.Server, ctx.Token)
+	c := client.New(cfg.Server, cfg.Token)
 
 	namespaces, err := c.ListNamespaces()
 	if err != nil {
@@ -57,7 +56,7 @@ func runNamespaceList(cmd *cobra.Command, args []string) error {
 		if ns.IsPrimary {
 			marker = "* "
 		}
-		if ctx.Namespace != "" && ctx.Namespace == ns.Name {
+		if cfg.DefaultNamespace == ns.Name {
 			marker = "> "
 		}
 		fmt.Printf("%s%s\n", marker, ns.Name)
@@ -65,9 +64,7 @@ func runNamespaceList(cmd *cobra.Command, args []string) error {
 
 	fmt.Println()
 	fmt.Println("* = primary namespace")
-	if ctx.Namespace != "" {
-		fmt.Println("> = current context namespace")
-	}
+	fmt.Println("> = default namespace")
 
 	return nil
 }
@@ -77,16 +74,14 @@ func runNamespaceUse(cmd *cobra.Command, args []string) error {
 
 	cfg, err := config.Load()
 	if err != nil {
-		return fmt.Errorf("load config: %w", err)
+		return fmt.Errorf("not logged in - run 'eph login <server>' to authenticate")
 	}
 
-	ctxName := cfg.CurrentContext
-	ctx, ok := cfg.Contexts[ctxName]
-	if !ok {
-		return fmt.Errorf("no current context configured")
+	if !cfg.IsConfigured() {
+		return fmt.Errorf("not logged in - run 'eph login <server>' to authenticate")
 	}
 
-	c := client.New(ctx.Server, ctx.Token)
+	c := client.New(cfg.Server, cfg.Token)
 
 	namespaces, err := c.ListNamespaces()
 	if err != nil {
@@ -97,14 +92,13 @@ func runNamespaceUse(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("namespace %q not found or no access", name)
 	}
 
-	ctx.Namespace = name
-	cfg.Contexts[ctxName] = ctx
+	cfg.DefaultNamespace = name
 
 	if err := cfg.Save(); err != nil {
 		return fmt.Errorf("save config: %w", err)
 	}
 
-	fmt.Printf("Switched to namespace %q\n", name)
+	fmt.Printf("Default namespace set to %q\n", name)
 	return nil
 }
 

@@ -21,41 +21,24 @@ func newLogoutCmd() *cobra.Command {
 func runLogout(cmd *cobra.Command, args []string) error {
 	cfg, err := config.Load()
 	if err != nil {
-		return fmt.Errorf("load config: %w", err)
+		return fmt.Errorf("not logged in")
 	}
 
-	if cfg.CurrentContext == "" {
-		return fmt.Errorf("no current context set")
+	if !cfg.IsConfigured() {
+		return fmt.Errorf("not logged in")
 	}
 
-	ctx, ok := cfg.Contexts[cfg.CurrentContext]
-	if !ok {
-		return fmt.Errorf("current context %q not found", cfg.CurrentContext)
-	}
+	serverURL := cfg.Server
 
-	serverURL := ctx.Server
-	contextName := cfg.CurrentContext
-
-	delete(cfg.Contexts, cfg.CurrentContext)
-
-	cfg.CurrentContext = ""
-	for name := range cfg.Contexts {
-		cfg.CurrentContext = name
-		break
-	}
-
-	if err := cfg.Save(); err != nil {
-		return fmt.Errorf("save config: %w", err)
+	if err := config.Delete(); err != nil {
+		return fmt.Errorf("delete config: %w", err)
 	}
 
 	if err := unconfigureGitHelper(serverURL); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: failed to remove git credential helper: %v\n", err)
 	}
 
-	fmt.Printf("Logged out of %q\n", contextName)
-	if cfg.CurrentContext != "" {
-		fmt.Printf("Switched to context %q\n", cfg.CurrentContext)
-	}
+	fmt.Printf("Logged out of %s\n", serverURL)
 
 	return nil
 }
