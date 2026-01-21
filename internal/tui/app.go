@@ -17,6 +17,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/lipgloss/tree"
 	"github.com/rmhubbert/bubbletea-overlay"
 
 	"ephemeral/internal/client"
@@ -1268,31 +1269,66 @@ func (m Model) getActivityContent(width int) string {
 		return " " + StyleMetaText.Render("No commits")
 	}
 
-	maxMsgLen := max(width-activityMessagePadding, activityMessageMinWidth)
-	var b strings.Builder
-
-	for i, commit := range m.currentDetail.Commits {
+	t := tree.Root(" ⁜ Commits")
+	enumeratorWidth := lipgloss.Width(StyleTreeEnumerator.Render("├─"))
+	for _, commit := range m.currentDetail.Commits {
 		shortSHA := commit.SHA
 		if len(shortSHA) > shortSHAWidth {
 			shortSHA = shortSHA[:shortSHAWidth]
 		}
 
-		message := strings.Split(commit.Message, "\n")[0]
-		if len(message) > maxMsgLen {
-			message = message[:maxMsgLen-1] + "…"
-		}
-
+		message := firstLine(commit.Message)
 		timeAgo := formatRelativeTime(&commit.Author.Date)
 
-		b.WriteString(" " + StyleMetaText.Render(shortSHA) + " " + message + "\n")
-		b.WriteString(" " + StyleMetaText.Render(fmt.Sprintf("  %s • %s", commit.Author.Name, timeAgo)))
-
-		if i < len(m.currentDetail.Commits)-1 {
-			b.WriteString("\n\n")
+		messageWidth := width - enumeratorWidth - lipgloss.Width(shortSHA) - lipgloss.Width("•") - lipgloss.Width(timeAgo) - 3
+		if messageWidth < 1 {
+			commitLine := StyleCommitHash.Render(shortSHA) + " " + StyleMetaText.Render("•") + " " + StyleMetaText.Render(timeAgo)
+			t.Child(tree.Root(commitLine).Child(renderCommitStats(4, 64, 74)))
+			continue
 		}
+
+		message = truncateWithEllipsis(message, messageWidth)
+
+		commitLine := StyleCommitHash.Render(shortSHA) + " " + StyleMetaText.Render("•") + " " + message + " " + StyleMetaText.Render(timeAgo)
+		t.Child(tree.Root(commitLine).Child(renderCommitStats(4, 64, 74)))
 	}
 
-	return b.String()
+	t.EnumeratorStyle(StyleTreeEnumerator).
+		Enumerator(treeEnumerator).
+		Indenter(treeIndenter)
+
+	return t.String()
+}
+
+func treeEnumerator(children tree.Children, index int) string {
+	if children.Length()-1 == index {
+		return "└─"
+	}
+	return "├─"
+}
+
+func treeIndenter(children tree.Children, index int) string {
+	if children.Length()-1 == index {
+		return "  "
+	}
+	return "│ "
+}
+
+func renderCommitStats(files, additions, deletions int) string {
+	base := StyleCommitStat.Render(fmt.Sprintf("%d files, %d(", files, additions))
+	added := StyleCommitStatAdded.Render("+")
+	middle := StyleCommitStat.Render(fmt.Sprintf("), %d(", deletions))
+	removed := StyleCommitStatRemoved.Render("-")
+	end := StyleCommitStat.Render(")")
+
+	return base + added + middle + removed + end
+}
+
+func firstLine(s string) string {
+	if idx := strings.Index(s, "\n"); idx != -1 {
+		return s[:idx]
+	}
+	return s
 }
 
 func (m Model) getFilesContent(width int) string {
@@ -1300,31 +1336,38 @@ func (m Model) getFilesContent(width int) string {
 		return " " + StyleMetaText.Render("No files")
 	}
 
-	var lines []string
-	for _, entry := range m.currentDetail.Tree {
-		icon := "[f]"
-		if entry.Type == "dir" {
-			icon = "[d]"
-		}
+	entries := sortTreeEntries(m.currentDetail.Tree)
 
+	t := tree.Root(" ⁜")
+	for _, entry := range entries {
 		name := entry.Name
-		maxNameLen := width - fileNamePadding
-		if maxNameLen < fileNameMinWidth {
-			maxNameLen = fileNameMinWidth
+		if entry.Type == "dir" {
+			name = StyleTreeDir.Render(name)
 		}
-		if len(name) > maxNameLen {
-			name = name[:maxNameLen-1] + "…"
-		}
-
-		line := " " + icon + " " + name
-		if entry.Size != nil {
-			line = m.rightAlignInWidth(line, formatSize(int(*entry.Size)), width-1)
-		}
-		lines = append(lines, line)
+		t.Child(name)
 	}
 
-	return strings.Join(lines, "\n")
+	t.EnumeratorStyle(StyleTreeEnumerator).
+		Enumerator(treeEnumerator).
+		Indenter(treeIndenter)
+
+	return t.String()
 }
+
+func sortTreeEntries(entries []client.TreeEntry) []client.TreeEntry {
+	sorted := make([]client.TreeEntry, len(entries))
+	copy(sorted, entries)
+
+	sort.Slice(sorted, func(i, j int) bool {
+		if sorted[i].Type != sorted[j].Type {
+			return sorted[i].Type == "dir"
+		}
+		return strings.ToLower(sorted[i].Name) < strings.ToLower(sorted[j].Name)
+	})
+
+	return sorted
+}
+
 
 func (m Model) View() string {
 	if m.width == 0 {

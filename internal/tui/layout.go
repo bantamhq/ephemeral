@@ -31,12 +31,8 @@ const (
 
 	detailCommitsLimit = 20
 
-	activityMessagePadding    = 12
-	activityMessageMinWidth   = 10
-	shortSHAWidth             = 7
-	fileNamePadding           = 16
-	fileNameMinWidth          = 5
-	tabContentBorderWidth     = 2
+	shortSHAWidth           = 7
+	tabContentBorderWidth   = 2
 	tabScrollIndicatorPadding = 2
 
 	dialogWidth          = 40

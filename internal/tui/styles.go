@@ -8,6 +8,9 @@ var (
 	colorTextOnPrimary = lipgloss.Color("230")
 	colorText          = lipgloss.Color("255")
 	colorTextMuted     = lipgloss.Color("243")
+	colorCommitHash    = lipgloss.Color("109")
+	colorGitAdded      = lipgloss.Color("71")
+	colorGitRemoved    = lipgloss.Color("203")
 	colorSurface       = lipgloss.Color("236")
 	colorWarning       = lipgloss.Color("11")
 	colorError         = lipgloss.Color("9")
@@ -95,4 +98,24 @@ var (
 
 	StyleTabBorderActive = lipgloss.NewStyle().
 				Foreground(colorPrimaryDark)
+
+	StyleTreeEnumerator = lipgloss.NewStyle().
+				Foreground(colorTextMuted).
+				Padding(0, 1)
+
+	StyleTreeDir = lipgloss.NewStyle().
+			Foreground(colorText).
+			Bold(true)
+
+	StyleCommitHash = lipgloss.NewStyle().
+			Foreground(colorCommitHash)
+	StyleCommitStat = lipgloss.NewStyle().
+			Foreground(colorTextMuted).
+			Faint(true)
+	StyleCommitStatAdded = lipgloss.NewStyle().
+				Foreground(colorGitAdded).
+				Faint(true)
+	StyleCommitStatRemoved = lipgloss.NewStyle().
+				Foreground(colorGitRemoved).
+				Faint(true)
 )
