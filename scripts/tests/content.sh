@@ -79,9 +79,21 @@ git add .
 git commit -q -m "Update README"
 git push -q origin main 2>/dev/null
 
+MAIN_HEAD_SHA=$(git rev-parse HEAD)
+MAIN_BASE_SHA=$(git rev-parse HEAD~1)
+
 # Create tag
 git tag v1.0.0
 git push -q origin v1.0.0 2>/dev/null
+
+# Create feature branch
+git checkout -q -b feature/api
+echo "Feature change" >> docs/index.md
+git add docs/index.md
+git commit -q -m "Add feature docs"
+git push -q origin feature/api 2>/dev/null
+
+FEATURE_HEAD_SHA=$(git rev-parse HEAD)
 
 cd /
 rm -rf "$TMPDIR"
@@ -112,6 +124,56 @@ expect_json "$RESPONSE" '.data[0].name' "main" "main is first (default)"
 expect_json "$RESPONSE" '.data[0].is_default' "true" "main is_default=true"
 
 ###############################################################################
+section "Ref Management"
+###############################################################################
+
+API_BRANCH="api/feature"
+API_BRANCH_RENAMED="api/feature-renamed"
+API_TAG="api-tag"
+
+RESPONSE=$(auth_curl -X POST -H "Content-Type: application/json" \
+    -d "{\"name\":\"$API_BRANCH\",\"type\":\"branch\",\"target\":\"main\"}" \
+    "$API/repos/$REPO_ID/refs")
+expect_contains "$RESPONSE" '"name":"api/feature"' "create branch via API"
+expect_json "$RESPONSE" '.data.type' "branch" "branch type returned"
+
+RESPONSE=$(auth_curl -X POST -H "Content-Type: application/json" \
+    -d "{\"name\":\"$API_TAG\",\"type\":\"tag\",\"target\":\"main\"}" \
+    "$API/repos/$REPO_ID/refs")
+expect_contains "$RESPONSE" '"name":"api-tag"' "create tag via API"
+expect_json "$RESPONSE" '.data.type' "tag" "tag type returned"
+
+RESPONSE=$(auth_curl -X PATCH -H "Content-Type: application/json" \
+    -d "{\"target\":\"$MAIN_BASE_SHA\"}" \
+    "$API/repos/$REPO_ID/refs/branch/$API_BRANCH")
+expect_contains "$RESPONSE" "$MAIN_BASE_SHA" "update branch target"
+
+RESPONSE=$(auth_curl -X PATCH -H "Content-Type: application/json" \
+    -d "{\"new_name\":\"$API_BRANCH_RENAMED\"}" \
+    "$API/repos/$REPO_ID/refs/branch/$API_BRANCH")
+expect_contains "$RESPONSE" '"name":"api/feature-renamed"' "rename branch"
+
+RESPONSE=$(auth_curl -X PUT -H "Content-Type: application/json" \
+    -d "{\"name\":\"$API_BRANCH_RENAMED\"}" \
+    "$API/repos/$REPO_ID/default-branch")
+expect_contains "$RESPONSE" '"name":"api/feature-renamed"' "default branch set"
+
+RESPONSE=$(auth_curl "$API/repos/$REPO_ID/refs")
+expect_json "$RESPONSE" '.data[0].name' "$API_BRANCH_RENAMED" "default branch moved"
+
+auth_curl -X PUT -H "Content-Type: application/json" \
+    -d '{"name":"main"}' \
+    "$API/repos/$REPO_ID/default-branch" > /dev/null
+
+auth_curl -X DELETE "$API/repos/$REPO_ID/refs/branch/$API_BRANCH_RENAMED" > /dev/null
+RESPONSE=$(auth_curl "$API/repos/$REPO_ID/refs")
+expect_not_contains "$RESPONSE" '"name":"api/feature-renamed"' "branch deleted"
+
+auth_curl -X DELETE "$API/repos/$REPO_ID/refs/tag/$API_TAG" > /dev/null
+RESPONSE=$(auth_curl "$API/repos/$REPO_ID/refs")
+expect_not_contains "$RESPONSE" '"name":"api-tag"' "tag deleted"
+
+###############################################################################
 section "Commits"
 ###############################################################################
 
@@ -137,6 +199,17 @@ else
     fail "stats.files_changed is integer" "integer" "$FILES_CHANGED"
 fi
 
+LATEST_SHA=$(echo "$RESPONSE" | jq -r '.data[0].sha')
+if [ -n "$LATEST_SHA" ] && [ "$LATEST_SHA" != "null" ]; then
+    pass "captured latest commit sha"
+else
+    fail "captured latest commit sha" "non-empty sha" "$LATEST_SHA"
+fi
+
+# Path filter
+RESPONSE=$(auth_curl "$API/repos/$REPO_ID/commits?ref=main&path=README.md")
+expect_contains "$RESPONSE" '"message":"Update README' "path filter returns commits"
+
 # Pagination
 RESPONSE=$(auth_curl "$API/repos/$REPO_ID/commits?limit=1")
 expect_json "$RESPONSE" '.has_more' "true" "limit=1 has_more=true"
@@ -149,6 +222,32 @@ expect_contains "$RESPONSE" "Invalid cursor" "invalid cursor rejected"
 # Tag ref
 RESPONSE=$(auth_curl "$API/repos/$REPO_ID/commits?ref=v1.0.0")
 expect_contains "$RESPONSE" '"sha"' "tag ref works"
+
+###############################################################################
+section "Commit Detail"
+###############################################################################
+
+RESPONSE=$(auth_curl "$API/repos/$REPO_ID/commits/$MAIN_HEAD_SHA")
+expect_contains "$RESPONSE" "$MAIN_HEAD_SHA" "commit detail returns sha"
+expect_contains "$RESPONSE" '"message":"Update README' "commit detail returns message"
+expect_json "$RESPONSE" '.data.parent_shas[0]' "$MAIN_BASE_SHA" "commit detail parent sha"
+
+RESPONSE=$(auth_curl "$API/repos/$REPO_ID/commits/$MAIN_HEAD_SHA/diff")
+expect_contains "$RESPONSE" 'README.md' "commit diff includes README"
+expect_json "$RESPONSE" '.data.stats.files_changed' "1" "commit diff stats"
+
+###############################################################################
+section "Compare"
+###############################################################################
+
+RESPONSE=$(auth_curl "$API/repos/$REPO_ID/compare/main...feature%2Fapi")
+expect_json "$RESPONSE" '.data.ahead_by' "1" "compare ahead_by=1"
+expect_json "$RESPONSE" '.data.behind_by' "0" "compare behind_by=0"
+expect_json "$RESPONSE" '.data.merge_base_sha' "$MAIN_HEAD_SHA" "compare merge base"
+expect_json "$RESPONSE" '.data.base_sha' "$MAIN_HEAD_SHA" "compare base sha"
+expect_json "$RESPONSE" '.data.head_sha' "$FEATURE_HEAD_SHA" "compare head sha"
+expect_json "$RESPONSE" '.data.commits | length' "1" "compare returns 1 commit"
+expect_contains "$RESPONSE" 'Feature change' "compare diff includes change"
 
 ###############################################################################
 section "Tree"
@@ -243,8 +342,53 @@ else
 fi
 
 ###############################################################################
+section "Blame"
+###############################################################################
+
+RESPONSE=$(auth_curl "$API/repos/$REPO_ID/blame/main/README.md")
+LINE_COUNT=$(echo "$RESPONSE" | jq '.data.lines | length')
+if [ "$LINE_COUNT" -ge "1" ]; then
+    pass "blame returns lines"
+else
+    fail "blame returns lines" ">=1" "$LINE_COUNT"
+fi
+expect_contains "$RESPONSE" "$MAIN_HEAD_SHA" "blame includes latest commit"
+
+###############################################################################
+section "Archive"
+###############################################################################
+
+CONTENT_TYPE=$(auth_curl -o /dev/null -w "%{content_type}" "$API/repos/$REPO_ID/archive/main?format=zip")
+if [ "$CONTENT_TYPE" = "application/zip" ]; then
+    pass "archive zip content-type"
+else
+    fail "archive zip content-type" "application/zip" "$CONTENT_TYPE"
+fi
+
+CONTENT_TYPE=$(auth_curl -o /dev/null -w "%{content_type}" "$API/repos/$REPO_ID/archive/main?format=tar.gz")
+if [ "$CONTENT_TYPE" = "application/gzip" ]; then
+    pass "archive tar.gz content-type"
+else
+    fail "archive tar.gz content-type" "application/gzip" "$CONTENT_TYPE"
+fi
+
+###############################################################################
 section "Error Cases"
 ###############################################################################
+
+# Invalid ref type
+RESPONSE=$(auth_curl -X POST -H "Content-Type: application/json" \
+    -d '{"name":"bad-ref","type":"unknown"}' \
+    "$API/repos/$REPO_ID/refs")
+expect_contains "$RESPONSE" "Invalid ref type" "invalid ref type rejected"
+
+# Missing path history
+RESPONSE=$(auth_curl "$API/repos/$REPO_ID/commits?ref=main&path=missing.txt")
+expect_contains "$RESPONSE" 'not found' "missing history path returns error"
+
+# Invalid archive format
+RESPONSE=$(auth_curl "$API/repos/$REPO_ID/archive/main?format=rar")
+expect_contains "$RESPONSE" "Invalid archive format" "invalid archive format rejected"
 
 # Non-existent repo
 RESPONSE=$(auth_curl "$API/repos/nonexistent/refs")
@@ -282,11 +426,21 @@ expect_contains "$RESPONSE" '"name":"main"' "public: anonymous refs access"
 RESPONSE=$(anon_curl "$API/repos/$REPO_ID/commits")
 expect_contains "$RESPONSE" '"sha"' "public: anonymous commits access"
 
+RESPONSE=$(anon_curl "$API/repos/$REPO_ID/commits/$MAIN_HEAD_SHA")
+expect_contains "$RESPONSE" "$MAIN_HEAD_SHA" "public: anonymous commit detail"
+
 RESPONSE=$(anon_curl "$API/repos/$REPO_ID/tree/main/")
 expect_contains "$RESPONSE" '"name":"README.md"' "public: anonymous tree access"
 
 RESPONSE=$(anon_curl "$API/repos/$REPO_ID/blob/main/README.md")
 expect_contains "$RESPONSE" 'Test Repository' "public: anonymous blob access"
+
+CONTENT_TYPE=$(anon_curl -o /dev/null -w "%{content_type}" "$API/repos/$REPO_ID/archive/main?format=zip")
+if [ "$CONTENT_TYPE" = "application/zip" ]; then
+    pass "public: anonymous archive access"
+else
+    fail "public: anonymous archive access" "application/zip" "$CONTENT_TYPE"
+fi
 
 ###############################################################################
 section "Private Repo Access"

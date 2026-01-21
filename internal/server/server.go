@@ -45,6 +45,10 @@ func (s *Server) setupRoutes() {
 			r.Get("/repos/{id}", s.handleGetRepo)
 			r.Delete("/repos/{id}", s.handleDeleteRepo)
 			r.Patch("/repos/{id}", s.handleUpdateRepo)
+			r.Post("/repos/{id}/refs", s.handleCreateRef)
+			r.Patch("/repos/{id}/refs/{refType}/*", s.handleUpdateRef)
+			r.Delete("/repos/{id}/refs/{refType}/*", s.handleDeleteRef)
+			r.Put("/repos/{id}/default-branch", s.handleSetDefaultBranch)
 
 			// Repo folders (M2M)
 			r.Get("/repos/{id}/folders", s.handleListRepoFolders)
@@ -65,8 +69,13 @@ func (s *Server) setupRoutes() {
 			r.Use(OptionalBearerAuthMiddleware(s.store))
 			r.Get("/repos/{id}/refs", s.handleListRefs)
 			r.Get("/repos/{id}/commits", s.handleListCommits)
+			r.Get("/repos/{id}/commits/{sha}/diff", s.handleGetCommitDiff)
+			r.Get("/repos/{id}/commits/{sha}", s.handleGetCommit)
+			r.Get("/repos/{id}/compare/{base}...{head}", s.handleCompareCommits)
 			r.Get("/repos/{id}/tree/{ref}/*", s.handleGetTree)
 			r.Get("/repos/{id}/blob/{ref}/*", s.handleGetBlob)
+			r.Get("/repos/{id}/blame/{ref}/*", s.handleGetBlame)
+			r.Get("/repos/{id}/archive/{ref}", s.handleGetArchive)
 		})
 
 		// Tokens - requires auth

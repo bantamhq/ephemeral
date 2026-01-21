@@ -15,6 +15,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
+	"github.com/go-git/go-git/v5/plumbing/filemode"
 	"github.com/go-git/go-git/v5/plumbing/object"
 
 	"ephemeral/internal/store"
@@ -315,19 +316,18 @@ func (s *Server) handleListCommits(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	gitRepo, err := s.openGitRepo(repo.NamespaceID, repo.Name)
-	if err != nil {
-		JSONError(w, http.StatusNotFound, "Repository not initialized")
+	gitRepo, ok := s.openGitRepoForRepo(w, repo)
+	if !ok {
 		return
 	}
 
 	refStr := r.URL.Query().Get("ref")
 	cursor := r.URL.Query().Get("cursor")
+	pathQuery := strings.TrimPrefix(r.URL.Query().Get("path"), "/")
 	limit := parseLimit(r.URL.Query().Get("limit"), defaultPageSize)
 
-	hash, err := resolveRef(gitRepo, refStr)
-	if err != nil {
-		writeRefError(w, err, refStr)
+	commit, hash, ok := s.loadCommitFromRef(w, gitRepo, refStr)
+	if !ok {
 		return
 	}
 
@@ -340,7 +340,36 @@ func (s *Server) handleListCommits(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	commitIter, err := gitRepo.Log(&git.LogOptions{From: startFrom})
+	var pathFilter func(string) bool
+	if pathQuery != "" {
+		tree, err := commit.Tree()
+		if err != nil {
+			JSONError(w, http.StatusInternalServerError, "Failed to get tree")
+			return
+		}
+		entry, err := tree.FindEntry(pathQuery)
+		if err != nil {
+			JSONError(w, http.StatusNotFound, fmt.Sprintf("Path not found: %s", pathQuery))
+			return
+		}
+
+		if entry.Mode == filemode.Dir {
+			prefix := strings.TrimSuffix(pathQuery, "/") + "/"
+			pathFilter = func(path string) bool {
+				return strings.HasPrefix(path, prefix)
+			}
+		} else if entry.Mode == filemode.Submodule || entry.Mode == filemode.Symlink || entry.Mode.IsFile() {
+			pathFilter = func(path string) bool {
+				return path == pathQuery
+			}
+		} else {
+			pathFilter = func(path string) bool {
+				return path == pathQuery
+			}
+		}
+	}
+
+	commitIter, err := gitRepo.Log(&git.LogOptions{From: startFrom, PathFilter: pathFilter})
 	if err != nil {
 		JSONError(w, http.StatusInternalServerError, "Failed to get commit history")
 		return
@@ -366,28 +395,7 @@ func (s *Server) handleListCommits(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		var parentSHAs []string
-		for _, parent := range commit.ParentHashes {
-			parentSHAs = append(parentSHAs, parent.String())
-		}
-
-		commits = append(commits, CommitResponse{
-			SHA:     commit.Hash.String(),
-			Message: commit.Message,
-			Author: GitAuthor{
-				Name:  commit.Author.Name,
-				Email: commit.Author.Email,
-				Date:  commit.Author.When,
-			},
-			Committer: GitAuthor{
-				Name:  commit.Committer.Name,
-				Email: commit.Committer.Email,
-				Date:  commit.Committer.When,
-			},
-			ParentSHAs: parentSHAs,
-			TreeSHA:    commit.TreeHash.String(),
-			Stats:      computeCommitStats(commit),
-		})
+		commits = append(commits, commitToResponse(commit))
 	}
 
 	hasMore := len(commits) > limit
@@ -473,9 +481,8 @@ func (s *Server) handleGetTree(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	gitRepo, err := s.openGitRepo(repo.NamespaceID, repo.Name)
-	if err != nil {
-		JSONError(w, http.StatusNotFound, "Repository not initialized")
+	gitRepo, ok := s.openGitRepoForRepo(w, repo)
+	if !ok {
 		return
 	}
 
@@ -492,15 +499,8 @@ func (s *Server) handleGetTree(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	hash, err := resolveRef(gitRepo, refStr)
-	if err != nil {
-		writeRefError(w, err, refStr)
-		return
-	}
-
-	commit, err := gitRepo.CommitObject(*hash)
-	if err != nil {
-		JSONError(w, http.StatusInternalServerError, "Failed to get commit")
+	commit, _, ok := s.loadCommitFromRef(w, gitRepo, refStr)
+	if !ok {
 		return
 	}
 
@@ -542,9 +542,8 @@ func (s *Server) handleGetBlob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	gitRepo, err := s.openGitRepo(repo.NamespaceID, repo.Name)
-	if err != nil {
-		JSONError(w, http.StatusNotFound, "Repository not initialized")
+	gitRepo, ok := s.openGitRepoForRepo(w, repo)
+	if !ok {
 		return
 	}
 
@@ -558,15 +557,8 @@ func (s *Server) handleGetBlob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	hash, err := resolveRef(gitRepo, refStr)
-	if err != nil {
-		writeRefError(w, err, refStr)
-		return
-	}
-
-	commit, err := gitRepo.CommitObject(*hash)
-	if err != nil {
-		JSONError(w, http.StatusInternalServerError, "Failed to get commit")
+	commit, _, ok := s.loadCommitFromRef(w, gitRepo, refStr)
+	if !ok {
 		return
 	}
 
