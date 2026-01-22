@@ -124,6 +124,15 @@ type Blob struct {
 	Truncated bool    `json:"truncated"`
 }
 
+type Readme struct {
+	Filename  string `json:"filename"`
+	Content   string `json:"content"`
+	Size      int64  `json:"size"`
+	SHA       string `json:"sha"`
+	IsBinary  bool   `json:"is_binary"`
+	Truncated bool   `json:"truncated"`
+}
+
 type response struct {
 	Data  json.RawMessage `json:"data,omitempty"`
 	Error string          `json:"error,omitempty"`
@@ -617,6 +626,38 @@ func (c *Client) GetBlob(repoID, ref, path string) (*Blob, error) {
 	}
 
 	return &blob, nil
+}
+
+func (c *Client) GetReadme(repoID, ref string) (*Readme, error) {
+	apiPath := "/api/v1/repos/" + repoID + "/readme"
+	if ref != "" {
+		apiPath += "?ref=" + ref
+	}
+
+	resp, err := c.doRequest(http.MethodGet, apiPath)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, nil
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, c.decodeError(resp)
+	}
+
+	var dataResp response
+	if err := json.NewDecoder(resp.Body).Decode(&dataResp); err != nil {
+		return nil, fmt.Errorf("decode response: %w", err)
+	}
+
+	var readme Readme
+	if err := json.Unmarshal(dataResp.Data, &readme); err != nil {
+		return nil, fmt.Errorf("decode readme: %w", err)
+	}
+
+	return &readme, nil
 }
 
 type NamespaceWithAccess struct {

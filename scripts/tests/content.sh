@@ -324,6 +324,28 @@ RESPONSE=$(auth_curl "$API/repos/$REPO_ID/tree/main/?depth=100")
 expect_contains "$RESPONSE" '"name":"README.md"' "depth=100: works (capped at max)"
 
 ###############################################################################
+section "README"
+###############################################################################
+
+# Get README
+RESPONSE=$(auth_curl "$API/repos/$REPO_ID/readme")
+expect_json "$RESPONSE" '.data.filename' "README.md" "readme returns filename"
+expect_contains "$RESPONSE" 'Test Repository' "readme has content"
+expect_json "$RESPONSE" '.data.is_binary' "false" "readme is not binary"
+
+# Get README with ref
+RESPONSE=$(auth_curl "$API/repos/$REPO_ID/readme?ref=main")
+expect_contains "$RESPONSE" 'Test Repository' "readme with ref works"
+
+# Get README with tag ref
+RESPONSE=$(auth_curl "$API/repos/$REPO_ID/readme?ref=v1.0.0")
+expect_contains "$RESPONSE" 'Test Repository' "readme with tag ref works"
+
+# Empty repo has no readme
+RESPONSE=$(auth_curl "$API/repos/$EMPTY_REPO_ID/readme")
+expect_contains "$RESPONSE" "Repository is empty" "empty repo readme returns empty error"
+
+###############################################################################
 section "Blob"
 ###############################################################################
 
@@ -446,6 +468,9 @@ expect_contains "$RESPONSE" '"name":"README.md"' "public: anonymous tree access"
 
 RESPONSE=$(anon_curl "$API/repos/$REPO_ID/blob/main/README.md")
 expect_contains "$RESPONSE" 'Test Repository' "public: anonymous blob access"
+
+RESPONSE=$(anon_curl "$API/repos/$REPO_ID/readme")
+expect_contains "$RESPONSE" 'Test Repository' "public: anonymous readme access"
 
 CONTENT_TYPE=$(anon_curl -o /dev/null -w "%{content_type}" "$API/repos/$REPO_ID/archive/main?format=zip")
 if [ "$CONTENT_TYPE" = "application/zip" ]; then

@@ -693,3 +693,108 @@ func detectContentType(filename string, reader io.Reader) string {
 
 	return "application/octet-stream"
 }
+
+type ReadmeResponse struct {
+	Filename  string `json:"filename"`
+	Content   string `json:"content"`
+	Size      int64  `json:"size"`
+	SHA       string `json:"sha"`
+	IsBinary  bool   `json:"is_binary"`
+	Truncated bool   `json:"truncated"`
+}
+
+var readmeFilenames = []string{
+	"README.md",
+	"readme.md",
+	"README.MD",
+	"Readme.md",
+	"README",
+	"readme",
+	"README.txt",
+	"readme.txt",
+	"README.rst",
+	"readme.rst",
+}
+
+func (s *Server) handleGetReadme(w http.ResponseWriter, r *http.Request) {
+	repo, _, ok := s.checkRepoAccess(w, r)
+	if !ok {
+		return
+	}
+
+	gitRepo, ok := s.openGitRepoForRepo(w, repo)
+	if !ok {
+		return
+	}
+
+	refStr := r.URL.Query().Get("ref")
+
+	commit, _, ok := s.loadCommitFromRef(w, gitRepo, refStr)
+	if !ok {
+		return
+	}
+
+	tree, err := commit.Tree()
+	if err != nil {
+		JSONError(w, http.StatusInternalServerError, "Failed to get tree")
+		return
+	}
+
+	var readmeFile *object.File
+	var readmeFilename string
+
+	for _, name := range readmeFilenames {
+		file, err := tree.File(name)
+		if err == nil {
+			readmeFile = file
+			readmeFilename = name
+			break
+		}
+	}
+
+	if readmeFile == nil {
+		JSONError(w, http.StatusNotFound, "No README found")
+		return
+	}
+
+	blob := &readmeFile.Blob
+
+	reader, err := blob.Reader()
+	if err != nil {
+		JSONError(w, http.StatusInternalServerError, "Failed to read README")
+		return
+	}
+	defer reader.Close()
+
+	size := blob.Size
+	truncated := false
+	readSize := size
+	if readSize > maxBlobSize {
+		readSize = maxBlobSize
+		truncated = true
+	}
+
+	content := make([]byte, readSize)
+	n, err := io.ReadFull(reader, content)
+	if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
+		JSONError(w, http.StatusInternalServerError, "Failed to read README")
+		return
+	}
+	content = content[:n]
+
+	isBinary := isBinaryContent(content)
+
+	resp := ReadmeResponse{
+		Filename:  readmeFilename,
+		Size:      size,
+		SHA:       blob.Hash.String(),
+		IsBinary:  isBinary,
+		Truncated: truncated,
+	}
+
+	if !isBinary {
+		resp.Content = string(content)
+	}
+
+	JSON(w, http.StatusOK, resp)
+}

@@ -119,6 +119,7 @@ func (s *Server) setupRoutes() {
 		// Content API - supports anonymous access for public repos
 		r.Group(func(r chi.Router) {
 			r.Use(OptionalBearerAuthMiddleware(s.store))
+			r.Get("/repos/{id}/readme", s.handleGetReadme)
 			r.Get("/repos/{id}/refs", s.handleListRefs)
 			r.Get("/repos/{id}/commits", s.handleListCommits)
 			r.Get("/repos/{id}/commits/{sha}/diff", s.handleGetCommitDiff)

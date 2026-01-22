@@ -1215,19 +1215,13 @@ func (m Model) loadDetail(repoID string) tea.Cmd {
 				return DetailLoadedMsg{RepoID: repoID, Err: fmt.Errorf("get tree for %s: %w", defaultRef, err)}
 			}
 
-			for _, entry := range tree {
-				nameLower := strings.ToLower(entry.Name)
-				if nameLower == "readme.md" || nameLower == "readme" || nameLower == "readme.txt" {
-					blob, err := m.client.GetBlob(repoID, defaultRef, entry.Name)
-					if err != nil {
-						return DetailLoadedMsg{RepoID: repoID, Err: fmt.Errorf("get readme %q: %w", entry.Name, err)}
-					}
-					if blob.Content != nil && !blob.IsBinary {
-						readme = blob.Content
-						readmeFilename = entry.Name
-					}
-					break
-				}
+			readmeResp, err := m.client.GetReadme(repoID, defaultRef)
+			if err != nil {
+				return DetailLoadedMsg{RepoID: repoID, Err: fmt.Errorf("get readme: %w", err)}
+			}
+			if readmeResp != nil && !readmeResp.IsBinary {
+				readme = &readmeResp.Content
+				readmeFilename = readmeResp.Filename
 			}
 		}
 
