@@ -34,10 +34,12 @@ type Config struct {
 
 func main() {
 	rootCmd := &cobra.Command{
-		Use:   "eph",
-		Short: "A minimal, terminal-native git hosting service",
-		Long:  `Ephemeral is a minimal git hosting service with a terminal-first approach.`,
-		RunE:  runTUI,
+		Use:           "eph",
+		Short:         "A minimal, terminal-native git hosting service",
+		Long:          `Ephemeral is a minimal git hosting service with a terminal-first approach.`,
+		SilenceUsage:  true,
+		SilenceErrors: true,
+		RunE:          runTUI,
 	}
 
 	serveCmd := &cobra.Command{
@@ -53,10 +55,11 @@ func main() {
 		newCredentialCmd(),
 		newNamespaceCmd(),
 		newAdminCmd(),
+		newNewCmd(),
 	)
 
 	if err := rootCmd.Execute(); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		fmt.Fprintln(os.Stderr, "Error:", err)
 		os.Exit(1)
 	}
 }
@@ -64,14 +67,11 @@ func main() {
 func runTUI(cmd *cobra.Command, args []string) error {
 	cfg, err := config.Load()
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "Not logged in.")
-		fmt.Fprintln(os.Stderr, "")
-		fmt.Fprintln(os.Stderr, "Run 'eph login <server>' to authenticate.")
-		return fmt.Errorf("config not found: %w", err)
+		return errNotLoggedIn
 	}
 
 	if !cfg.IsConfigured() {
-		return fmt.Errorf("not logged in - run 'eph login <server>' to authenticate")
+		return errNotLoggedIn
 	}
 
 	c := client.New(cfg.Server, cfg.Token)

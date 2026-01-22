@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -162,7 +163,7 @@ func loginWithWebAuth(serverURL, webAuthURL string) error {
 	c := client.New(serverURL, token)
 	namespaces, err := c.ListNamespaces()
 	if err != nil {
-		return fmt.Errorf("validate token: %w", err)
+		return formatLoginError(err)
 	}
 
 	if len(namespaces) == 0 {
@@ -234,7 +235,7 @@ func completeLogin(serverURL, token string) error {
 	c := client.New(serverURL, token)
 	namespaces, err := c.ListNamespaces()
 	if err != nil {
-		return fmt.Errorf("validate token: %w", err)
+		return formatLoginError(err)
 	}
 
 	if len(namespaces) == 0 {
@@ -253,6 +254,20 @@ func completeLogin(serverURL, token string) error {
 	}
 
 	return saveLoginAndConfigure(serverURL, token, primaryNs, len(namespaces))
+}
+
+func formatLoginError(err error) error {
+	errStr := err.Error()
+
+	if strings.Contains(errStr, "invalid header field value") {
+		return errors.New("invalid token format")
+	}
+
+	if strings.Contains(errStr, "401") || strings.Contains(errStr, "unauthorized") {
+		return errors.New("invalid or expired token")
+	}
+
+	return formatAPIError("authentication failed", err)
 }
 
 func saveLoginAndConfigure(serverURL, token, namespace string, namespaceCount int) error {

@@ -65,7 +65,7 @@ func readToken() (string, error) {
 		if err != nil {
 			return "", err
 		}
-		return string(tokenBytes), nil
+		return strings.TrimSpace(string(tokenBytes)), nil
 	}
 
 	reader := bufio.NewReader(os.Stdin)
@@ -116,4 +116,40 @@ func readLine() (string, error) {
 		return "", err
 	}
 	return strings.TrimSpace(line), nil
+}
+
+var errNotLoggedIn = fmt.Errorf("not logged in - run 'eph login' to authenticate")
+
+func formatAPIError(context string, err error) error {
+	errStr := err.Error()
+
+	if strings.Contains(errStr, "connection refused") {
+		return fmt.Errorf("%s: could not connect to server", context)
+	}
+
+	if strings.Contains(errStr, "no such host") {
+		return fmt.Errorf("%s: server not found", context)
+	}
+
+	if strings.Contains(errStr, "timeout") {
+		return fmt.Errorf("%s: connection timed out", context)
+	}
+
+	if strings.Contains(errStr, "401") || strings.Contains(errStr, "unauthorized") {
+		return fmt.Errorf("%s: unauthorized", context)
+	}
+
+	if strings.Contains(errStr, "403") || strings.Contains(errStr, "forbidden") {
+		return fmt.Errorf("%s: permission denied", context)
+	}
+
+	if strings.Contains(errStr, "404") || strings.Contains(errStr, "not found") {
+		return fmt.Errorf("%s: not found", context)
+	}
+
+	if strings.Contains(errStr, "409") || strings.Contains(errStr, "already exists") {
+		return fmt.Errorf("%s: already exists", context)
+	}
+
+	return fmt.Errorf("%s: %s", context, err.Error())
 }

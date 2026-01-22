@@ -894,3 +894,36 @@ func (c *Client) AdminDeleteRepoGrant(tokenID, repoID string) error {
 
 	return nil
 }
+
+// CreateRepo creates a new repository.
+func (c *Client) CreateRepo(name string, description *string, public bool) (*Repo, error) {
+	body := map[string]any{
+		"name":   name,
+		"public": public,
+	}
+	if description != nil {
+		body["description"] = *description
+	}
+
+	resp, err := c.doRequestWithBody(http.MethodPost, "/api/v1/repos", body)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated {
+		return nil, c.decodeError(resp)
+	}
+
+	var dataResp response
+	if err := json.NewDecoder(resp.Body).Decode(&dataResp); err != nil {
+		return nil, fmt.Errorf("decode response: %w", err)
+	}
+
+	var repo Repo
+	if err := json.Unmarshal(dataResp.Data, &repo); err != nil {
+		return nil, fmt.Errorf("decode repo: %w", err)
+	}
+
+	return &repo, nil
+}

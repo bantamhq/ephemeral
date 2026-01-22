@@ -102,7 +102,7 @@ func runAdminNamespaceList(cmd *cobra.Command, args []string) error {
 
 	namespaces, err := c.AdminListNamespaces()
 	if err != nil {
-		return fmt.Errorf("list namespaces: %w", err)
+		return formatAPIError("list namespaces", err)
 	}
 
 	if len(namespaces) == 0 {
@@ -126,7 +126,7 @@ func runAdminNamespaceCreate(cmd *cobra.Command, args []string) error {
 
 	ns, err := c.AdminCreateNamespace(args[0])
 	if err != nil {
-		return fmt.Errorf("create namespace: %w", err)
+		return formatAPIError("create namespace", err)
 	}
 
 	fmt.Printf("Created namespace %q (ID: %s)\n", ns.Name, ns.ID)
@@ -140,7 +140,7 @@ func runAdminNamespaceDelete(cmd *cobra.Command, args []string) error {
 	}
 
 	if err := c.AdminDeleteNamespace(args[0]); err != nil {
-		return fmt.Errorf("delete namespace: %w", err)
+		return formatAPIError("delete namespace", err)
 	}
 
 	fmt.Println("Namespace deleted.")
@@ -178,7 +178,7 @@ func runAdminTokenCreate(cmd *cobra.Command, args []string) error {
 
 	namespaces, err := c.AdminListNamespaces()
 	if err != nil {
-		return fmt.Errorf("list namespaces: %w", err)
+		return formatAPIError("list namespaces", err)
 	}
 
 	var namespaceID string
@@ -200,7 +200,7 @@ func runAdminTokenCreate(cmd *cobra.Command, args []string) error {
 
 	token, err := c.AdminCreateToken(namespaceID, name)
 	if err != nil {
-		return fmt.Errorf("create token: %w", err)
+		return formatAPIError("create token", err)
 	}
 
 	fmt.Println()

@@ -32,18 +32,18 @@ func newNamespaceCmd() *cobra.Command {
 func runNamespaceList(cmd *cobra.Command, args []string) error {
 	cfg, err := config.Load()
 	if err != nil {
-		return fmt.Errorf("not logged in - run 'eph login <server>' to authenticate")
+		return errNotLoggedIn
 	}
 
 	if !cfg.IsConfigured() {
-		return fmt.Errorf("not logged in - run 'eph login <server>' to authenticate")
+		return errNotLoggedIn
 	}
 
 	c := client.New(cfg.Server, cfg.Token)
 
 	namespaces, err := c.ListNamespaces()
 	if err != nil {
-		return fmt.Errorf("list namespaces: %w", err)
+		return formatAPIError("list namespaces", err)
 	}
 
 	if len(namespaces) == 0 {
@@ -74,18 +74,18 @@ func runNamespaceUse(cmd *cobra.Command, args []string) error {
 
 	cfg, err := config.Load()
 	if err != nil {
-		return fmt.Errorf("not logged in - run 'eph login <server>' to authenticate")
+		return errNotLoggedIn
 	}
 
 	if !cfg.IsConfigured() {
-		return fmt.Errorf("not logged in - run 'eph login <server>' to authenticate")
+		return errNotLoggedIn
 	}
 
 	c := client.New(cfg.Server, cfg.Token)
 
 	namespaces, err := c.ListNamespaces()
 	if err != nil {
-		return fmt.Errorf("list namespaces: %w", err)
+		return formatAPIError("list namespaces", err)
 	}
 
 	if !hasNamespace(namespaces, name) {
