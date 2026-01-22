@@ -147,7 +147,12 @@ func (w *SetupWizard) createResources(namespaceName string) (*SetupResult, error
 	}
 
 	userName := "User Token"
-	userToken, _, err := w.store.GenerateUserToken(namespaceID, &userName, store.ScopeFull)
+	defaultGrant := store.NamespaceGrant{
+		NamespaceID: namespaceID,
+		AllowBits:   store.DefaultNamespaceGrant(),
+		IsPrimary:   true,
+	}
+	userToken, _, err := w.store.GenerateUserTokenWithGrants(&userName, nil, []store.NamespaceGrant{defaultGrant}, nil)
 	if err != nil {
 		return nil, fmt.Errorf("generate user token: %w", err)
 	}

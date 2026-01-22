@@ -142,13 +142,12 @@ func (s *Server) checkRepoAccess(w http.ResponseWriter, r *http.Request) (*store
 		return nil, nil, false
 	}
 
-	// Check token has access to the repo's namespace
-	hasAccess, err := s.store.HasTokenNamespaceAccess(token.ID, repo.NamespaceID)
+	hasRead, err := s.permissions.CheckRepoPermission(token.ID, repo, store.PermRepoRead)
 	if err != nil {
 		JSONError(w, http.StatusInternalServerError, "Failed to check access")
 		return nil, nil, false
 	}
-	if !hasAccess {
+	if !hasRead {
 		JSONError(w, http.StatusForbidden, "Access denied")
 		return nil, nil, false
 	}

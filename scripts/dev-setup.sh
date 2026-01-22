@@ -65,7 +65,7 @@ echo "Creating user token..."
 TOKEN_RESPONSE=$(curl -s -X POST \
     -H "Authorization: Bearer $ADMIN_TOKEN" \
     -H "Content-Type: application/json" \
-    -d "{\"namespace_id\":\"$NS_ID\",\"name\":\"dev-token\",\"scope\":\"full\"}" \
+    -d "{\"namespace_id\":\"$NS_ID\",\"name\":\"dev-token\"}" \
     "http://localhost:8080/api/v1/admin/tokens")
 
 USER_TOKEN=$(echo "$TOKEN_RESPONSE" | grep -o '"token":"[^"]*"' | head -1 | cut -d'"' -f4)

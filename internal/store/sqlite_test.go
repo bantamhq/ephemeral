@@ -72,7 +72,6 @@ func createTestToken(t *testing.T, s *SQLiteStore, id, lookup, hash string, isAd
 		TokenHash:   hash,
 		TokenLookup: lookup,
 		IsAdmin:     isAdmin,
-		Scope:       ScopeFull,
 		CreatedAt:   time.Now(),
 	}
 	require.NoError(t, s.CreateToken(token))
@@ -117,26 +116,28 @@ func TestStore_NamespaceLifecycle(t *testing.T) {
 		assert.GreaterOrEqual(t, len(namespaces), 1)
 	})
 
-	t.Run("delete blocked by token access", func(t *testing.T) {
+	t.Run("delete cascades to repos and grants", func(t *testing.T) {
 		repo := createTestRepo(t, s, ns.ID, "cascade-test")
 		folder := createTestFolder(t, s, ns.ID, "cascade-folder", nil)
 		s.AddRepoFolder(repo.ID, folder.ID)
 
-		// Create token with namespace access - deletion should be blocked
+		// Create token with namespace grant
 		token := createTestToken(t, s, "cascade-token", "cascade0", "hash", false)
-		require.NoError(t, s.GrantTokenNamespaceAccess(&TokenNamespaceAccess{
+		require.NoError(t, s.UpsertNamespaceGrant(&NamespaceGrant{
 			TokenID:     token.ID,
 			NamespaceID: ns.ID,
+			AllowBits:   DefaultNamespaceGrant(),
 			IsPrimary:   true,
+			CreatedAt:   time.Now(),
+			UpdatedAt:   time.Now(),
 		}))
 
-		// Should fail because namespace has token access
-		err := s.DeleteNamespace("ns-1")
-		assert.Error(t, err)
+		// Verify grant exists
+		grant, err := s.GetNamespaceGrant(token.ID, ns.ID)
+		require.NoError(t, err)
+		require.NotNil(t, grant)
 
-		// Remove token access and repos, then delete should work
-		require.NoError(t, s.RevokeTokenNamespaceAccess(token.ID, ns.ID))
-		require.NoError(t, s.DeleteRepo(repo.ID))
+		// Delete namespace - should cascade delete repos and grants
 		require.NoError(t, s.DeleteNamespace("ns-1"))
 
 		got, _ := s.GetNamespace("ns-1")
@@ -144,6 +145,9 @@ func TestStore_NamespaceLifecycle(t *testing.T) {
 
 		r, _ := s.GetRepoByID(repo.ID)
 		assert.Nil(t, r, "repo should be cascade deleted")
+
+		g, _ := s.GetNamespaceGrant(token.ID, ns.ID)
+		assert.Nil(t, g, "grant should be cascade deleted")
 	})
 }
 
@@ -362,17 +366,19 @@ func TestStore_TokenLifecycle(t *testing.T) {
 			TokenHash:   "hash123",
 			TokenLookup: "lookup01",
 			IsAdmin:     false,
-			Scope:       ScopeFull,
 			CreatedAt:   time.Now(),
 		}
 		require.NoError(t, s.CreateToken(token))
 	})
 
-	t.Run("grant namespace access", func(t *testing.T) {
-		require.NoError(t, s.GrantTokenNamespaceAccess(&TokenNamespaceAccess{
+	t.Run("upsert namespace grant", func(t *testing.T) {
+		require.NoError(t, s.UpsertNamespaceGrant(&NamespaceGrant{
 			TokenID:     token.ID,
 			NamespaceID: ns.ID,
+			AllowBits:   DefaultNamespaceGrant(),
 			IsPrimary:   true,
+			CreatedAt:   time.Now(),
+			UpdatedAt:   time.Now(),
 		}))
 	})
 
@@ -387,7 +393,6 @@ func TestStore_TokenLifecycle(t *testing.T) {
 		got, err := s.GetTokenByID("token-1")
 		require.NoError(t, err)
 		require.NotNil(t, got)
-		assert.Equal(t, ScopeFull, got.Scope)
 		assert.False(t, got.IsAdmin)
 	})
 
@@ -397,11 +402,12 @@ func TestStore_TokenLifecycle(t *testing.T) {
 		assert.Len(t, tokens, 1)
 	})
 
-	t.Run("list token namespaces", func(t *testing.T) {
-		namespaces, err := s.ListTokenNamespaces(token.ID)
+	t.Run("list token namespace grants", func(t *testing.T) {
+		grants, err := s.ListTokenNamespaceGrants(token.ID)
 		require.NoError(t, err)
-		assert.Len(t, namespaces, 1)
-		assert.True(t, namespaces[0].IsPrimary)
+		assert.Len(t, grants, 1)
+		assert.True(t, grants[0].IsPrimary)
+		assert.True(t, grants[0].AllowBits.Has(PermNamespaceWrite))
 	})
 
 	t.Run("get primary namespace", func(t *testing.T) {
@@ -411,14 +417,14 @@ func TestStore_TokenLifecycle(t *testing.T) {
 		assert.Equal(t, ns.ID, primary.ID)
 	})
 
-	t.Run("has namespace access", func(t *testing.T) {
-		has, err := s.HasTokenNamespaceAccess(token.ID, ns.ID)
+	t.Run("get namespace grant", func(t *testing.T) {
+		grant, err := s.GetNamespaceGrant(token.ID, ns.ID)
 		require.NoError(t, err)
-		assert.True(t, has)
+		require.NotNil(t, grant)
 
-		has, err = s.HasTokenNamespaceAccess(token.ID, "nonexistent")
+		grant, err = s.GetNamespaceGrant(token.ID, "nonexistent")
 		require.NoError(t, err)
-		assert.False(t, has)
+		assert.Nil(t, grant)
 	})
 
 	t.Run("delete", func(t *testing.T) {
@@ -584,7 +590,6 @@ func TestStore_OptionalFields(t *testing.T) {
 			TokenHash:   "hash-expiry",
 			TokenLookup: "token-ex",
 			IsAdmin:     false,
-			Scope:       ScopeReadOnly,
 			Name:        &name,
 			ExpiresAt:   &expiry,
 			CreatedAt:   time.Now(),
@@ -609,5 +614,168 @@ func TestStore_OptionalFields(t *testing.T) {
 
 		got, _ := s.GetFolderByID("folder-no-color")
 		assert.Nil(t, got.Color)
+	})
+}
+
+func TestPermission_BitOperations(t *testing.T) {
+	t.Run("Has checks single permission", func(t *testing.T) {
+		p := PermRepoRead | PermRepoWrite
+		assert.True(t, p.Has(PermRepoRead))
+		assert.True(t, p.Has(PermRepoWrite))
+		assert.False(t, p.Has(PermRepoAdmin))
+	})
+
+	t.Run("Has checks combined permissions", func(t *testing.T) {
+		p := PermRepoRead | PermRepoWrite | PermRepoAdmin
+		assert.True(t, p.Has(PermRepoRead|PermRepoWrite))
+		assert.False(t, (PermRepoRead | PermRepoWrite).Has(PermRepoAdmin))
+	})
+
+	t.Run("ToStrings returns permission names", func(t *testing.T) {
+		p := PermRepoRead | PermNamespaceWrite
+		strs := p.ToStrings()
+		assert.Contains(t, strs, "repo:read")
+		assert.Contains(t, strs, "namespace:write")
+		assert.Len(t, strs, 2)
+	})
+
+	t.Run("ParsePermissions converts strings to bits", func(t *testing.T) {
+		p, err := ParsePermissions([]string{"repo:read", "namespace:admin"})
+		require.NoError(t, err)
+		assert.True(t, p.Has(PermRepoRead))
+		assert.True(t, p.Has(PermNamespaceAdmin))
+		assert.False(t, p.Has(PermRepoWrite))
+	})
+
+	t.Run("ParsePermissions rejects invalid", func(t *testing.T) {
+		_, err := ParsePermissions([]string{"invalid:perm"})
+		assert.Error(t, err)
+	})
+}
+
+func TestPermission_ExpandImplied(t *testing.T) {
+	t.Run("repo:admin implies repo:write and repo:read", func(t *testing.T) {
+		p := ExpandImplied(PermRepoAdmin)
+		assert.True(t, p.Has(PermRepoAdmin))
+		assert.True(t, p.Has(PermRepoWrite))
+		assert.True(t, p.Has(PermRepoRead))
+	})
+
+	t.Run("repo:write implies repo:read", func(t *testing.T) {
+		p := ExpandImplied(PermRepoWrite)
+		assert.True(t, p.Has(PermRepoWrite))
+		assert.True(t, p.Has(PermRepoRead))
+		assert.False(t, p.Has(PermRepoAdmin))
+	})
+
+	t.Run("namespace:admin implies namespace:write and namespace:read", func(t *testing.T) {
+		p := ExpandImplied(PermNamespaceAdmin)
+		assert.True(t, p.Has(PermNamespaceAdmin))
+		assert.True(t, p.Has(PermNamespaceWrite))
+		assert.True(t, p.Has(PermNamespaceRead))
+	})
+
+	t.Run("repo perms don't imply namespace perms", func(t *testing.T) {
+		p := ExpandImplied(PermRepoAdmin)
+		assert.False(t, p.Has(PermNamespaceRead))
+	})
+}
+
+func TestPermissionChecker_DenyBehavior(t *testing.T) {
+	s := newTestStore(t)
+	ns := createTestNamespace(t, s, "ns-deny")
+	token := createTestToken(t, s, "token-deny", "denytest", "hash", false)
+
+	t.Run("deny blocks specific permission without expanding", func(t *testing.T) {
+		// Grant namespace:admin but deny namespace:admin specifically
+		// Deny should NOT expand, so namespace:write should still work
+		require.NoError(t, s.UpsertNamespaceGrant(&NamespaceGrant{
+			TokenID:     token.ID,
+			NamespaceID: ns.ID,
+			AllowBits:   PermNamespaceAdmin,
+			DenyBits:    PermNamespaceAdmin,
+			IsPrimary:   true,
+			CreatedAt:   time.Now(),
+			UpdatedAt:   time.Now(),
+		}))
+
+		checker := NewPermissionChecker(s)
+
+		// namespace:admin is explicitly denied
+		has, err := checker.CheckNamespacePermission(token.ID, ns.ID, PermNamespaceAdmin)
+		require.NoError(t, err)
+		assert.False(t, has, "namespace:admin should be denied")
+
+		// namespace:write should be allowed (deny doesn't expand)
+		has, err = checker.CheckNamespacePermission(token.ID, ns.ID, PermNamespaceWrite)
+		require.NoError(t, err)
+		assert.True(t, has, "namespace:write should be allowed since deny doesn't expand")
+
+		// namespace:read should be allowed
+		has, err = checker.CheckNamespacePermission(token.ID, ns.ID, PermNamespaceRead)
+		require.NoError(t, err)
+		assert.True(t, has, "namespace:read should be allowed")
+	})
+}
+
+func TestPermissionChecker_RepoOnlyListing(t *testing.T) {
+	s := newTestStore(t)
+	ns := createTestNamespace(t, s, "ns-repo-only")
+	repo1 := createTestRepo(t, s, ns.ID, "repo1")
+	repo2 := createTestRepo(t, s, ns.ID, "repo2")
+	createTestRepo(t, s, ns.ID, "repo3") // no grant
+
+	token := createTestToken(t, s, "token-repo-only", "repoonly", "hash", false)
+
+	t.Run("repo grants without namespace grant", func(t *testing.T) {
+		// Grant repo:read on repo1 and repo2, but no namespace grant
+		require.NoError(t, s.UpsertRepoGrant(&RepoGrant{
+			TokenID:   token.ID,
+			RepoID:    repo1.ID,
+			AllowBits: PermRepoRead,
+			CreatedAt: time.Now(),
+			UpdatedAt: time.Now(),
+		}))
+		require.NoError(t, s.UpsertRepoGrant(&RepoGrant{
+			TokenID:   token.ID,
+			RepoID:    repo2.ID,
+			AllowBits: PermRepoRead | PermRepoWrite,
+			CreatedAt: time.Now(),
+			UpdatedAt: time.Now(),
+		}))
+
+		checker := NewPermissionChecker(s)
+
+		// Token has repo grants in namespace
+		hasGrants, err := checker.HasAnyRepoGrants(token.ID, ns.ID)
+		require.NoError(t, err)
+		assert.True(t, hasGrants)
+
+		// Token cannot access namespace directly
+		has, err := checker.CheckNamespacePermission(token.ID, ns.ID, PermNamespaceRead)
+		require.NoError(t, err)
+		assert.False(t, has, "should not have namespace:read without grant")
+
+		// But can access specific repos
+		has, err = checker.CheckRepoPermission(token.ID, repo1, PermRepoRead)
+		require.NoError(t, err)
+		assert.True(t, has, "should have repo:read on repo1")
+
+		has, err = checker.CheckRepoPermission(token.ID, repo2, PermRepoWrite)
+		require.NoError(t, err)
+		assert.True(t, has, "should have repo:write on repo2")
+
+		// List repos with grants should return only granted repos
+		repos, err := s.ListReposWithGrants(token.ID, ns.ID)
+		require.NoError(t, err)
+		assert.Len(t, repos, 2)
+
+		names := make([]string, len(repos))
+		for i, r := range repos {
+			names[i] = r.Name
+		}
+		assert.Contains(t, names, "repo1")
+		assert.Contains(t, names, "repo2")
+		assert.NotContains(t, names, "repo3")
 	})
 }

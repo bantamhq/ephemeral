@@ -5,13 +5,6 @@ import (
 	"time"
 )
 
-// Scope constants for token permissions.
-const (
-	ScopeReadOnly = "read-only"
-	ScopeRepos    = "repos"
-	ScopeFull     = "full"
-	ScopeAdmin    = "admin"
-)
 
 // Store defines the database interface.
 type Store interface {
@@ -24,16 +17,23 @@ type Store interface {
 	ListTokens(cursor string, limit int) ([]Token, error)
 	DeleteToken(id string) error
 	GenerateAdminToken() (string, error)
-	GenerateUserToken(namespaceID string, name *string, scope string) (string, *Token, error)
+	GenerateUserTokenWithGrants(name *string, expiresAt *time.Time, namespaceGrants []NamespaceGrant, repoGrants []RepoGrant) (string, *Token, error)
 
-	// Token namespace access operations
-	GrantTokenNamespaceAccess(access *TokenNamespaceAccess) error
-	RevokeTokenNamespaceAccess(tokenID, namespaceID string) error
-	GetTokenNamespaceAccess(tokenID, namespaceID string) (*TokenNamespaceAccess, error)
-	ListTokenNamespaces(tokenID string) ([]NamespaceWithAccess, error)
+	// Namespace grant operations
+	UpsertNamespaceGrant(grant *NamespaceGrant) error
+	DeleteNamespaceGrant(tokenID, namespaceID string) error
+	GetNamespaceGrant(tokenID, namespaceID string) (*NamespaceGrant, error)
+	ListTokenNamespaceGrants(tokenID string) ([]NamespaceGrant, error)
 	GetTokenPrimaryNamespace(tokenID string) (*Namespace, error)
-	HasTokenNamespaceAccess(tokenID, namespaceID string) (bool, error)
 	CountNamespaceTokens(namespaceID string) (int, error)
+
+	// Repo grant operations
+	UpsertRepoGrant(grant *RepoGrant) error
+	DeleteRepoGrant(tokenID, repoID string) error
+	GetRepoGrant(tokenID, repoID string) (*RepoGrant, error)
+	ListTokenRepoGrants(tokenID string) ([]RepoGrant, error)
+	ListReposWithGrants(tokenID, namespaceID string) ([]Repo, error)
+	HasRepoGrantsInNamespace(tokenID, namespaceID string) (bool, error)
 
 	// Repo operations
 	CreateRepo(repo *Repo) error
@@ -68,6 +68,7 @@ type Store interface {
 	GetNamespace(id string) (*Namespace, error)
 	GetNamespaceByName(name string) (*Namespace, error)
 	ListNamespaces(cursor string, limit int) ([]Namespace, error)
+	UpdateNamespace(ns *Namespace) error
 	DeleteNamespace(id string) error
 
 	Close() error
@@ -88,22 +89,30 @@ type Token struct {
 	TokenLookup string     `json:"-"`
 	Name        *string    `json:"name,omitempty"`
 	IsAdmin     bool       `json:"is_admin"`
-	Scope       string     `json:"scope"`
 	CreatedAt   time.Time  `json:"created_at"`
 	ExpiresAt   *time.Time `json:"expires_at,omitempty"`
 	LastUsedAt  *time.Time `json:"last_used_at,omitempty"`
 }
 
-type TokenNamespaceAccess struct {
-	TokenID     string    `json:"token_id"`
-	NamespaceID string    `json:"namespace_id"`
-	IsPrimary   bool      `json:"is_primary"`
-	CreatedAt   time.Time `json:"created_at"`
+// NamespaceGrant represents permissions granted to a token for a namespace.
+type NamespaceGrant struct {
+	TokenID     string     `json:"token_id"`
+	NamespaceID string     `json:"namespace_id"`
+	AllowBits   Permission `json:"allow_bits"`
+	DenyBits    Permission `json:"deny_bits"`
+	IsPrimary   bool       `json:"is_primary"`
+	CreatedAt   time.Time  `json:"created_at"`
+	UpdatedAt   time.Time  `json:"updated_at"`
 }
 
-type NamespaceWithAccess struct {
-	Namespace
-	IsPrimary bool `json:"is_primary"`
+// RepoGrant represents permissions granted to a token for a specific repo.
+type RepoGrant struct {
+	TokenID   string     `json:"token_id"`
+	RepoID    string     `json:"repo_id"`
+	AllowBits Permission `json:"allow_bits"`
+	DenyBits  Permission `json:"deny_bits"`
+	CreatedAt time.Time  `json:"created_at"`
+	UpdatedAt time.Time  `json:"updated_at"`
 }
 
 type Repo struct {

@@ -43,22 +43,33 @@ func (s *SQLiteStore) createSchema() error {
 		name TEXT,                         -- human-friendly label
 		is_admin BOOLEAN NOT NULL DEFAULT FALSE,  -- admin tokens only access /api/v1/admin/* routes
 
-		-- Scope for user tokens
-		scope TEXT NOT NULL DEFAULT 'full',  -- 'full' | 'repos' | 'read-only'
-
 		-- Lifecycle
 		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 		expires_at TIMESTAMP,            -- NULL = never
 		last_used_at TIMESTAMP
 	);
 
-	-- Junction table for token namespace access (user tokens only)
-	CREATE TABLE IF NOT EXISTS token_namespace_access (
+	-- Namespace grants: permissions a token has for a namespace
+	CREATE TABLE IF NOT EXISTS token_namespace_grants (
 		token_id TEXT NOT NULL REFERENCES tokens(id) ON DELETE CASCADE,
-		namespace_id TEXT NOT NULL REFERENCES namespaces(id) ON DELETE RESTRICT,
+		namespace_id TEXT NOT NULL REFERENCES namespaces(id) ON DELETE CASCADE,
+		allow_bits INTEGER NOT NULL DEFAULT 0,
+		deny_bits INTEGER NOT NULL DEFAULT 0,
 		is_primary BOOLEAN NOT NULL DEFAULT FALSE,
 		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 		PRIMARY KEY (token_id, namespace_id)
+	);
+
+	-- Repo grants: permissions a token has for a specific repo
+	CREATE TABLE IF NOT EXISTS token_repo_grants (
+		token_id TEXT NOT NULL REFERENCES tokens(id) ON DELETE CASCADE,
+		repo_id TEXT NOT NULL REFERENCES repos(id) ON DELETE CASCADE,
+		allow_bits INTEGER NOT NULL DEFAULT 0,
+		deny_bits INTEGER NOT NULL DEFAULT 0,
+		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		PRIMARY KEY (token_id, repo_id)
 	);
 
 	-- Folders for organizing repos (flat, no nesting)
@@ -105,7 +116,7 @@ func (s *SQLiteStore) createSchema() error {
 
 	-- Ensure each token has at most one primary namespace
 	CREATE UNIQUE INDEX IF NOT EXISTS idx_token_primary_ns
-		ON token_namespace_access(token_id) WHERE is_primary = TRUE;
+		ON token_namespace_grants(token_id) WHERE is_primary = TRUE;
 	`
 
 	_, err := s.db.Exec(schema)
@@ -151,7 +162,6 @@ func (s *SQLiteStore) GenerateAdminToken() (string, error) {
 			TokenLookup: tokenLookup,
 			Name:        &name,
 			IsAdmin:     true,
-			Scope:       ScopeFull,
 			CreatedAt:   time.Now(),
 		}
 
@@ -168,9 +178,10 @@ func (s *SQLiteStore) GenerateAdminToken() (string, error) {
 	return "", fmt.Errorf("create admin token: %w", ErrTokenLookupCollision)
 }
 
-// GenerateUserToken creates a new user token with access to the specified namespace.
+// GenerateUserTokenWithGrants creates a new user token with the specified namespace grants.
 // Returns both the raw token (for display) and the Token struct.
-func (s *SQLiteStore) GenerateUserToken(namespaceID string, name *string, scope string) (string, *Token, error) {
+// This creates the token and grants in a single transaction.
+func (s *SQLiteStore) GenerateUserTokenWithGrants(name *string, expiresAt *time.Time, namespaceGrants []NamespaceGrant, repoGrants []RepoGrant) (string, *Token, error) {
 	const tokenCreateAttempts = 5
 
 	for attempt := 0; attempt < tokenCreateAttempts; attempt++ {
@@ -189,33 +200,50 @@ func (s *SQLiteStore) GenerateUserToken(namespaceID string, name *string, scope 
 			return "", nil, fmt.Errorf("hash token: %w", err)
 		}
 
+		now := time.Now()
 		token := &Token{
 			ID:          tokenID,
 			TokenHash:   tokenHash,
 			TokenLookup: tokenLookup,
 			Name:        name,
 			IsAdmin:     false,
-			Scope:       scope,
-			CreatedAt:   time.Now(),
+			CreatedAt:   now,
+			ExpiresAt:   expiresAt,
 		}
 
-		if err := s.CreateToken(token); err != nil {
+		tx, err := s.db.Begin()
+		if err != nil {
+			return "", nil, fmt.Errorf("begin transaction: %w", err)
+		}
+		defer tx.Rollback()
+
+		if err := s.createTokenTx(tx, token); err != nil {
 			if errors.Is(err, ErrTokenLookupCollision) {
 				continue
 			}
 			return "", nil, fmt.Errorf("create user token: %w", err)
 		}
 
-		access := &TokenNamespaceAccess{
-			TokenID:     tokenID,
-			NamespaceID: namespaceID,
-			IsPrimary:   true,
-			CreatedAt:   time.Now(),
+		for _, grant := range namespaceGrants {
+			grant.TokenID = tokenID
+			grant.CreatedAt = now
+			grant.UpdatedAt = now
+			if err := s.upsertNamespaceGrantTx(tx, &grant); err != nil {
+				return "", nil, fmt.Errorf("create namespace grant: %w", err)
+			}
 		}
 
-		if err := s.GrantTokenNamespaceAccess(access); err != nil {
-			s.DeleteToken(tokenID)
-			return "", nil, fmt.Errorf("grant namespace access: %w", err)
+		for _, grant := range repoGrants {
+			grant.TokenID = tokenID
+			grant.CreatedAt = now
+			grant.UpdatedAt = now
+			if err := s.upsertRepoGrantTx(tx, &grant); err != nil {
+				return "", nil, fmt.Errorf("create repo grant: %w", err)
+			}
+		}
+
+		if err := tx.Commit(); err != nil {
+			return "", nil, fmt.Errorf("commit transaction: %w", err)
 		}
 
 		return tokenValue, token, nil

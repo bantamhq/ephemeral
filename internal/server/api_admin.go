@@ -15,12 +15,6 @@ import (
 	"ephemeral/internal/store"
 )
 
-var validUserScopes = map[string]bool{
-	store.ScopeReadOnly: true,
-	store.ScopeRepos:    true,
-	store.ScopeFull:     true,
-}
-
 func (s *Server) handleAdminListNamespaces(w http.ResponseWriter, r *http.Request) {
 	if s.requireAdminToken(w, r) == nil {
 		return
@@ -169,25 +163,65 @@ func (s *Server) handleAdminDeleteNamespace(w http.ResponseWriter, r *http.Reque
 }
 
 type adminTokenResponse struct {
-	ID         string     `json:"id"`
-	Name       *string    `json:"name,omitempty"`
-	IsAdmin    bool       `json:"is_admin"`
-	Scope      string     `json:"scope"`
-	CreatedAt  time.Time  `json:"created_at"`
-	ExpiresAt  *time.Time `json:"expires_at,omitempty"`
-	LastUsedAt *time.Time `json:"last_used_at,omitempty"`
+	ID              string                      `json:"id"`
+	Name            *string                     `json:"name,omitempty"`
+	IsAdmin         bool                        `json:"is_admin"`
+	CreatedAt       time.Time                   `json:"created_at"`
+	ExpiresAt       *time.Time                  `json:"expires_at,omitempty"`
+	LastUsedAt      *time.Time                  `json:"last_used_at,omitempty"`
+	NamespaceGrants []namespaceGrantAPIResponse `json:"namespace_grants,omitempty"`
+	RepoGrants      []repoGrantAPIResponse      `json:"repo_grants,omitempty"`
 }
 
-func adminTokenToResponse(t store.Token) adminTokenResponse {
-	return adminTokenResponse{
+type namespaceGrantAPIResponse struct {
+	NamespaceID string   `json:"namespace_id"`
+	Allow       []string `json:"allow"`
+	Deny        []string `json:"deny,omitempty"`
+	IsPrimary   bool     `json:"is_primary"`
+}
+
+type repoGrantAPIResponse struct {
+	RepoID string   `json:"repo_id"`
+	Allow  []string `json:"allow"`
+	Deny   []string `json:"deny,omitempty"`
+}
+
+func (s *Server) adminTokenToResponse(t store.Token) adminTokenResponse {
+	resp := adminTokenResponse{
 		ID:         t.ID,
 		Name:       t.Name,
 		IsAdmin:    t.IsAdmin,
-		Scope:      t.Scope,
 		CreatedAt:  t.CreatedAt,
 		ExpiresAt:  t.ExpiresAt,
 		LastUsedAt: t.LastUsedAt,
 	}
+
+	if !t.IsAdmin {
+		nsGrants, err := s.store.ListTokenNamespaceGrants(t.ID)
+		if err == nil {
+			for _, g := range nsGrants {
+				resp.NamespaceGrants = append(resp.NamespaceGrants, namespaceGrantAPIResponse{
+					NamespaceID: g.NamespaceID,
+					Allow:       g.AllowBits.ToStrings(),
+					Deny:        g.DenyBits.ToStrings(),
+					IsPrimary:   g.IsPrimary,
+				})
+			}
+		}
+
+		repoGrants, err := s.store.ListTokenRepoGrants(t.ID)
+		if err == nil {
+			for _, g := range repoGrants {
+				resp.RepoGrants = append(resp.RepoGrants, repoGrantAPIResponse{
+					RepoID: g.RepoID,
+					Allow:  g.AllowBits.ToStrings(),
+					Deny:   g.DenyBits.ToStrings(),
+				})
+			}
+		}
+	}
+
+	return resp
 }
 
 func (s *Server) handleAdminListTokens(w http.ResponseWriter, r *http.Request) {
@@ -215,18 +249,32 @@ func (s *Server) handleAdminListTokens(w http.ResponseWriter, r *http.Request) {
 
 	resp := make([]adminTokenResponse, len(tokens))
 	for i, t := range tokens {
-		resp[i] = adminTokenToResponse(t)
+		resp[i] = s.adminTokenToResponse(t)
 	}
 
 	JSONList(w, resp, nextCursor, hasMore)
 }
 
+type namespaceGrantRequest struct {
+	NamespaceID string   `json:"namespace_id"`
+	Allow       []string `json:"allow"`
+	Deny        []string `json:"deny,omitempty"`
+	IsPrimary   bool     `json:"is_primary"`
+}
+
+type repoGrantRequest struct {
+	RepoID string   `json:"repo_id"`
+	Allow  []string `json:"allow"`
+	Deny   []string `json:"deny,omitempty"`
+}
+
 type adminCreateTokenRequest struct {
-	Name        string  `json:"name"`
-	IsAdmin     bool    `json:"is_admin"`
-	NamespaceID *string `json:"namespace_id,omitempty"`
-	Scope       string  `json:"scope"`
-	ExpiresIn   *int    `json:"expires_in_seconds,omitempty"`
+	Name            string                  `json:"name"`
+	IsAdmin         bool                    `json:"is_admin"`
+	NamespaceID     *string                 `json:"namespace_id,omitempty"`
+	NamespaceGrants []namespaceGrantRequest `json:"namespace_grants,omitempty"`
+	RepoGrants      []repoGrantRequest      `json:"repo_grants,omitempty"`
+	ExpiresIn       *int                    `json:"expires_in_seconds,omitempty"`
 }
 
 type adminCreateTokenResponse struct {
@@ -246,32 +294,40 @@ func (s *Server) handleAdminCreateToken(w http.ResponseWriter, r *http.Request) 
 	}
 
 	if req.IsAdmin {
-		if req.NamespaceID != nil {
-			JSONError(w, http.StatusBadRequest, "Admin tokens cannot have a namespace_id")
+		if req.NamespaceID != nil || len(req.NamespaceGrants) > 0 || len(req.RepoGrants) > 0 {
+			JSONError(w, http.StatusBadRequest, "Admin tokens cannot have grants")
 			return
 		}
-		req.Scope = store.ScopeFull
 	} else {
-		if req.NamespaceID == nil {
-			JSONError(w, http.StatusBadRequest, "User tokens require a namespace_id for primary namespace")
-			return
-		}
-		if req.Scope == "" {
-			req.Scope = store.ScopeFull
-		}
-		if !validUserScopes[req.Scope] {
-			JSONError(w, http.StatusBadRequest, "Invalid scope: must be full, repos, or read-only")
+		isSimpleMode := req.NamespaceID != nil
+		isFullMode := len(req.NamespaceGrants) > 0 || len(req.RepoGrants) > 0
+
+		if isSimpleMode && isFullMode {
+			JSONError(w, http.StatusBadRequest, "Cannot use both namespace_id (simple mode) and grants (full mode)")
 			return
 		}
 
-		ns, err := s.store.GetNamespace(*req.NamespaceID)
-		if err != nil {
-			JSONError(w, http.StatusInternalServerError, "Failed to check namespace")
+		if !isSimpleMode && !isFullMode {
+			JSONError(w, http.StatusBadRequest, "User tokens require either namespace_id or grants")
 			return
 		}
-		if ns == nil {
-			JSONError(w, http.StatusBadRequest, "Namespace not found")
-			return
+
+		if isSimpleMode {
+			ns, err := s.store.GetNamespace(*req.NamespaceID)
+			if err != nil {
+				JSONError(w, http.StatusInternalServerError, "Failed to check namespace")
+				return
+			}
+			if ns == nil {
+				JSONError(w, http.StatusBadRequest, "Namespace not found")
+				return
+			}
+
+			req.NamespaceGrants = []namespaceGrantRequest{{
+				NamespaceID: *req.NamespaceID,
+				Allow:       []string{"namespace:write", "repo:admin"},
+				IsPrimary:   true,
+			}}
 		}
 	}
 
@@ -280,10 +336,121 @@ func (s *Server) handleAdminCreateToken(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	const tokenCreateAttempts = 5
+	var nsGrants []store.NamespaceGrant
+	for _, g := range req.NamespaceGrants {
+		ns, err := s.store.GetNamespace(g.NamespaceID)
+		if err != nil {
+			JSONError(w, http.StatusInternalServerError, "Failed to check namespace")
+			return
+		}
+		if ns == nil {
+			JSONError(w, http.StatusBadRequest, "Namespace not found: "+g.NamespaceID)
+			return
+		}
 
-	var rawToken string
-	var newToken *store.Token
+		allowBits, err := store.ParsePermissions(g.Allow)
+		if err != nil {
+			JSONError(w, http.StatusBadRequest, "Invalid permission: "+err.Error())
+			return
+		}
+
+		var denyBits store.Permission
+		if len(g.Deny) > 0 {
+			denyBits, err = store.ParsePermissions(g.Deny)
+			if err != nil {
+				JSONError(w, http.StatusBadRequest, "Invalid permission: "+err.Error())
+				return
+			}
+		}
+
+		nsGrants = append(nsGrants, store.NamespaceGrant{
+			NamespaceID: g.NamespaceID,
+			AllowBits:   allowBits,
+			DenyBits:    denyBits,
+			IsPrimary:   g.IsPrimary,
+		})
+	}
+
+	var repoGrants []store.RepoGrant
+	for _, g := range req.RepoGrants {
+		repo, err := s.store.GetRepoByID(g.RepoID)
+		if err != nil {
+			JSONError(w, http.StatusInternalServerError, "Failed to check repo")
+			return
+		}
+		if repo == nil {
+			JSONError(w, http.StatusBadRequest, "Repository not found: "+g.RepoID)
+			return
+		}
+
+		allowBits, err := store.ParsePermissions(g.Allow)
+		if err != nil {
+			JSONError(w, http.StatusBadRequest, "Invalid permission: "+err.Error())
+			return
+		}
+
+		var denyBits store.Permission
+		if len(g.Deny) > 0 {
+			denyBits, err = store.ParsePermissions(g.Deny)
+			if err != nil {
+				JSONError(w, http.StatusBadRequest, "Invalid permission: "+err.Error())
+				return
+			}
+		}
+
+		repoGrants = append(repoGrants, store.RepoGrant{
+			RepoID:    g.RepoID,
+			AllowBits: allowBits,
+			DenyBits:  denyBits,
+		})
+	}
+
+	if req.IsAdmin {
+		rawToken, newToken, err := s.createAdminToken(&req.Name, req.ExpiresIn)
+		if err != nil {
+			if errors.Is(err, store.ErrTokenLookupCollision) {
+				JSONError(w, http.StatusInternalServerError, "Failed to create token after retries")
+				return
+			}
+			JSONError(w, http.StatusInternalServerError, "Failed to create token")
+			return
+		}
+
+		resp := adminCreateTokenResponse{
+			adminTokenResponse: s.adminTokenToResponse(*newToken),
+			Token:              rawToken,
+		}
+
+		JSON(w, http.StatusCreated, resp)
+		return
+	}
+
+	var expiresAt *time.Time
+	if req.ExpiresIn != nil {
+		exp := time.Now().Add(time.Duration(*req.ExpiresIn) * time.Second)
+		expiresAt = &exp
+	}
+
+	rawToken, newToken, err := s.store.GenerateUserTokenWithGrants(&req.Name, expiresAt, nsGrants, repoGrants)
+	if err != nil {
+		if errors.Is(err, store.ErrTokenLookupCollision) {
+			JSONError(w, http.StatusInternalServerError, "Failed to create token after retries")
+			return
+		}
+		JSONError(w, http.StatusInternalServerError, "Failed to create token")
+		return
+	}
+
+	resp := adminCreateTokenResponse{
+		adminTokenResponse: s.adminTokenToResponse(*newToken),
+		Token:              rawToken,
+	}
+
+	JSON(w, http.StatusCreated, resp)
+}
+
+func (s *Server) createAdminToken(name *string, expiresIn *int) (string, *store.Token, error) {
+	const tokenCreateAttempts = 5
 
 	for attempt := 0; attempt < tokenCreateAttempts; attempt++ {
 		tokenID := uuid.New().String()
@@ -291,16 +458,14 @@ func (s *Server) handleAdminCreateToken(w http.ResponseWriter, r *http.Request) 
 
 		secret, err := core.GenerateTokenSecret(24)
 		if err != nil {
-			JSONError(w, http.StatusInternalServerError, "Failed to generate token")
-			return
+			return "", nil, fmt.Errorf("generate token secret: %w", err)
 		}
 
-		rawToken = core.BuildToken(tokenLookup, secret)
+		rawToken := core.BuildToken(tokenLookup, secret)
 
 		tokenHash, err := core.HashToken(rawToken)
 		if err != nil {
-			JSONError(w, http.StatusInternalServerError, "Failed to generate token")
-			return
+			return "", nil, fmt.Errorf("hash token: %w", err)
 		}
 
 		now := time.Now()
@@ -308,14 +473,13 @@ func (s *Server) handleAdminCreateToken(w http.ResponseWriter, r *http.Request) 
 			ID:          tokenID,
 			TokenHash:   tokenHash,
 			TokenLookup: tokenLookup,
-			Name:        &req.Name,
-			IsAdmin:     req.IsAdmin,
-			Scope:       req.Scope,
+			Name:        name,
+			IsAdmin:     true,
 			CreatedAt:   now,
 		}
 
-		if req.ExpiresIn != nil {
-			exp := now.Add(time.Duration(*req.ExpiresIn) * time.Second)
+		if expiresIn != nil {
+			exp := now.Add(time.Duration(*expiresIn) * time.Second)
 			candidate.ExpiresAt = &exp
 		}
 
@@ -323,39 +487,13 @@ func (s *Server) handleAdminCreateToken(w http.ResponseWriter, r *http.Request) 
 			if errors.Is(err, store.ErrTokenLookupCollision) {
 				continue
 			}
-			JSONError(w, http.StatusInternalServerError, "Failed to create token")
-			return
+			return "", nil, err
 		}
 
-		newToken = candidate
-		break
+		return rawToken, candidate, nil
 	}
 
-	if newToken == nil {
-		JSONError(w, http.StatusInternalServerError, "Failed to create token after retries")
-		return
-	}
-
-	if !req.IsAdmin {
-		access := &store.TokenNamespaceAccess{
-			TokenID:     newToken.ID,
-			NamespaceID: *req.NamespaceID,
-			IsPrimary:   true,
-			CreatedAt:   time.Now(),
-		}
-		if err := s.store.GrantTokenNamespaceAccess(access); err != nil {
-			s.store.DeleteToken(newToken.ID)
-			JSONError(w, http.StatusInternalServerError, "Failed to grant namespace access")
-			return
-		}
-	}
-
-	resp := adminCreateTokenResponse{
-		adminTokenResponse: adminTokenToResponse(*newToken),
-		Token:              rawToken,
-	}
-
-	JSON(w, http.StatusCreated, resp)
+	return "", nil, store.ErrTokenLookupCollision
 }
 
 func (s *Server) handleAdminGetToken(w http.ResponseWriter, r *http.Request) {
@@ -374,7 +512,7 @@ func (s *Server) handleAdminGetToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	JSON(w, http.StatusOK, adminTokenToResponse(*token))
+	JSON(w, http.StatusOK, s.adminTokenToResponse(*token))
 }
 
 func (s *Server) handleAdminDeleteToken(w http.ResponseWriter, r *http.Request) {
@@ -407,12 +545,7 @@ func (s *Server) handleAdminDeleteToken(w http.ResponseWriter, r *http.Request) 
 	w.WriteHeader(http.StatusNoContent)
 }
 
-type grantNamespaceRequest struct {
-	NamespaceID string `json:"namespace_id"`
-	IsPrimary   bool   `json:"is_primary"`
-}
-
-func (s *Server) handleAdminGrantTokenNamespace(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleAdminCreateNamespaceGrant(w http.ResponseWriter, r *http.Request) {
 	if s.requireAdminToken(w, r) == nil {
 		return
 	}
@@ -429,11 +562,11 @@ func (s *Server) handleAdminGrantTokenNamespace(w http.ResponseWriter, r *http.R
 	}
 
 	if token.IsAdmin {
-		JSONError(w, http.StatusBadRequest, "Admin tokens cannot have namespace access")
+		JSONError(w, http.StatusBadRequest, "Admin tokens cannot have grants")
 		return
 	}
 
-	var req grantNamespaceRequest
+	var req namespaceGrantRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		JSONError(w, http.StatusBadRequest, "Invalid request body")
 		return
@@ -449,28 +582,92 @@ func (s *Server) handleAdminGrantTokenNamespace(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	access := &store.TokenNamespaceAccess{
+	allowBits, err := store.ParsePermissions(req.Allow)
+	if err != nil {
+		JSONError(w, http.StatusBadRequest, "Invalid permission: "+err.Error())
+		return
+	}
+
+	var denyBits store.Permission
+	if len(req.Deny) > 0 {
+		denyBits, err = store.ParsePermissions(req.Deny)
+		if err != nil {
+			JSONError(w, http.StatusBadRequest, "Invalid permission: "+err.Error())
+			return
+		}
+	}
+
+	now := time.Now()
+	grant := &store.NamespaceGrant{
 		TokenID:     tokenID,
 		NamespaceID: req.NamespaceID,
+		AllowBits:   allowBits,
+		DenyBits:    denyBits,
 		IsPrimary:   req.IsPrimary,
-		CreatedAt:   time.Now(),
+		CreatedAt:   now,
+		UpdatedAt:   now,
 	}
 
-	if err := s.store.GrantTokenNamespaceAccess(access); err != nil {
-		JSONError(w, http.StatusInternalServerError, "Failed to grant namespace access")
+	if err := s.store.UpsertNamespaceGrant(grant); err != nil {
+		JSONError(w, http.StatusInternalServerError, "Failed to create grant")
 		return
 	}
 
-	namespaces, err := s.store.ListTokenNamespaces(tokenID)
+	grants, err := s.store.ListTokenNamespaceGrants(tokenID)
 	if err != nil {
-		JSONError(w, http.StatusInternalServerError, "Failed to list namespaces")
+		JSONError(w, http.StatusInternalServerError, "Failed to list grants")
 		return
 	}
 
-	JSON(w, http.StatusOK, namespaces)
+	var resp []namespaceGrantAPIResponse
+	for _, g := range grants {
+		resp = append(resp, namespaceGrantAPIResponse{
+			NamespaceID: g.NamespaceID,
+			Allow:       g.AllowBits.ToStrings(),
+			Deny:        g.DenyBits.ToStrings(),
+			IsPrimary:   g.IsPrimary,
+		})
+	}
+
+	JSON(w, http.StatusOK, resp)
 }
 
-func (s *Server) handleAdminRevokeTokenNamespace(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleAdminListNamespaceGrants(w http.ResponseWriter, r *http.Request) {
+	if s.requireAdminToken(w, r) == nil {
+		return
+	}
+
+	tokenID := chi.URLParam(r, "id")
+	token, err := s.store.GetTokenByID(tokenID)
+	if err != nil {
+		JSONError(w, http.StatusInternalServerError, "Failed to get token")
+		return
+	}
+	if token == nil {
+		JSONError(w, http.StatusNotFound, "Token not found")
+		return
+	}
+
+	grants, err := s.store.ListTokenNamespaceGrants(tokenID)
+	if err != nil {
+		JSONError(w, http.StatusInternalServerError, "Failed to list grants")
+		return
+	}
+
+	var resp []namespaceGrantAPIResponse
+	for _, g := range grants {
+		resp = append(resp, namespaceGrantAPIResponse{
+			NamespaceID: g.NamespaceID,
+			Allow:       g.AllowBits.ToStrings(),
+			Deny:        g.DenyBits.ToStrings(),
+			IsPrimary:   g.IsPrimary,
+		})
+	}
+
+	JSON(w, http.StatusOK, resp)
+}
+
+func (s *Server) handleAdminDeleteNamespaceGrant(w http.ResponseWriter, r *http.Request) {
 	if s.requireAdminToken(w, r) == nil {
 		return
 	}
@@ -488,23 +685,178 @@ func (s *Server) handleAdminRevokeTokenNamespace(w http.ResponseWriter, r *http.
 		return
 	}
 
-	access, err := s.store.GetTokenNamespaceAccess(tokenID, nsID)
+	grant, err := s.store.GetNamespaceGrant(tokenID, nsID)
 	if err != nil {
-		JSONError(w, http.StatusInternalServerError, "Failed to check access")
+		JSONError(w, http.StatusInternalServerError, "Failed to check grant")
 		return
 	}
-	if access == nil {
-		JSONError(w, http.StatusNotFound, "Token does not have access to this namespace")
-		return
-	}
-
-	if access.IsPrimary {
-		JSONError(w, http.StatusBadRequest, "Cannot revoke access to primary namespace")
+	if grant == nil {
+		JSONError(w, http.StatusNotFound, "Grant not found")
 		return
 	}
 
-	if err := s.store.RevokeTokenNamespaceAccess(tokenID, nsID); err != nil {
-		JSONError(w, http.StatusInternalServerError, "Failed to revoke namespace access")
+	if grant.IsPrimary {
+		JSONError(w, http.StatusBadRequest, "Cannot delete primary namespace grant")
+		return
+	}
+
+	if err := s.store.DeleteNamespaceGrant(tokenID, nsID); err != nil {
+		JSONError(w, http.StatusInternalServerError, "Failed to delete grant")
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) handleAdminCreateRepoGrant(w http.ResponseWriter, r *http.Request) {
+	if s.requireAdminToken(w, r) == nil {
+		return
+	}
+
+	tokenID := chi.URLParam(r, "id")
+	token, err := s.store.GetTokenByID(tokenID)
+	if err != nil {
+		JSONError(w, http.StatusInternalServerError, "Failed to get token")
+		return
+	}
+	if token == nil {
+		JSONError(w, http.StatusNotFound, "Token not found")
+		return
+	}
+
+	if token.IsAdmin {
+		JSONError(w, http.StatusBadRequest, "Admin tokens cannot have grants")
+		return
+	}
+
+	var req repoGrantRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		JSONError(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+
+	repo, err := s.store.GetRepoByID(req.RepoID)
+	if err != nil {
+		JSONError(w, http.StatusInternalServerError, "Failed to get repo")
+		return
+	}
+	if repo == nil {
+		JSONError(w, http.StatusNotFound, "Repository not found")
+		return
+	}
+
+	allowBits, err := store.ParsePermissions(req.Allow)
+	if err != nil {
+		JSONError(w, http.StatusBadRequest, "Invalid permission: "+err.Error())
+		return
+	}
+
+	var denyBits store.Permission
+	if len(req.Deny) > 0 {
+		denyBits, err = store.ParsePermissions(req.Deny)
+		if err != nil {
+			JSONError(w, http.StatusBadRequest, "Invalid permission: "+err.Error())
+			return
+		}
+	}
+
+	now := time.Now()
+	grant := &store.RepoGrant{
+		TokenID:   tokenID,
+		RepoID:    req.RepoID,
+		AllowBits: allowBits,
+		DenyBits:  denyBits,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+
+	if err := s.store.UpsertRepoGrant(grant); err != nil {
+		JSONError(w, http.StatusInternalServerError, "Failed to create grant")
+		return
+	}
+
+	grants, err := s.store.ListTokenRepoGrants(tokenID)
+	if err != nil {
+		JSONError(w, http.StatusInternalServerError, "Failed to list grants")
+		return
+	}
+
+	var resp []repoGrantAPIResponse
+	for _, g := range grants {
+		resp = append(resp, repoGrantAPIResponse{
+			RepoID: g.RepoID,
+			Allow:  g.AllowBits.ToStrings(),
+			Deny:   g.DenyBits.ToStrings(),
+		})
+	}
+
+	JSON(w, http.StatusOK, resp)
+}
+
+func (s *Server) handleAdminListRepoGrants(w http.ResponseWriter, r *http.Request) {
+	if s.requireAdminToken(w, r) == nil {
+		return
+	}
+
+	tokenID := chi.URLParam(r, "id")
+	token, err := s.store.GetTokenByID(tokenID)
+	if err != nil {
+		JSONError(w, http.StatusInternalServerError, "Failed to get token")
+		return
+	}
+	if token == nil {
+		JSONError(w, http.StatusNotFound, "Token not found")
+		return
+	}
+
+	grants, err := s.store.ListTokenRepoGrants(tokenID)
+	if err != nil {
+		JSONError(w, http.StatusInternalServerError, "Failed to list grants")
+		return
+	}
+
+	var resp []repoGrantAPIResponse
+	for _, g := range grants {
+		resp = append(resp, repoGrantAPIResponse{
+			RepoID: g.RepoID,
+			Allow:  g.AllowBits.ToStrings(),
+			Deny:   g.DenyBits.ToStrings(),
+		})
+	}
+
+	JSON(w, http.StatusOK, resp)
+}
+
+func (s *Server) handleAdminDeleteRepoGrant(w http.ResponseWriter, r *http.Request) {
+	if s.requireAdminToken(w, r) == nil {
+		return
+	}
+
+	tokenID := chi.URLParam(r, "id")
+	repoID := chi.URLParam(r, "repoID")
+
+	token, err := s.store.GetTokenByID(tokenID)
+	if err != nil {
+		JSONError(w, http.StatusInternalServerError, "Failed to get token")
+		return
+	}
+	if token == nil {
+		JSONError(w, http.StatusNotFound, "Token not found")
+		return
+	}
+
+	grant, err := s.store.GetRepoGrant(tokenID, repoID)
+	if err != nil {
+		JSONError(w, http.StatusInternalServerError, "Failed to check grant")
+		return
+	}
+	if grant == nil {
+		JSONError(w, http.StatusNotFound, "Grant not found")
+		return
+	}
+
+	if err := s.store.DeleteRepoGrant(tokenID, repoID); err != nil {
+		JSONError(w, http.StatusInternalServerError, "Failed to delete grant")
 		return
 	}
 

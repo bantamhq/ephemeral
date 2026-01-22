@@ -121,12 +121,12 @@ if [ -z "$NS_ID" ]; then
     exit 1
 fi
 
-# Create user token for tests
+# Create user token for tests (simple mode gives namespace:write + repo:admin)
 echo -e "${BLUE}Creating user token...${NC}"
 TOKEN_RESPONSE=$(curl -s -X POST \
     -H "Authorization: Bearer $ADMIN_TOKEN" \
     -H "Content-Type: application/json" \
-    -d "{\"namespace_id\":\"$NS_ID\",\"name\":\"test-token\",\"scope\":\"full\"}" \
+    -d "{\"namespace_id\":\"$NS_ID\",\"name\":\"test-token\"}" \
     "http://127.0.0.1:$TEST_PORT/api/v1/admin/tokens")
 
 TOKEN=$(echo "$TOKEN_RESPONSE" | grep -o '"token":"[^"]*"' | head -1 | cut -d'"' -f4)

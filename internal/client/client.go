@@ -651,13 +651,30 @@ func (c *Client) ListNamespaces() ([]NamespaceWithAccess, error) {
 	return namespaces, nil
 }
 
+// NamespaceGrantResponse represents a namespace grant in API responses.
+type NamespaceGrantResponse struct {
+	NamespaceID string   `json:"namespace_id"`
+	Allow       []string `json:"allow"`
+	Deny        []string `json:"deny,omitempty"`
+	IsPrimary   bool     `json:"is_primary"`
+}
+
+// RepoGrantResponse represents a repo grant in API responses.
+type RepoGrantResponse struct {
+	RepoID string   `json:"repo_id"`
+	Allow  []string `json:"allow"`
+	Deny   []string `json:"deny,omitempty"`
+}
+
 type TokenResponse struct {
-	ID        string     `json:"id"`
-	Name      *string    `json:"name,omitempty"`
-	Scope     string     `json:"scope"`
-	CreatedAt time.Time  `json:"created_at"`
-	ExpiresAt *time.Time `json:"expires_at,omitempty"`
-	Token     string     `json:"token"`
+	ID              string                   `json:"id"`
+	Name            *string                  `json:"name,omitempty"`
+	IsAdmin         bool                     `json:"is_admin"`
+	CreatedAt       time.Time                `json:"created_at"`
+	ExpiresAt       *time.Time               `json:"expires_at,omitempty"`
+	Token           string                   `json:"token"`
+	NamespaceGrants []NamespaceGrantResponse `json:"namespace_grants,omitempty"`
+	RepoGrants      []RepoGrantResponse      `json:"repo_grants,omitempty"`
 }
 
 // AdminListNamespaces lists all namespaces (admin only).
@@ -728,10 +745,10 @@ func (c *Client) AdminDeleteNamespace(id string) error {
 }
 
 // AdminCreateToken creates a new user token with access to a namespace (admin only).
-func (c *Client) AdminCreateToken(namespaceID string, name *string, scope string) (*TokenResponse, error) {
+// Uses simple mode which grants namespace:write + repo:admin on the primary namespace.
+func (c *Client) AdminCreateToken(namespaceID string, name *string) (*TokenResponse, error) {
 	body := map[string]any{
 		"namespace_id": namespaceID,
-		"scope":        scope,
 	}
 	if name != nil {
 		body["name"] = *name
@@ -760,14 +777,18 @@ func (c *Client) AdminCreateToken(namespaceID string, name *string, scope string
 	return &token, nil
 }
 
-// AdminGrantTokenNamespace grants a token access to a namespace (admin only).
-func (c *Client) AdminGrantTokenNamespace(tokenID, namespaceID string, isPrimary bool) error {
+// AdminUpsertNamespaceGrant creates or updates a namespace grant for a token (admin only).
+func (c *Client) AdminUpsertNamespaceGrant(tokenID, namespaceID string, allow []string, deny []string, isPrimary bool) error {
 	body := map[string]any{
 		"namespace_id": namespaceID,
+		"allow":        allow,
 		"is_primary":   isPrimary,
 	}
+	if len(deny) > 0 {
+		body["deny"] = deny
+	}
 
-	resp, err := c.doRequestWithBody(http.MethodPost, "/api/v1/admin/tokens/"+tokenID+"/namespaces", body)
+	resp, err := c.doRequestWithBody(http.MethodPost, "/api/v1/admin/tokens/"+tokenID+"/namespace-grants", body)
 	if err != nil {
 		return err
 	}
@@ -780,9 +801,47 @@ func (c *Client) AdminGrantTokenNamespace(tokenID, namespaceID string, isPrimary
 	return nil
 }
 
-// AdminRevokeTokenNamespace revokes a token's access to a namespace (admin only).
-func (c *Client) AdminRevokeTokenNamespace(tokenID, namespaceID string) error {
-	resp, err := c.doRequest(http.MethodDelete, "/api/v1/admin/tokens/"+tokenID+"/namespaces/"+namespaceID)
+// AdminDeleteNamespaceGrant removes a namespace grant from a token (admin only).
+func (c *Client) AdminDeleteNamespaceGrant(tokenID, namespaceID string) error {
+	resp, err := c.doRequest(http.MethodDelete, "/api/v1/admin/tokens/"+tokenID+"/namespace-grants/"+namespaceID)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNoContent {
+		return c.decodeError(resp)
+	}
+
+	return nil
+}
+
+// AdminUpsertRepoGrant creates or updates a repo grant for a token (admin only).
+func (c *Client) AdminUpsertRepoGrant(tokenID, repoID string, allow []string, deny []string) error {
+	body := map[string]any{
+		"repo_id": repoID,
+		"allow":   allow,
+	}
+	if len(deny) > 0 {
+		body["deny"] = deny
+	}
+
+	resp, err := c.doRequestWithBody(http.MethodPost, "/api/v1/admin/tokens/"+tokenID+"/repo-grants", body)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
+		return c.decodeError(resp)
+	}
+
+	return nil
+}
+
+// AdminDeleteRepoGrant removes a repo grant from a token (admin only).
+func (c *Client) AdminDeleteRepoGrant(tokenID, repoID string) error {
+	resp, err := c.doRequest(http.MethodDelete, "/api/v1/admin/tokens/"+tokenID+"/repo-grants/"+repoID)
 	if err != nil {
 		return err
 	}

@@ -88,11 +88,8 @@ func (s *Server) handleCreateRef(w http.ResponseWriter, r *http.Request) {
 	if token == nil {
 		return
 	}
-	if !s.requireScope(w, token, store.ScopeRepos) {
-		return
-	}
 
-	repo := s.requireRepoAccess(w, r, token)
+	repo := s.requireRepoAccessWithPermission(w, r, token, store.PermRepoWrite)
 	if repo == nil {
 		return
 	}
@@ -162,11 +159,8 @@ func (s *Server) handleUpdateRef(w http.ResponseWriter, r *http.Request) {
 	if token == nil {
 		return
 	}
-	if !s.requireScope(w, token, store.ScopeRepos) {
-		return
-	}
 
-	repo := s.requireRepoAccess(w, r, token)
+	repo := s.requireRepoAccessWithPermission(w, r, token, store.PermRepoWrite)
 	if repo == nil {
 		return
 	}
@@ -268,11 +262,8 @@ func (s *Server) handleDeleteRef(w http.ResponseWriter, r *http.Request) {
 	if token == nil {
 		return
 	}
-	if !s.requireScope(w, token, store.ScopeRepos) {
-		return
-	}
 
-	repo := s.requireRepoAccess(w, r, token)
+	repo := s.requireRepoAccessWithPermission(w, r, token, store.PermRepoWrite)
 	if repo == nil {
 		return
 	}
@@ -316,11 +307,8 @@ func (s *Server) handleSetDefaultBranch(w http.ResponseWriter, r *http.Request) 
 	if token == nil {
 		return
 	}
-	if !s.requireScope(w, token, store.ScopeRepos) {
-		return
-	}
 
-	repo := s.requireRepoAccess(w, r, token)
+	repo := s.requireRepoAccessWithPermission(w, r, token, store.PermRepoWrite)
 	if repo == nil {
 		return
 	}

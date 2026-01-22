@@ -25,12 +25,12 @@ expect_contains "$RESPONSE" '"data"' "returns data array"
 expect_json_length "$RESPONSE" '.data' "2" "contains at least two tokens"
 
 ###############################################################################
-section "Admin: Create User Token"
+section "Admin: Create User Token (Simple Mode)"
 ###############################################################################
 
-# Create read-only token
+# Create token using simple mode (namespace_id only)
 RESPONSE=$(admin_curl -X POST -H "Content-Type: application/json" \
-    -d "{\"namespace_id\":\"$NS_ID\",\"name\":\"test-readonly\",\"scope\":\"read-only\"}" \
+    -d "{\"namespace_id\":\"$NS_ID\",\"name\":\"test-simple\"}" \
     "$ADMIN_API/tokens")
 
 TOKEN1_ID=$(get_id "$RESPONSE")
@@ -38,74 +38,70 @@ if [ -n "$TOKEN1_ID" ]; then
     track_token "$TOKEN1_ID"
 fi
 expect_contains "$RESPONSE" '"token":"eph_' "returns token value"
-expect_json "$RESPONSE" '.data.scope' "read-only" "scope is read-only"
 expect_json "$RESPONSE" '.data.is_admin' "false" "is not admin"
+expect_contains "$RESPONSE" '"namespace_grants"' "has namespace_grants"
+expect_contains "$RESPONSE" '"namespace:write"' "has namespace:write permission"
+expect_contains "$RESPONSE" '"repo:admin"' "has repo:admin permission"
 
-# Create repos scope token
+# Create token with expiration
 RESPONSE=$(admin_curl -X POST -H "Content-Type: application/json" \
-    -d "{\"namespace_id\":\"$NS_ID\",\"name\":\"test-repos\",\"scope\":\"repos\"}" \
+    -d "{\"namespace_id\":\"$NS_ID\",\"name\":\"test-expiring\",\"expires_in_seconds\":3600}" \
     "$ADMIN_API/tokens")
 
 TOKEN2_ID=$(get_id "$RESPONSE")
 if [ -n "$TOKEN2_ID" ]; then
     track_token "$TOKEN2_ID"
 fi
-expect_json "$RESPONSE" '.data.scope' "repos" "scope is repos"
+expect_contains "$RESPONSE" '"expires_at"' "has expiration"
 
-# Create full scope token
+###############################################################################
+section "Admin: Create User Token (Full Mode)"
+###############################################################################
+
+# Create token with explicit grants
 RESPONSE=$(admin_curl -X POST -H "Content-Type: application/json" \
-    -d "{\"namespace_id\":\"$NS_ID\",\"name\":\"test-full\",\"scope\":\"full\"}" \
-    "$ADMIN_API/tokens")
-
-FULL_TOKEN=$(echo "$RESPONSE" | jq -r '.data.token')
-FULL_TOKEN_ID=$(get_id "$RESPONSE")
-if [ -n "$FULL_TOKEN_ID" ]; then
-    track_token "$FULL_TOKEN_ID"
-fi
-expect_json "$RESPONSE" '.data.scope' "full" "scope is full"
-
-# Create token with expiration
-RESPONSE=$(admin_curl -X POST -H "Content-Type: application/json" \
-    -d "{\"namespace_id\":\"$NS_ID\",\"name\":\"test-expiring\",\"scope\":\"read-only\",\"expires_in_seconds\":3600}" \
+    -d "{\"name\":\"test-full-mode\",\"namespace_grants\":[{\"namespace_id\":\"$NS_ID\",\"allow\":[\"namespace:read\",\"repo:read\"],\"is_primary\":true}]}" \
     "$ADMIN_API/tokens")
 
 TOKEN3_ID=$(get_id "$RESPONSE")
 if [ -n "$TOKEN3_ID" ]; then
     track_token "$TOKEN3_ID"
 fi
-expect_contains "$RESPONSE" '"expires_at"' "has expiration"
+expect_contains "$RESPONSE" '"namespace:read"' "has namespace:read"
+expect_contains "$RESPONSE" '"repo:read"' "has repo:read"
+expect_not_contains "$RESPONSE" '"namespace:write"' "does not have namespace:write"
 
 ###############################################################################
 section "Admin: Token Validation"
 ###############################################################################
 
-# Invalid scope should fail
-RESPONSE=$(admin_curl -X POST -H "Content-Type: application/json" \
-    -d "{\"namespace_id\":\"$NS_ID\",\"name\":\"bad-scope\",\"scope\":\"invalid\"}" \
-    "$ADMIN_API/tokens")
-
-expect_contains "$RESPONSE" "Invalid scope" "invalid scope rejected"
-
 # Negative expiration should fail
 RESPONSE=$(admin_curl -X POST -H "Content-Type: application/json" \
-    -d "{\"namespace_id\":\"$NS_ID\",\"name\":\"bad-expiry\",\"scope\":\"read-only\",\"expires_in_seconds\":-10}" \
+    -d "{\"namespace_id\":\"$NS_ID\",\"name\":\"bad-expiry\",\"expires_in_seconds\":-10}" \
     "$ADMIN_API/tokens")
 
 expect_contains "$RESPONSE" "cannot be negative" "negative expiration rejected"
 
-# User token without namespace should fail
+# User token without namespace or grants should fail
 RESPONSE=$(admin_curl -X POST -H "Content-Type: application/json" \
-    -d '{"name":"no-namespace","scope":"full"}' \
+    -d '{"name":"no-namespace"}' \
     "$ADMIN_API/tokens")
 
-expect_contains "$RESPONSE" "namespace_id" "user token requires namespace"
+expect_contains "$RESPONSE" "namespace_id\|grants" "user token requires namespace or grants"
 
 # Admin token with namespace should fail
 RESPONSE=$(admin_curl -X POST -H "Content-Type: application/json" \
     -d "{\"namespace_id\":\"$NS_ID\",\"name\":\"admin-with-ns\",\"is_admin\":true}" \
     "$ADMIN_API/tokens")
 
-expect_contains "$RESPONSE" "cannot have a namespace_id" "admin token rejects namespace"
+expect_contains "$RESPONSE" "cannot have" "admin token rejects namespace"
+
+# Cannot mix simple and full mode
+RESPONSE=$(admin_curl -X POST -H "Content-Type: application/json" \
+    -d "{\"namespace_id\":\"$NS_ID\",\"namespace_grants\":[{\"namespace_id\":\"$NS_ID\",\"allow\":[\"repo:read\"]}]}" \
+    "$ADMIN_API/tokens")
+
+expect_contains "$RESPONSE" "Cannot use both" "mixed mode rejected"
 
 ###############################################################################
 section "Admin: Create Admin Token"
@@ -121,40 +117,14 @@ if [ -n "$ADMIN_TOKEN2_ID" ]; then
     track_token "$ADMIN_TOKEN2_ID"
 fi
 expect_json "$RESPONSE" '.data.is_admin' "true" "is admin token"
-expect_json "$RESPONSE" '.data.scope' "full" "admin has full scope"
 
 ###############################################################################
-section "Scope Restrictions"
+section "Permission Restrictions"
 ###############################################################################
 
-# Create a repos-scoped token to test with
+# Create a token with repo:read only to test restrictions
 RESPONSE=$(admin_curl -X POST -H "Content-Type: application/json" \
-    -d "{\"namespace_id\":\"$NS_ID\",\"name\":\"test-repos-scope\",\"scope\":\"repos\"}" \
-    "$ADMIN_API/tokens")
-
-REPOS_TOKEN=$(echo "$RESPONSE" | jq -r '.data.token')
-REPOS_TOKEN_ID=$(get_id "$RESPONSE")
-if [ -n "$REPOS_TOKEN_ID" ]; then
-    track_token "$REPOS_TOKEN_ID"
-fi
-
-# repos scope can create repos
-RESPONSE=$(auth_curl_with "$REPOS_TOKEN" -X POST \
-    -H "Content-Type: application/json" \
-    -d '{"name":"repos-scope-created","public":false}' \
-    "$API/repos")
-
-SCOPE_REPO_ID=$(get_id "$RESPONSE")
-if [ -n "$SCOPE_REPO_ID" ]; then
-    track_repo "$SCOPE_REPO_ID"
-    pass "repos scope can create repos"
-else
-    fail "repos scope can create repos" "success" "$RESPONSE"
-fi
-
-# Create a read-only token
-RESPONSE=$(admin_curl -X POST -H "Content-Type: application/json" \
-    -d "{\"namespace_id\":\"$NS_ID\",\"name\":\"test-readonly-scope\",\"scope\":\"read-only\"}" \
+    -d "{\"name\":\"test-readonly\",\"namespace_grants\":[{\"namespace_id\":\"$NS_ID\",\"allow\":[\"namespace:read\",\"repo:read\"],\"is_primary\":true}]}" \
     "$ADMIN_API/tokens")
 
 RO_TOKEN=$(echo "$RESPONSE" | jq -r '.data.token')
@@ -181,7 +151,7 @@ section "Admin: Delete Token"
 
 # Create a token to delete
 RESPONSE=$(admin_curl -X POST -H "Content-Type: application/json" \
-    -d "{\"namespace_id\":\"$NS_ID\",\"name\":\"to-delete\",\"scope\":\"read-only\"}" \
+    -d "{\"namespace_id\":\"$NS_ID\",\"name\":\"to-delete\"}" \
     "$ADMIN_API/tokens")
 
 DELETE_TOKEN_ID=$(get_id "$RESPONSE")
@@ -203,7 +173,7 @@ section "Token Expiration"
 ###############################################################################
 
 RESPONSE=$(admin_curl -X POST -H "Content-Type: application/json" \
-    -d "{\"namespace_id\":\"$NS_ID\",\"name\":\"expire-soon\",\"scope\":\"read-only\",\"expires_in_seconds\":1}" \
+    -d "{\"namespace_id\":\"$NS_ID\",\"name\":\"expire-soon\",\"expires_in_seconds\":1}" \
     "$ADMIN_API/tokens")
 
 EXP_TOKEN=$(echo "$RESPONSE" | jq -r '.data.token')
@@ -230,6 +200,46 @@ RESPONSE=$(auth_curl -X POST \
     -d "{\"namespace_id\":\"$NS_ID\",\"name\":\"should-fail\"}" \
     "$ADMIN_API/tokens")
 expect_contains "$RESPONSE" "Admin access required" "user cannot create tokens via admin API"
+
+###############################################################################
+section "Grant Management"
+###############################################################################
+
+# Create a token for grant management tests
+RESPONSE=$(admin_curl -X POST -H "Content-Type: application/json" \
+    -d "{\"namespace_id\":\"$NS_ID\",\"name\":\"grant-test\"}" \
+    "$ADMIN_API/tokens")
+
+GRANT_TOKEN_ID=$(get_id "$RESPONSE")
+if [ -n "$GRANT_TOKEN_ID" ]; then
+    track_token "$GRANT_TOKEN_ID"
+fi
+
+# List namespace grants
+RESPONSE=$(admin_curl "$ADMIN_API/tokens/$GRANT_TOKEN_ID/namespace-grants")
+expect_contains "$RESPONSE" '"data"' "can list namespace grants"
+expect_contains "$RESPONSE" "$NS_ID" "grant contains namespace ID"
+
+# Create second namespace for grant test
+RESPONSE=$(admin_curl -X POST -H "Content-Type: application/json" \
+    -d '{"name":"grant-test-ns"}' \
+    "$ADMIN_API/namespaces")
+
+NS2_ID=$(get_id "$RESPONSE")
+if [ -n "$NS2_ID" ]; then
+    track_namespace "$NS2_ID"
+fi
+
+# Add namespace grant
+RESPONSE=$(admin_curl -X POST -H "Content-Type: application/json" \
+    -d "{\"namespace_id\":\"$NS2_ID\",\"allow\":[\"repo:read\"],\"is_primary\":false}" \
+    "$ADMIN_API/tokens/$GRANT_TOKEN_ID/namespace-grants")
+
+expect_contains "$RESPONSE" "$NS2_ID" "grant added for second namespace"
+
+# Delete namespace grant
+RESPONSE=$(admin_curl -X DELETE "$ADMIN_API/tokens/$GRANT_TOKEN_ID/namespace-grants/$NS2_ID")
+pass "namespace grant deleted"
 
 ###############################################################################
 summary

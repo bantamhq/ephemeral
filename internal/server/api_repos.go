@@ -31,8 +31,36 @@ func (s *Server) handleListRepos(w http.ResponseWriter, r *http.Request) {
 	limit := parseLimit(r.URL.Query().Get("limit"), defaultPageSize)
 	expand := r.URL.Query().Get("expand")
 
-	if expand == "folders" {
-		repos, err := s.store.ListReposWithFolders(nsID, cursor, limit+1)
+	hasNSRead, err := s.permissions.CheckNamespacePermission(token.ID, nsID, store.PermNamespaceRead)
+	if err != nil {
+		JSONError(w, http.StatusInternalServerError, "Failed to check permissions")
+		return
+	}
+
+	if hasNSRead {
+		if expand == "folders" {
+			repos, err := s.store.ListReposWithFolders(nsID, cursor, limit+1)
+			if err != nil {
+				JSONError(w, http.StatusInternalServerError, "Failed to list repos")
+				return
+			}
+
+			hasMore := len(repos) > limit
+			if hasMore {
+				repos = repos[:limit]
+			}
+
+			var nextCursor *string
+			if hasMore && len(repos) > 0 {
+				c := repos[len(repos)-1].Name
+				nextCursor = &c
+			}
+
+			JSONList(w, repos, nextCursor, hasMore)
+			return
+		}
+
+		repos, err := s.store.ListRepos(nsID, cursor, limit+1)
 		if err != nil {
 			JSONError(w, http.StatusInternalServerError, "Failed to list repos")
 			return
@@ -53,24 +81,13 @@ func (s *Server) handleListRepos(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	repos, err := s.store.ListRepos(nsID, cursor, limit+1)
+	repos, err := s.store.ListReposWithGrants(token.ID, nsID)
 	if err != nil {
 		JSONError(w, http.StatusInternalServerError, "Failed to list repos")
 		return
 	}
 
-	hasMore := len(repos) > limit
-	if hasMore {
-		repos = repos[:limit]
-	}
-
-	var nextCursor *string
-	if hasMore && len(repos) > 0 {
-		c := repos[len(repos)-1].Name
-		nextCursor = &c
-	}
-
-	JSONList(w, repos, nextCursor, hasMore)
+	JSONList(w, repos, nil, false)
 }
 
 type createRepoRequest struct {
@@ -84,11 +101,8 @@ func (s *Server) handleCreateRepo(w http.ResponseWriter, r *http.Request) {
 	if token == nil {
 		return
 	}
-	if !s.requireScope(w, token, store.ScopeRepos) {
-		return
-	}
 
-	nsID := s.getActiveNamespaceID(w, r, token)
+	nsID := s.getNamespaceIDWithPermission(w, r, token, store.PermNamespaceWrite)
 	if nsID == "" {
 		return
 	}
@@ -171,11 +185,8 @@ func (s *Server) handleDeleteRepo(w http.ResponseWriter, r *http.Request) {
 	if token == nil {
 		return
 	}
-	if !s.requireScope(w, token, store.ScopeRepos) {
-		return
-	}
 
-	repo := s.requireRepoAccess(w, r, token)
+	repo := s.requireRepoAccessWithPermission(w, r, token, store.PermRepoAdmin)
 	if repo == nil {
 		return
 	}
@@ -209,11 +220,8 @@ func (s *Server) handleUpdateRepo(w http.ResponseWriter, r *http.Request) {
 	if token == nil {
 		return
 	}
-	if !s.requireScope(w, token, store.ScopeRepos) {
-		return
-	}
 
-	repo := s.requireRepoAccess(w, r, token)
+	repo := s.requireRepoAccessWithPermission(w, r, token, store.PermRepoAdmin)
 	if repo == nil {
 		return
 	}
@@ -344,11 +352,8 @@ func (s *Server) handleAddRepoFolders(w http.ResponseWriter, r *http.Request) {
 	if token == nil {
 		return
 	}
-	if !s.requireScope(w, token, store.ScopeRepos) {
-		return
-	}
 
-	repo := s.requireRepoAccess(w, r, token)
+	repo := s.requireRepoAccessWithPermission(w, r, token, store.PermRepoAdmin)
 	if repo == nil {
 		return
 	}
@@ -382,11 +387,8 @@ func (s *Server) handleSetRepoFolders(w http.ResponseWriter, r *http.Request) {
 	if token == nil {
 		return
 	}
-	if !s.requireScope(w, token, store.ScopeRepos) {
-		return
-	}
 
-	repo := s.requireRepoAccess(w, r, token)
+	repo := s.requireRepoAccessWithPermission(w, r, token, store.PermRepoAdmin)
 	if repo == nil {
 		return
 	}
@@ -420,11 +422,8 @@ func (s *Server) handleRemoveRepoFolder(w http.ResponseWriter, r *http.Request) 
 	if token == nil {
 		return
 	}
-	if !s.requireScope(w, token, store.ScopeRepos) {
-		return
-	}
 
-	repo := s.requireRepoAccess(w, r, token)
+	repo := s.requireRepoAccessWithPermission(w, r, token, store.PermRepoAdmin)
 	if repo == nil {
 		return
 	}

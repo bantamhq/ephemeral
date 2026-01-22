@@ -24,8 +24,10 @@ type ExchangeRequest struct {
 
 // ExchangeResponse is the response for successful token exchange.
 type ExchangeResponse struct {
-	Token     string `json:"token"`
-	Namespace string `json:"namespace"`
+	Token     string   `json:"token"`
+	Namespace string   `json:"namespace"`
+	Allow     []string `json:"allow"`
+	Deny      []string `json:"deny,omitempty"`
 }
 
 // ExchangeErrorResponse is the error response for token exchange.
@@ -42,11 +44,12 @@ type PlatformValidationRequest struct {
 
 // PlatformValidationResponse is the response from the platform validation endpoint.
 type PlatformValidationResponse struct {
-	Valid       bool   `json:"valid"`
-	NamespaceID string `json:"namespace_id,omitempty"`
-	Scope       string `json:"scope,omitempty"`
-	UserID      string `json:"user_id,omitempty"`
-	Error       string `json:"error,omitempty"`
+	Valid       bool     `json:"valid"`
+	NamespaceID string   `json:"namespace_id,omitempty"`
+	Allow       []string `json:"allow,omitempty"`
+	Deny        []string `json:"deny,omitempty"`
+	UserID      string   `json:"user_id,omitempty"`
+	Error       string   `json:"error,omitempty"`
 }
 
 func (s *Server) handleAuthConfig(w http.ResponseWriter, r *http.Request) {
@@ -115,12 +118,24 @@ func (s *Server) handleAuthExchange(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	scope := validationResp.Scope
-	if scope == "" {
-		scope = store.ScopeFull
+	// Use grants from platform response, or default to namespace:write + repo:admin
+	allowPerms := validationResp.Allow
+	denyPerms := validationResp.Deny
+	if len(allowPerms) == 0 {
+		allowPerms = []string{"namespace:write", "repo:admin"}
 	}
 
-	rawToken, _, err := s.store.GenerateUserToken(ns.ID, nil, scope)
+	allowBits := store.PermissionsFromStrings(allowPerms)
+	denyBits := store.PermissionsFromStrings(denyPerms)
+
+	grant := store.NamespaceGrant{
+		NamespaceID: ns.ID,
+		AllowBits:   allowBits,
+		DenyBits:    denyBits,
+		IsPrimary:   true,
+	}
+
+	rawToken, _, err := s.store.GenerateUserTokenWithGrants(nil, nil, []store.NamespaceGrant{grant}, nil)
 	if err != nil {
 		writeExchangeError(w, http.StatusInternalServerError, "internal_error", "Failed to generate token")
 		return
@@ -129,6 +144,8 @@ func (s *Server) handleAuthExchange(w http.ResponseWriter, r *http.Request) {
 	JSON(w, http.StatusOK, ExchangeResponse{
 		Token:     rawToken,
 		Namespace: ns.Name,
+		Allow:     allowBits.ToStrings(),
+		Deny:      denyBits.ToStrings(),
 	})
 }
 

@@ -20,19 +20,21 @@ type AuthOptions struct {
 
 // Server is the HTTP server for Ephemeral.
 type Server struct {
-	store    store.Store
-	dataDir  string
-	authOpts AuthOptions
-	router   *chi.Mux
+	store       store.Store
+	dataDir     string
+	authOpts    AuthOptions
+	router      *chi.Mux
+	permissions *store.PermissionChecker
 }
 
 // NewServer creates a new server instance.
 func NewServer(st store.Store, dataDir string, authOpts AuthOptions) *Server {
 	s := &Server{
-		store:    st,
-		dataDir:  dataDir,
-		authOpts: authOpts,
-		router:   chi.NewRouter(),
+		store:       st,
+		dataDir:     dataDir,
+		authOpts:    authOpts,
+		router:      chi.NewRouter(),
+		permissions: store.NewPermissionChecker(st),
 	}
 	s.setupRoutes()
 	return s
@@ -64,8 +66,16 @@ func (s *Server) setupRoutes() {
 			r.Post("/tokens", s.handleAdminCreateToken)
 			r.Get("/tokens/{id}", s.handleAdminGetToken)
 			r.Delete("/tokens/{id}", s.handleAdminDeleteToken)
-			r.Post("/tokens/{id}/namespaces", s.handleAdminGrantTokenNamespace)
-			r.Delete("/tokens/{id}/namespaces/{nsID}", s.handleAdminRevokeTokenNamespace)
+
+			// Namespace grants
+			r.Post("/tokens/{id}/namespace-grants", s.handleAdminCreateNamespaceGrant)
+			r.Get("/tokens/{id}/namespace-grants", s.handleAdminListNamespaceGrants)
+			r.Delete("/tokens/{id}/namespace-grants/{nsID}", s.handleAdminDeleteNamespaceGrant)
+
+			// Repo grants
+			r.Post("/tokens/{id}/repo-grants", s.handleAdminCreateRepoGrant)
+			r.Get("/tokens/{id}/repo-grants", s.handleAdminListRepoGrants)
+			r.Delete("/tokens/{id}/repo-grants/{repoID}", s.handleAdminDeleteRepoGrant)
 		})
 
 		// User routes - requires user token (non-admin)
@@ -75,6 +85,11 @@ func (s *Server) setupRoutes() {
 			// Current user info
 			r.Get("/namespaces", s.handleListNamespaces)
 			r.Get("/namespace", s.handleGetCurrentNamespace)
+
+			// Namespace-scoped admin routes (requires namespace:admin)
+			r.Patch("/namespaces/{id}", s.handleUpdateNamespace)
+			r.Delete("/namespaces/{id}", s.handleDeleteNamespaceScoped)
+			r.Get("/namespaces/{id}/grants", s.handleListNamespaceGrants)
 
 			// Repos
 			r.Get("/repos", s.handleListRepos)

@@ -17,7 +17,7 @@ func (s *Server) handleListFolders(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	nsID := s.getActiveNamespaceID(w, r, token)
+	nsID := s.getNamespaceIDWithPermission(w, r, token, store.PermNamespaceRead)
 	if nsID == "" {
 		return
 	}
@@ -63,11 +63,8 @@ func (s *Server) handleCreateFolder(w http.ResponseWriter, r *http.Request) {
 	if token == nil {
 		return
 	}
-	if !s.requireScope(w, token, store.ScopeRepos) {
-		return
-	}
 
-	nsID := s.getActiveNamespaceID(w, r, token)
+	nsID := s.getNamespaceIDWithPermission(w, r, token, store.PermNamespaceWrite)
 	if nsID == "" {
 		return
 	}
@@ -134,11 +131,8 @@ func (s *Server) handleUpdateFolder(w http.ResponseWriter, r *http.Request) {
 	if token == nil {
 		return
 	}
-	if !s.requireScope(w, token, store.ScopeRepos) {
-		return
-	}
 
-	folder := s.requireFolderAccess(w, r, token)
+	folder := s.requireFolderAccessWithPermission(w, r, token, store.PermNamespaceWrite)
 	if folder == nil {
 		return
 	}
@@ -193,11 +187,8 @@ func (s *Server) handleDeleteFolder(w http.ResponseWriter, r *http.Request) {
 	if token == nil {
 		return
 	}
-	if !s.requireScope(w, token, store.ScopeRepos) {
-		return
-	}
 
-	folder := s.requireFolderAccess(w, r, token)
+	folder := s.requireFolderAccessWithPermission(w, r, token, store.PermNamespaceWrite)
 	if folder == nil {
 		return
 	}

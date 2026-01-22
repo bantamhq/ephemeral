@@ -272,9 +272,9 @@ RESPONSE=$(anon_curl -X POST -H "Content-Type: application/json" \
     "$API/repos")
 expect_contains "$RESPONSE" "Authentication required\|Unauthorized" "anonymous create denied"
 
-# Create read-only token via admin API
+# Create read-only token via admin API (namespace:read + repo:read only)
 RESPONSE=$(admin_curl -X POST -H "Content-Type: application/json" \
-    -d "{\"namespace_id\":\"$NS_ID\",\"name\":\"repo-readonly\",\"scope\":\"read-only\"}" \
+    -d "{\"name\":\"repo-readonly\",\"namespace_grants\":[{\"namespace_id\":\"$NS_ID\",\"allow\":[\"namespace:read\",\"repo:read\"],\"is_primary\":true}]}" \
     "$ADMIN_API/tokens")
 
 RO_TOKEN=$(echo "$RESPONSE" | jq -r '.data.token')

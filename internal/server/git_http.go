@@ -22,15 +22,17 @@ const gitCommandTimeout = 5 * time.Minute
 
 // GitHTTPHandler handles Git HTTP smart protocol requests.
 type GitHTTPHandler struct {
-	store   store.Store
-	dataDir string
+	store       store.Store
+	dataDir     string
+	permissions *store.PermissionChecker
 }
 
 // NewGitHTTPHandler creates a new Git HTTP handler.
 func NewGitHTTPHandler(st store.Store, dataDir string) *GitHTTPHandler {
 	return &GitHTTPHandler{
-		store:   st,
-		dataDir: dataDir,
+		store:       st,
+		dataDir:     dataDir,
+		permissions: store.NewPermissionChecker(st),
 	}
 }
 
@@ -59,9 +61,15 @@ func (h *GitHTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	token := GetTokenFromContext(r.Context())
 	isWrite := h.isWriteOperation(r)
 
-	// Admin tokens cannot be used for git operations
 	if token != nil && token.IsAdmin {
 		http.Error(w, "Admin token cannot be used for git operations", http.StatusForbidden)
+		return
+	}
+
+	repoName = strings.ToLower(repoName)
+	repo, err := h.store.GetRepo(ns.ID, repoName)
+	if err != nil {
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
 
@@ -72,40 +80,47 @@ func (h *GitHTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		// Check token has access to namespace via junction table
-		hasAccess, err := h.store.HasTokenNamespaceAccess(token.ID, ns.ID)
-		if err != nil {
-			http.Error(w, "Internal server error", http.StatusInternalServerError)
-			return
-		}
-		if !hasAccess {
-			http.Error(w, "Access denied", http.StatusForbidden)
-			return
+		if repo == nil {
+			hasNSWrite, err := h.permissions.CheckNamespacePermission(token.ID, ns.ID, store.PermNamespaceWrite)
+			if err != nil {
+				http.Error(w, "Internal server error", http.StatusInternalServerError)
+				return
+			}
+			if !hasNSWrite {
+				http.Error(w, "Permission denied: cannot create repository", http.StatusForbidden)
+				return
+			}
+		} else {
+			hasWrite, err := h.permissions.CheckRepoPermission(token.ID, repo, store.PermRepoWrite)
+			if err != nil {
+				http.Error(w, "Internal server error", http.StatusInternalServerError)
+				return
+			}
+			if !hasWrite {
+				http.Error(w, "Write access denied", http.StatusForbidden)
+				return
+			}
 		}
 	} else {
-		// For read operations, check namespace access if token is provided
-		if token != nil {
-			hasAccess, err := h.store.HasTokenNamespaceAccess(token.ID, ns.ID)
-			if err != nil {
-				http.Error(w, "Internal server error", http.StatusInternalServerError)
+		if repo != nil && repo.Public && token == nil {
+			// no auth required for public repos
+		} else if token == nil {
+			w.Header().Set("WWW-Authenticate", `Basic realm="Ephemeral"`)
+			http.Error(w, "Authentication required", http.StatusUnauthorized)
+			return
+		} else {
+			if repo == nil {
+				http.Error(w, "Repository not found", http.StatusNotFound)
 				return
 			}
-			if !hasAccess {
-				http.Error(w, "Access denied", http.StatusForbidden)
-				return
-			}
-		}
 
-		// Allow anonymous read for public repos
-		if token == nil {
-			repo, err := h.store.GetRepo(ns.ID, repoName)
+			hasRead, err := h.permissions.CheckRepoPermission(token.ID, repo, store.PermRepoRead)
 			if err != nil {
 				http.Error(w, "Internal server error", http.StatusInternalServerError)
 				return
 			}
-			if repo == nil || !repo.Public {
-				w.Header().Set("WWW-Authenticate", `Basic realm="Ephemeral"`)
-				http.Error(w, "Authentication required", http.StatusUnauthorized)
+			if !hasRead {
+				http.Error(w, "Access denied", http.StatusForbidden)
 				return
 			}
 		}
@@ -137,12 +152,7 @@ func (h *GitHTTPHandler) handleInfoRefs(w http.ResponseWriter, r *http.Request, 
 	service := r.URL.Query().Get("service")
 	isWrite := service == "git-receive-pack"
 
-	if isWrite && token != nil && token.Scope == store.ScopeReadOnly {
-		http.Error(w, "Write access denied", http.StatusForbidden)
-		return
-	}
-
-	repo, err := h.getOrCreateRepo(namespaceID, repoName, isWrite)
+	repo, err := h.getOrCreateRepo(namespaceID, repoName, isWrite, token)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to get repository: %v", err), http.StatusInternalServerError)
 		return
@@ -220,12 +230,7 @@ func (h *GitHTTPHandler) handleUploadPack(w http.ResponseWriter, r *http.Request
 }
 
 func (h *GitHTTPHandler) handleReceivePack(w http.ResponseWriter, r *http.Request, namespaceID, repoName string, token *store.Token) {
-	if token.Scope == store.ScopeReadOnly {
-		http.Error(w, "Write access denied", http.StatusForbidden)
-		return
-	}
-
-	repo, err := h.getOrCreateRepo(namespaceID, repoName, true)
+	repo, err := h.getOrCreateRepo(namespaceID, repoName, true, token)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to get repository: %v", err), http.StatusInternalServerError)
 		return
@@ -310,7 +315,8 @@ func (h *GitHTTPHandler) getRequestBody(w http.ResponseWriter, r *http.Request) 
 }
 
 // getOrCreateRepo gets a repo, optionally creating it if autoCreate is true.
-func (h *GitHTTPHandler) getOrCreateRepo(namespaceID, repoName string, autoCreate bool) (*store.Repo, error) {
+// Auto-creation requires the token to have PermNamespaceWrite on the namespace.
+func (h *GitHTTPHandler) getOrCreateRepo(namespaceID, repoName string, autoCreate bool, token *store.Token) (*store.Repo, error) {
 	repoName = strings.ToLower(repoName)
 	repo, err := h.store.GetRepo(namespaceID, repoName)
 	if err != nil {
@@ -319,6 +325,18 @@ func (h *GitHTTPHandler) getOrCreateRepo(namespaceID, repoName string, autoCreat
 
 	if repo != nil || !autoCreate {
 		return repo, nil
+	}
+
+	if token == nil {
+		return nil, nil
+	}
+
+	hasNSWrite, err := h.permissions.CheckNamespacePermission(token.ID, namespaceID, store.PermNamespaceWrite)
+	if err != nil {
+		return nil, fmt.Errorf("check permission: %w", err)
+	}
+	if !hasNSWrite {
+		return nil, nil
 	}
 
 	return h.createRepo(namespaceID, repoName)

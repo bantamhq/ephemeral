@@ -215,26 +215,3 @@ func OptionalAuthMiddleware(st store.Store) func(http.Handler) http.Handler {
 	}
 }
 
-// scopeLevel returns the privilege level for a scope (higher = more privileges).
-func scopeLevel(scope string) int {
-	switch scope {
-	case store.ScopeReadOnly:
-		return 1
-	case store.ScopeRepos:
-		return 2
-	case store.ScopeFull:
-		return 3
-	case store.ScopeAdmin:
-		return 4
-	default:
-		return 0
-	}
-}
-
-// HasScope checks if token has at least the required scope level.
-func HasScope(token *store.Token, required string) bool {
-	if token == nil {
-		return false
-	}
-	return scopeLevel(token.Scope) >= scopeLevel(required)
-}

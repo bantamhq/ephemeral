@@ -160,7 +160,6 @@ func newAdminTokenCmd() *cobra.Command {
 	}
 	createCmd.Flags().String("namespace", "", "Namespace name or ID (required)")
 	createCmd.Flags().String("name", "", "Token name/label")
-	createCmd.Flags().String("scope", "full", "Token scope (full, repos, or read-only)")
 	createCmd.MarkFlagRequired("namespace")
 
 	cmd.AddCommand(createCmd)
@@ -176,7 +175,6 @@ func runAdminTokenCreate(cmd *cobra.Command, args []string) error {
 
 	nsFlag, _ := cmd.Flags().GetString("namespace")
 	nameFlag, _ := cmd.Flags().GetString("name")
-	scope, _ := cmd.Flags().GetString("scope")
 
 	namespaces, err := c.AdminListNamespaces()
 	if err != nil {
@@ -200,7 +198,7 @@ func runAdminTokenCreate(cmd *cobra.Command, args []string) error {
 		name = &nameFlag
 	}
 
-	token, err := c.AdminCreateToken(namespaceID, name, scope)
+	token, err := c.AdminCreateToken(namespaceID, name)
 	if err != nil {
 		return fmt.Errorf("create token: %w", err)
 	}
@@ -212,7 +210,7 @@ func runAdminTokenCreate(cmd *cobra.Command, args []string) error {
 	fmt.Println(strings.Repeat("=", 60))
 	fmt.Println()
 	fmt.Printf("ID: %s\n", token.ID)
-	fmt.Printf("Scope: %s\n", token.Scope)
+	fmt.Println("Permissions: namespace:write, repo:admin")
 	if token.Name != nil {
 		fmt.Printf("Name: %s\n", *token.Name)
 	}
