@@ -77,8 +77,14 @@ func readToken() (string, error) {
 }
 
 func configureGitHelper(serverURL string) error {
+	exePath, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("get executable path: %w", err)
+	}
+
+	helper := fmt.Sprintf("!%s credential", exePath)
 	cmd := exec.Command("git", "config", "--global",
-		"credential."+serverURL+".helper", "eph")
+		"credential."+serverURL+".helper", helper)
 	return cmd.Run()
 }
 

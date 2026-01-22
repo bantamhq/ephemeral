@@ -895,6 +895,58 @@ func (c *Client) AdminDeleteRepoGrant(tokenID, repoID string) error {
 	return nil
 }
 
+// TokenListItem represents a token in list responses (without the secret).
+type TokenListItem struct {
+	ID              string                   `json:"id"`
+	Name            *string                  `json:"name,omitempty"`
+	IsAdmin         bool                     `json:"is_admin"`
+	CreatedAt       time.Time                `json:"created_at"`
+	ExpiresAt       *time.Time               `json:"expires_at,omitempty"`
+	LastUsedAt      *time.Time               `json:"last_used_at,omitempty"`
+	NamespaceGrants []NamespaceGrantResponse `json:"namespace_grants,omitempty"`
+	RepoGrants      []RepoGrantResponse      `json:"repo_grants,omitempty"`
+}
+
+// AdminListTokens lists all tokens (admin only).
+func (c *Client) AdminListTokens() ([]TokenListItem, error) {
+	resp, err := c.doRequest(http.MethodGet, "/api/v1/admin/tokens")
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, c.decodeError(resp)
+	}
+
+	var dataResp response
+	if err := json.NewDecoder(resp.Body).Decode(&dataResp); err != nil {
+		return nil, fmt.Errorf("decode response: %w", err)
+	}
+
+	var tokens []TokenListItem
+	if err := json.Unmarshal(dataResp.Data, &tokens); err != nil {
+		return nil, fmt.Errorf("decode tokens: %w", err)
+	}
+
+	return tokens, nil
+}
+
+// AdminDeleteToken deletes a token (admin only).
+func (c *Client) AdminDeleteToken(id string) error {
+	resp, err := c.doRequest(http.MethodDelete, "/api/v1/admin/tokens/"+id)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNoContent {
+		return c.decodeError(resp)
+	}
+
+	return nil
+}
+
 // CreateRepo creates a new repository.
 func (c *Client) CreateRepo(name string, description *string, public bool) (*Repo, error) {
 	body := map[string]any{

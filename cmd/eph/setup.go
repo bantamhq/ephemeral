@@ -102,7 +102,7 @@ func (w *SetupWizard) promptNamespace() (string, error) {
 				Placeholder("default").
 				Value(&namespaceName),
 		),
-	)
+	).WithTheme(huh.ThemeBase())
 
 	if err := form.Run(); err != nil {
 		return "", fmt.Errorf("form input: %w", err)

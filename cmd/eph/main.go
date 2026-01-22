@@ -52,10 +52,12 @@ func main() {
 		serveCmd,
 		newLoginCmd(),
 		newLogoutCmd(),
+		newWhoamiCmd(),
 		newCredentialCmd(),
 		newNamespaceCmd(),
 		newAdminCmd(),
 		newNewCmd(),
+		newCloneCmd(),
 	)
 
 	if err := rootCmd.Execute(); err != nil {

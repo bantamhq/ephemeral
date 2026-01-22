@@ -162,7 +162,20 @@ func newAdminTokenCmd() *cobra.Command {
 	createCmd.Flags().String("name", "", "Token name/label")
 	createCmd.MarkFlagRequired("namespace")
 
-	cmd.AddCommand(createCmd)
+	listCmd := &cobra.Command{
+		Use:   "list",
+		Short: "List all tokens",
+		RunE:  runAdminTokenList,
+	}
+
+	deleteCmd := &cobra.Command{
+		Use:   "delete <id>",
+		Short: "Delete a token",
+		Args:  cobra.ExactArgs(1),
+		RunE:  runAdminTokenDelete,
+	}
+
+	cmd.AddCommand(createCmd, listCmd, deleteCmd)
 
 	return cmd
 }
@@ -215,5 +228,53 @@ func runAdminTokenCreate(cmd *cobra.Command, args []string) error {
 		fmt.Printf("Name: %s\n", *token.Name)
 	}
 
+	return nil
+}
+
+func runAdminTokenList(cmd *cobra.Command, args []string) error {
+	c, err := getAdminClient(cmd)
+	if err != nil {
+		return err
+	}
+
+	tokens, err := c.AdminListTokens()
+	if err != nil {
+		return formatAPIError("list tokens", err)
+	}
+
+	if len(tokens) == 0 {
+		fmt.Println("No tokens.")
+		return nil
+	}
+
+	fmt.Printf("%-36s  %-20s  %-6s  %s\n", "ID", "NAME", "TYPE", "CREATED")
+	for _, t := range tokens {
+		name := "(unnamed)"
+		if t.Name != nil {
+			name = *t.Name
+		}
+
+		tokenType := "user"
+		if t.IsAdmin {
+			tokenType = "admin"
+		}
+
+		fmt.Printf("%-36s  %-20s  %-6s  %s\n", t.ID, name, tokenType, t.CreatedAt.Format("2006-01-02"))
+	}
+
+	return nil
+}
+
+func runAdminTokenDelete(cmd *cobra.Command, args []string) error {
+	c, err := getAdminClient(cmd)
+	if err != nil {
+		return err
+	}
+
+	if err := c.AdminDeleteToken(args[0]); err != nil {
+		return formatAPIError("delete token", err)
+	}
+
+	fmt.Println("Token deleted.")
 	return nil
 }
