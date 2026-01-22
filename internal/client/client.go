@@ -907,6 +907,31 @@ type TokenListItem struct {
 	RepoGrants      []RepoGrantResponse      `json:"repo_grants,omitempty"`
 }
 
+// AdminGetToken retrieves a single token by ID with its grants (admin only).
+func (c *Client) AdminGetToken(id string) (*TokenListItem, error) {
+	resp, err := c.doRequest(http.MethodGet, "/api/v1/admin/tokens/"+id)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, c.decodeError(resp)
+	}
+
+	var dataResp response
+	if err := json.NewDecoder(resp.Body).Decode(&dataResp); err != nil {
+		return nil, fmt.Errorf("decode response: %w", err)
+	}
+
+	var token TokenListItem
+	if err := json.Unmarshal(dataResp.Data, &token); err != nil {
+		return nil, fmt.Errorf("decode token: %w", err)
+	}
+
+	return &token, nil
+}
+
 // AdminListTokens lists all tokens (admin only).
 func (c *Client) AdminListTokens() ([]TokenListItem, error) {
 	resp, err := c.doRequest(http.MethodGet, "/api/v1/admin/tokens")
