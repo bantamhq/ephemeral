@@ -11,8 +11,8 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
-	"ephemeral/internal/core"
-	"ephemeral/internal/store"
+	"github.com/bantamhq/ephemeral/internal/core"
+	"github.com/bantamhq/ephemeral/internal/store"
 )
 
 func (s *Server) handleAdminListNamespaces(w http.ResponseWriter, r *http.Request) {

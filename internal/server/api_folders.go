@@ -8,7 +8,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"ephemeral/internal/store"
+	"github.com/bantamhq/ephemeral/internal/store"
 )
 
 func (s *Server) handleListFolders(w http.ResponseWriter, r *http.Request) {

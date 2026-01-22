@@ -1,4 +1,4 @@
-module ephemeral
+module github.com/bantamhq/ephemeral
 
 go 1.25.6
 

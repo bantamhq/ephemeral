@@ -6,7 +6,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"ephemeral/internal/store"
+	"github.com/bantamhq/ephemeral/internal/store"
 )
 
 // requireAuth returns the authenticated token or writes an error response.

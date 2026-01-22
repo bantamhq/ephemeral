@@ -15,7 +15,7 @@ import (
 	"github.com/go-git/go-git/v5"
 	"github.com/google/uuid"
 
-	"ephemeral/internal/store"
+	"github.com/bantamhq/ephemeral/internal/store"
 )
 
 const gitCommandTimeout = 5 * time.Minute

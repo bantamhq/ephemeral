@@ -8,7 +8,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 
-	"ephemeral/internal/store"
+	"github.com/bantamhq/ephemeral/internal/store"
 )
 
 // AuthOptions configures platform authentication settings.

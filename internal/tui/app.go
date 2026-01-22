@@ -21,7 +21,7 @@ import (
 	"github.com/charmbracelet/lipgloss/tree"
 	"github.com/rmhubbert/bubbletea-overlay"
 
-	"ephemeral/internal/client"
+	"github.com/bantamhq/ephemeral/internal/client"
 )
 
 //go:embed ephemeral.json

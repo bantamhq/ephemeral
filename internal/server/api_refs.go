@@ -11,7 +11,7 @@ import (
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
 
-	"ephemeral/internal/store"
+	"github.com/bantamhq/ephemeral/internal/store"
 )
 
 const (

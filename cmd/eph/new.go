@@ -13,8 +13,8 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/transport/http"
 	"github.com/spf13/cobra"
 
-	"ephemeral/internal/client"
-	"ephemeral/internal/config"
+	"github.com/bantamhq/ephemeral/internal/client"
+	"github.com/bantamhq/ephemeral/internal/config"
 )
 
 func newNewCmd() *cobra.Command {

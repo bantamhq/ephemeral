@@ -6,7 +6,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"ephemeral/internal/config"
+	"github.com/bantamhq/ephemeral/internal/config"
 )
 
 func newCredentialCmd() *cobra.Command {

@@ -7,7 +7,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"ephemeral/internal/core"
+	"github.com/bantamhq/ephemeral/internal/core"
 )
 
 // Initialize creates the database schema.

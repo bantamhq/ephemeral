@@ -7,7 +7,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"ephemeral/internal/core"
+	"github.com/bantamhq/ephemeral/internal/core"
 )
 
 type DialogMode int

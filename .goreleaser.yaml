@@ -1,0 +1,57 @@
+version: 2
+
+project_name: eph
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - main: ./cmd/eph
+    binary: eph
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+
+archives:
+  - formats:
+      - tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}"
+
+checksum:
+  name_template: "checksums.txt"
+
+release:
+  github:
+    owner: bantamhq
+    name: ephemeral
+
+brews:
+  - repository:
+      owner: bantamhq
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    directory: Formula
+    homepage: "https://ephemeral.so"
+    description: "Minimal, terminal-native git hosting"
+    license: "MIT"
+    install: |
+      bin.install "eph"
+    test: |
+      system "#{bin}/eph", "--version"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"

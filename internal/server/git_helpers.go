@@ -7,7 +7,7 @@ import (
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/object"
 
-	"ephemeral/internal/store"
+	"github.com/bantamhq/ephemeral/internal/store"
 )
 
 func (s *Server) openGitRepoForRepo(w http.ResponseWriter, repo *store.Repo) (*git.Repository, bool) {

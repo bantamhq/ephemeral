@@ -7,7 +7,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"ephemeral/internal/client"
+	"github.com/bantamhq/ephemeral/internal/client"
 )
 
 const adminTokenEnv = "EPH_ADMIN_TOKEN"

@@ -1,6 +1,6 @@
 package tui
 
-import "ephemeral/internal/client"
+import "github.com/bantamhq/ephemeral/internal/client"
 
 type dataLoadedMsg struct {
 	folders        []client.Folder

@@ -10,11 +10,11 @@ import (
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 
-	"ephemeral/internal/client"
-	"ephemeral/internal/config"
-	"ephemeral/internal/server"
-	"ephemeral/internal/store"
-	"ephemeral/internal/tui"
+	"github.com/bantamhq/ephemeral/internal/client"
+	"github.com/bantamhq/ephemeral/internal/config"
+	"github.com/bantamhq/ephemeral/internal/server"
+	"github.com/bantamhq/ephemeral/internal/store"
+	"github.com/bantamhq/ephemeral/internal/tui"
 )
 
 type Config struct {
@@ -32,11 +32,14 @@ type Config struct {
 	} `toml:"auth"`
 }
 
+var version = "dev"
+
 func main() {
 	rootCmd := &cobra.Command{
 		Use:           "eph",
 		Short:         "A minimal, terminal-native git hosting service",
 		Long:          `Ephemeral is a minimal git hosting service with a terminal-first approach.`,
+		Version:       version,
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		RunE:          runTUI,

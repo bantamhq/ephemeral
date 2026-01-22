@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"time"
 
-	"ephemeral/internal/store"
+	"github.com/bantamhq/ephemeral/internal/store"
 )
 
 // AuthConfigResponse describes available authentication methods.

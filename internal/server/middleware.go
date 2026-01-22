@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"ephemeral/internal/core"
-	"ephemeral/internal/store"
+	"github.com/bantamhq/ephemeral/internal/core"
+	"github.com/bantamhq/ephemeral/internal/store"
 )
 
 type contextKey string

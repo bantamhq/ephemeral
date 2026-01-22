@@ -9,8 +9,8 @@ import (
 	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
 
-	"ephemeral/internal/client"
-	"ephemeral/internal/config"
+	"github.com/bantamhq/ephemeral/internal/client"
+	"github.com/bantamhq/ephemeral/internal/config"
 )
 
 func newCloneCmd() *cobra.Command {
