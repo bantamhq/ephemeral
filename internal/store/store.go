@@ -71,6 +71,13 @@ type Store interface {
 	UpdateNamespace(ns *Namespace) error
 	DeleteNamespace(id string) error
 
+	// LFS object operations
+	CreateLFSObject(obj *LFSObject) error
+	GetLFSObject(repoID, oid string) (*LFSObject, error)
+	ListLFSObjects(repoID string) ([]LFSObject, error)
+	DeleteLFSObject(repoID, oid string) error
+	GetRepoLFSSize(repoID string) (int64, error)
+
 	Close() error
 }
 
@@ -138,6 +145,13 @@ type Folder struct {
 type RepoWithFolders struct {
 	Repo
 	Folders []Folder `json:"folders,omitempty"`
+}
+
+type LFSObject struct {
+	RepoID    string    `json:"repo_id"`
+	OID       string    `json:"oid"`
+	Size      int64     `json:"size"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 func ToNullString(s *string) sql.NullString {

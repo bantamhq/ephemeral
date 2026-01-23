@@ -1338,3 +1338,97 @@ func (s *SQLiteStore) HasRepoGrantsInNamespace(tokenID, namespaceID string) (boo
 	}
 	return count > 0, nil
 }
+
+// CreateLFSObject creates a new LFS object record.
+func (s *SQLiteStore) CreateLFSObject(obj *LFSObject) error {
+	query := `
+		INSERT INTO lfs_objects (repo_id, oid, size, created_at)
+		VALUES (?, ?, ?, ?)
+	`
+
+	_, err := s.db.Exec(query, obj.RepoID, obj.OID, obj.Size, obj.CreatedAt)
+	if err != nil {
+		return fmt.Errorf("insert lfs object: %w", err)
+	}
+	return nil
+}
+
+// GetLFSObject retrieves an LFS object by repo and OID.
+func (s *SQLiteStore) GetLFSObject(repoID, oid string) (*LFSObject, error) {
+	query := `
+		SELECT repo_id, oid, size, created_at
+		FROM lfs_objects
+		WHERE repo_id = ? AND oid = ?
+	`
+
+	var obj LFSObject
+	err := s.db.QueryRow(query, repoID, oid).Scan(
+		&obj.RepoID,
+		&obj.OID,
+		&obj.Size,
+		&obj.CreatedAt,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("scan lfs object: %w", err)
+	}
+	return &obj, nil
+}
+
+// ListLFSObjects lists all LFS objects for a repository.
+func (s *SQLiteStore) ListLFSObjects(repoID string) ([]LFSObject, error) {
+	query := `
+		SELECT repo_id, oid, size, created_at
+		FROM lfs_objects
+		WHERE repo_id = ?
+		ORDER BY created_at
+	`
+
+	rows, err := s.db.Query(query, repoID)
+	if err != nil {
+		return nil, fmt.Errorf("query lfs objects: %w", err)
+	}
+	defer rows.Close()
+
+	var objects []LFSObject
+	for rows.Next() {
+		var obj LFSObject
+		if err := rows.Scan(&obj.RepoID, &obj.OID, &obj.Size, &obj.CreatedAt); err != nil {
+			return nil, fmt.Errorf("scan lfs object: %w", err)
+		}
+		objects = append(objects, obj)
+	}
+	return objects, rows.Err()
+}
+
+// DeleteLFSObject deletes an LFS object record.
+func (s *SQLiteStore) DeleteLFSObject(repoID, oid string) error {
+	result, err := s.db.Exec("DELETE FROM lfs_objects WHERE repo_id = ? AND oid = ?", repoID, oid)
+	if err != nil {
+		return fmt.Errorf("delete lfs object: %w", err)
+	}
+
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("get rows affected: %w", err)
+	}
+	if rows == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+// GetRepoLFSSize returns the total size of LFS objects for a repository.
+func (s *SQLiteStore) GetRepoLFSSize(repoID string) (int64, error) {
+	var size sql.NullInt64
+	err := s.db.QueryRow("SELECT SUM(size) FROM lfs_objects WHERE repo_id = ?", repoID).Scan(&size)
+	if err != nil {
+		return 0, fmt.Errorf("sum lfs size: %w", err)
+	}
+	if !size.Valid {
+		return 0, nil
+	}
+	return size.Int64, nil
+}

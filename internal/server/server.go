@@ -3,11 +3,13 @@ package server
 import (
 	"fmt"
 	"net/http"
+	"path/filepath"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 
+	"github.com/bantamhq/ephemeral/internal/lfs"
 	"github.com/bantamhq/ephemeral/internal/store"
 )
 
@@ -23,19 +25,29 @@ type Server struct {
 	store       store.Store
 	dataDir     string
 	authOpts    AuthOptions
+	lfsOpts     LFSOptions
 	router      *chi.Mux
 	permissions *store.PermissionChecker
+	lfsHandler  *LFSHandler
 }
 
 // NewServer creates a new server instance.
-func NewServer(st store.Store, dataDir string, authOpts AuthOptions) *Server {
+func NewServer(st store.Store, dataDir string, authOpts AuthOptions, lfsOpts LFSOptions) *Server {
 	s := &Server{
 		store:       st,
 		dataDir:     dataDir,
 		authOpts:    authOpts,
+		lfsOpts:     lfsOpts,
 		router:      chi.NewRouter(),
 		permissions: store.NewPermissionChecker(st),
 	}
+
+	if lfsOpts.Enabled {
+		lfsPath := filepath.Join(dataDir, "lfs")
+		storage := lfs.NewLocalStorage(lfsPath)
+		s.lfsHandler = NewLFSHandler(st, storage, lfsOpts.BaseURL, lfsOpts.MaxFileSize)
+	}
+
 	s.setupRoutes()
 	return s
 }
@@ -135,6 +147,13 @@ func (s *Server) setupRoutes() {
 	gitHandler := NewGitHTTPHandler(s.store, s.dataDir)
 	s.router.Route("/git", func(r chi.Router) {
 		r.Use(OptionalAuthMiddleware(s.store))
+
+		if s.lfsHandler != nil {
+			r.Route("/{namespace}/{repo}.git/info/lfs", func(r chi.Router) {
+				r.Mount("/", s.lfsHandler.Routes())
+			})
+		}
+
 		r.HandleFunc("/*", gitHandler.ServeHTTP)
 	})
 }

@@ -109,10 +109,20 @@ func (s *SQLiteStore) createSchema() error {
 		PRIMARY KEY (repo_id, folder_id)
 	);
 
+	-- LFS objects
+	CREATE TABLE IF NOT EXISTS lfs_objects (
+		repo_id TEXT NOT NULL REFERENCES repos(id) ON DELETE CASCADE,
+		oid TEXT NOT NULL,
+		size INTEGER NOT NULL,
+		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		PRIMARY KEY (repo_id, oid)
+	);
+
 	-- Create indexes
 	CREATE INDEX IF NOT EXISTS idx_repos_namespace ON repos(namespace_id);
 	CREATE UNIQUE INDEX IF NOT EXISTS idx_tokens_lookup ON tokens(token_lookup);
 	CREATE INDEX IF NOT EXISTS idx_folders_namespace ON folders(namespace_id);
+	CREATE INDEX IF NOT EXISTS idx_lfs_objects_repo ON lfs_objects(repo_id);
 
 	-- Ensure each token has at most one primary namespace
 	CREATE UNIQUE INDEX IF NOT EXISTS idx_token_primary_ns

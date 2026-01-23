@@ -30,6 +30,11 @@ type Config struct {
 		ExchangeValidationURL string `toml:"exchange_validation_url"`
 		ExchangeSecret        string `toml:"exchange_secret"`
 	} `toml:"auth"`
+	LFS struct {
+		Enabled     bool   `toml:"enabled"`
+		MaxFileSize int64  `toml:"max_file_size"`
+		BaseURL     string `toml:"base_url"`
+	} `toml:"lfs"`
 }
 
 var version = "dev"
@@ -88,9 +93,15 @@ func runTUI(cmd *cobra.Command, args []string) error {
 }
 
 func runServe(cmd *cobra.Command, args []string) error {
-	cfg, err := loadConfig("server.toml")
+	cfg, loadedFromFile, err := loadConfig("server.toml")
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
+	}
+
+	if loadedFromFile {
+		fmt.Println("Loaded configuration from server.toml")
+	} else {
+		fmt.Println("No server.toml found, using defaults")
 	}
 
 	if err := os.MkdirAll(cfg.Storage.DataDir, 0755); err != nil {
@@ -147,7 +158,18 @@ func runServe(cmd *cobra.Command, args []string) error {
 		ExchangeSecret:        cfg.Auth.ExchangeSecret,
 	}
 
-	srv := server.NewServer(st, cfg.Storage.DataDir, authOpts)
+	lfsBaseURL := cfg.LFS.BaseURL
+	if lfsBaseURL == "" {
+		lfsBaseURL = fmt.Sprintf("http://%s:%d", cfg.Server.Host, cfg.Server.Port)
+	}
+
+	lfsOpts := server.LFSOptions{
+		Enabled:     cfg.LFS.Enabled,
+		MaxFileSize: cfg.LFS.MaxFileSize,
+		BaseURL:     lfsBaseURL,
+	}
+
+	srv := server.NewServer(st, cfg.Storage.DataDir, authOpts, lfsOpts)
 
 	fmt.Printf("Starting Ephemeral server on %s:%d\n", cfg.Server.Host, cfg.Server.Port)
 	fmt.Printf("Data directory: %s\n", cfg.Storage.DataDir)
@@ -165,7 +187,7 @@ func checkFirstRun(st store.Store) (bool, error) {
 	return len(namespaces) == 0, nil
 }
 
-func loadConfig(path string) (*Config, error) {
+func loadConfig(path string) (*Config, bool, error) {
 	config := Config{
 		Server: struct {
 			Port int    `toml:"port"`
@@ -178,9 +200,10 @@ func loadConfig(path string) (*Config, error) {
 
 	if _, err := os.Stat(path); err == nil {
 		if _, err := toml.DecodeFile(path, &config); err != nil {
-			return nil, fmt.Errorf("decode config: %w", err)
+			return nil, false, fmt.Errorf("decode config: %w", err)
 		}
+		return &config, true, nil
 	}
 
-	return &config, nil
+	return &config, false, nil
 }
