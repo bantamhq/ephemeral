@@ -18,6 +18,7 @@ type Store interface {
 	DeleteToken(id string) error
 	GenerateAdminToken() (string, error)
 	GenerateUserTokenWithGrants(name *string, expiresAt *time.Time, namespaceGrants []NamespaceGrant, repoGrants []RepoGrant) (string, *Token, error)
+	HasAdminToken() (bool, error)
 
 	// Namespace grant operations
 	UpsertNamespaceGrant(grant *NamespaceGrant) error

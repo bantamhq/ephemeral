@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/BurntSushi/toml"
 	"github.com/spf13/cobra"
@@ -56,6 +55,14 @@ func main() {
 		RunE:  runServe,
 	}
 
+	serveInitCmd := &cobra.Command{
+		Use:   "init",
+		Short: "Initialize the server (first-time setup)",
+		RunE:  runServeInit,
+	}
+	serveCmd.AddCommand(serveInitCmd)
+	serveCmd.AddCommand(newServeNamespaceCmd())
+
 	rootCmd.AddCommand(
 		serveCmd,
 		newLoginCmd(),
@@ -63,7 +70,6 @@ func main() {
 		newWhoamiCmd(),
 		newCredentialCmd(),
 		newNamespaceCmd(),
-		newAdminCmd(),
 		newNewCmd(),
 		newCloneCmd(),
 	)
@@ -104,52 +110,22 @@ func runServe(cmd *cobra.Command, args []string) error {
 		fmt.Println("No server.toml found, using defaults")
 	}
 
-	if err := os.MkdirAll(cfg.Storage.DataDir, 0755); err != nil {
-		return fmt.Errorf("create data directory: %w", err)
-	}
-
-	dbPath := filepath.Join(cfg.Storage.DataDir, "ephemeral.db")
-
-	st, err := store.NewSQLiteStore(dbPath)
+	st, err := initStore(cfg.Storage.DataDir)
 	if err != nil {
-		return fmt.Errorf("initialize database: %w", err)
+		return err
 	}
 	defer st.Close()
 
-	fmt.Println("Initializing database...")
-	if err := st.Initialize(); err != nil {
-		return fmt.Errorf("initialize schema: %w", err)
-	}
-
-	isFirstRun, err := checkFirstRun(st)
+	hasAdmin, err := st.HasAdminToken()
 	if err != nil {
-		return fmt.Errorf("check first run: %w", err)
+		return fmt.Errorf("check admin token: %w", err)
 	}
 
-	if isFirstRun && term.IsTerminal(int(os.Stdout.Fd())) {
-		wizard := NewSetupWizard(st, cfg.Storage.DataDir)
-		if _, err := wizard.Run(); err != nil {
-			return fmt.Errorf("setup wizard: %w", err)
-		}
-	} else {
-		token, err := st.GenerateAdminToken()
-		if err != nil {
-			return fmt.Errorf("generate admin token: %w", err)
-		}
-
-		if token != "" {
-			tokenPath := filepath.Join(cfg.Storage.DataDir, "admin-token")
-			if err := os.WriteFile(tokenPath, []byte(token), 0600); err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: failed to save admin token to file: %v\n", err)
-			}
-
-			fmt.Println("\n" + strings.Repeat("=", 60))
-			fmt.Println("ADMIN TOKEN GENERATED")
-			fmt.Println("Saved to: " + tokenPath)
-			fmt.Println(strings.Repeat("=", 60))
-			fmt.Println(token)
-			fmt.Println(strings.Repeat("=", 60) + "\n")
-		}
+	if !hasAdmin {
+		fmt.Println()
+		fmt.Println("Server not initialized.")
+		fmt.Println("Run 'eph serve init' to set up your server.")
+		return nil
 	}
 
 	authOpts := server.AuthOptions{
@@ -179,12 +155,59 @@ func runServe(cmd *cobra.Command, args []string) error {
 	return srv.Start(cfg.Server.Host, cfg.Server.Port)
 }
 
-func checkFirstRun(st store.Store) (bool, error) {
-	namespaces, err := st.ListNamespaces("", 1)
+func runServeInit(cmd *cobra.Command, args []string) error {
+	cfg, _, err := loadConfig("server.toml")
 	if err != nil {
-		return false, err
+		return fmt.Errorf("load config: %w", err)
 	}
-	return len(namespaces) == 0, nil
+
+	st, err := initStore(cfg.Storage.DataDir)
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+
+	hasAdmin, err := st.HasAdminToken()
+	if err != nil {
+		return fmt.Errorf("check admin token: %w", err)
+	}
+
+	if hasAdmin {
+		fmt.Println("Server is already initialized.")
+		fmt.Println("Run 'eph serve' to start the server.")
+		return nil
+	}
+
+	if !term.IsTerminal(int(os.Stdout.Fd())) {
+		return fmt.Errorf("interactive terminal required for setup wizard")
+	}
+
+	wizard := NewSetupWizard(st, cfg.Storage.DataDir)
+	if _, err := wizard.Run(); err != nil {
+		return fmt.Errorf("setup wizard: %w", err)
+	}
+
+	return nil
+}
+
+func initStore(dataDir string) (*store.SQLiteStore, error) {
+	if err := os.MkdirAll(dataDir, 0755); err != nil {
+		return nil, fmt.Errorf("create data directory: %w", err)
+	}
+
+	dbPath := filepath.Join(dataDir, "ephemeral.db")
+
+	st, err := store.NewSQLiteStore(dbPath)
+	if err != nil {
+		return nil, fmt.Errorf("initialize database: %w", err)
+	}
+
+	if err := st.Initialize(); err != nil {
+		st.Close()
+		return nil, fmt.Errorf("initialize schema: %w", err)
+	}
+
+	return st, nil
 }
 
 func loadConfig(path string) (*Config, bool, error) {

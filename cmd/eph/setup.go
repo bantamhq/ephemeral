@@ -4,39 +4,40 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
 	"github.com/charmbracelet/huh"
+	"github.com/charmbracelet/huh/spinner"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/google/uuid"
 
 	"github.com/bantamhq/ephemeral/internal/store"
 )
 
-var (
-	titleStyle = lipgloss.NewStyle().
-			Bold(true).
-			Foreground(lipgloss.Color("12"))
 
-	boxStyle = lipgloss.NewStyle().
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(lipgloss.Color("8")).
-			Padding(1, 2)
+var validNamePattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]*$`)
 
-	sectionStyle = lipgloss.NewStyle().
-			Bold(true).
-			Foreground(lipgloss.Color("10"))
+func validateNamespaceName(s string) error {
+	if s == "" {
+		return nil
+	}
 
-	tokenStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("14"))
+	if strings.Contains(s, "..") {
+		return fmt.Errorf("cannot contain '..'")
+	}
 
-	subtleStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("8"))
+	if strings.Contains(s, "/") || strings.Contains(s, "\\") {
+		return fmt.Errorf("cannot contain path separators")
+	}
 
-	dividerChar = "-"
-	equalChar   = "="
-)
+	if !validNamePattern.MatchString(s) {
+		return fmt.Errorf("must start with letter/number, use only letters, numbers, dots, underscores, hyphens")
+	}
+
+	return nil
+}
 
 type SetupWizard struct {
 	store   store.Store
@@ -57,68 +58,122 @@ func NewSetupWizard(st store.Store, dataDir string) *SetupWizard {
 }
 
 func (w *SetupWizard) Run() (*SetupResult, error) {
-	w.showWelcome()
+	var (
+		createNamespace bool
+		namespaceName   string
+	)
 
-	namespaceName, err := w.promptNamespace()
-	if err != nil {
-		return nil, err
-	}
+	// Single input form
+	err := huh.NewForm(
+		huh.NewGroup(
+			huh.NewNote().
+				Title("Welcome to Ephemeral").
+				Description("Let's set up your git hosting server.").
+				Next(true).
+				NextLabel("Start"),
+		),
 
-	result, err := w.createResources(namespaceName)
-	if err != nil {
-		return nil, err
-	}
+		huh.NewGroup(
+			huh.NewConfirm().
+				Title("Create a default namespace?").
+				Description("A namespace organizes your repositories and generates a user token for daily use.").
+				Affirmative("Yes").
+				Negative("No").
+				Value(&createNamespace).
+				WithButtonAlignment(lipgloss.Left),
+		),
 
-	w.showResults(result)
-
-	return result, nil
-}
-
-func (w *SetupWizard) showWelcome() {
-	welcome := []string{
-		titleStyle.Render("Welcome to Ephemeral"),
-		"",
-		"Let's set up your git hosting server.",
-		"",
-		"This wizard will create:",
-		subtleStyle.Render("  * A namespace for your repositories"),
-		subtleStyle.Render("  * An admin token (for server management)"),
-		subtleStyle.Render("  * A user token (for git operations)"),
-	}
-
-	fmt.Println()
-	fmt.Println(boxStyle.Render(strings.Join(welcome, "\n")))
-	fmt.Println()
-}
-
-func (w *SetupWizard) promptNamespace() (string, error) {
-	var namespaceName string
-
-	form := huh.NewForm(
 		huh.NewGroup(
 			huh.NewInput().
 				Title("Namespace name").
-				Description("The namespace for your repositories").
+				Description("The namespace for your repositories.").
 				Placeholder("default").
+				CharLimit(128).
+				Validate(validateNamespaceName).
 				Value(&namespaceName),
-		),
-	).WithTheme(huh.ThemeBase())
-
-	if err := form.Run(); err != nil {
-		return "", fmt.Errorf("form input: %w", err)
+		).WithHideFunc(func() bool {
+			return !createNamespace
+		}),
+	).WithTheme(huh.ThemeBase()).Run()
+	if err != nil {
+		return nil, fmt.Errorf("form: %w", err)
 	}
 
-	if namespaceName == "" {
+	if createNamespace && namespaceName == "" {
 		namespaceName = "default"
 	}
 
-	return namespaceName, nil
+	// Do all work
+	var result SetupResult
+	var setupErr error
+	err = spinner.New().
+		Title("Initializing server...").
+		Action(func() {
+			time.Sleep(2 * time.Second)
+			result, setupErr = w.createResources(createNamespace, namespaceName)
+		}).
+		Run()
+	if err != nil {
+		return nil, fmt.Errorf("spinner: %w", err)
+	}
+	if setupErr != nil {
+		return nil, setupErr
+	}
+
+	// Print results
+	w.printResults(&result)
+
+	return &result, nil
 }
 
-func (w *SetupWizard) createResources(namespaceName string) (*SetupResult, error) {
+func (w *SetupWizard) printResults(result *SetupResult) {
+	tokenPath := filepath.Join(w.dataDir, "admin-token")
+
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "Setup Complete\n\n")
+	fmt.Fprintf(&sb, "Admin token (saved to %s):\n", tokenPath)
+	fmt.Fprintf(&sb, "%s\n\n", result.AdminToken)
+	fmt.Fprintf(&sb, "Start your server with: eph serve")
+
+	if result.UserToken != "" {
+		fmt.Fprintf(&sb, "\n\nNamespace '%s' created.\n\n", result.NamespaceName)
+		fmt.Fprintf(&sb, "User token:\n")
+		fmt.Fprintf(&sb, "%s\n\n", result.UserToken)
+		fmt.Fprintf(&sb, "Save this token - you'll need it to login.")
+	}
+
+	fmt.Println(
+		lipgloss.NewStyle().
+			Width(60).
+			BorderStyle(lipgloss.RoundedBorder()).
+			BorderForeground(lipgloss.Color("7")).
+			Padding(1, 2).
+			Render(sb.String()),
+	)
+}
+
+func (w *SetupWizard) createResources(createNamespace bool, namespaceName string) (SetupResult, error) {
+	var result SetupResult
+
+	adminToken, err := w.store.GenerateAdminToken()
+	if err != nil {
+		return result, fmt.Errorf("generate admin token: %w", err)
+	}
+
+	tokenPath := filepath.Join(w.dataDir, "admin-token")
+	if err := os.WriteFile(tokenPath, []byte(adminToken), 0600); err != nil {
+		return result, fmt.Errorf("save admin token: %w", err)
+	}
+
+	result.AdminToken = adminToken
+
+	if !createNamespace {
+		return result, nil
+	}
+
 	ns, err := w.store.GetNamespaceByName(namespaceName)
 	if err != nil {
-		return nil, fmt.Errorf("check namespace: %w", err)
+		return result, fmt.Errorf("check namespace: %w", err)
 	}
 
 	var namespaceID string
@@ -129,22 +184,10 @@ func (w *SetupWizard) createResources(namespaceName string) (*SetupResult, error
 			CreatedAt: time.Now(),
 		}
 		if err := w.store.CreateNamespace(ns); err != nil {
-			return nil, fmt.Errorf("create namespace: %w", err)
+			return result, fmt.Errorf("create namespace: %w", err)
 		}
 	}
 	namespaceID = ns.ID
-
-	adminToken, err := w.store.GenerateAdminToken()
-	if err != nil {
-		return nil, fmt.Errorf("generate admin token: %w", err)
-	}
-
-	if adminToken != "" {
-		tokenPath := filepath.Join(w.dataDir, "admin-token")
-		if err := os.WriteFile(tokenPath, []byte(adminToken), 0600); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: failed to save admin token to file: %v\n", err)
-		}
-	}
 
 	userName := "User Token"
 	defaultGrant := store.NamespaceGrant{
@@ -154,43 +197,11 @@ func (w *SetupWizard) createResources(namespaceName string) (*SetupResult, error
 	}
 	userToken, _, err := w.store.GenerateUserTokenWithGrants(&userName, nil, []store.NamespaceGrant{defaultGrant}, nil)
 	if err != nil {
-		return nil, fmt.Errorf("generate user token: %w", err)
+		return result, fmt.Errorf("generate user token: %w", err)
 	}
 
-	return &SetupResult{
-		NamespaceName: namespaceName,
-		AdminToken:    adminToken,
-		UserToken:     userToken,
-	}, nil
+	result.NamespaceName = namespaceName
+	result.UserToken = userToken
+
+	return result, nil
 }
-
-func (w *SetupWizard) showResults(result *SetupResult) {
-	width := 60
-
-	fmt.Println()
-	fmt.Println(strings.Repeat(equalChar, width))
-	fmt.Println(sectionStyle.Render("SETUP COMPLETE"))
-	fmt.Println(strings.Repeat(equalChar, width))
-	fmt.Println()
-
-	if result.AdminToken != "" {
-		fmt.Printf("Admin token (saved to %s):\n", filepath.Join(w.dataDir, "admin-token"))
-		fmt.Printf("  %s\n", tokenStyle.Render(result.AdminToken))
-		fmt.Println()
-	}
-
-	fmt.Println("User token (for daily use):")
-	fmt.Printf("  %s\n", tokenStyle.Render(result.UserToken))
-
-	fmt.Println()
-	fmt.Println(strings.Repeat(dividerChar, width))
-	fmt.Println(sectionStyle.Render("NEXT STEPS") + " - Run on your " + titleStyle.Render("LOCAL") + " machine:")
-	fmt.Println(strings.Repeat(dividerChar, width))
-	fmt.Println()
-	fmt.Println("  eph login https://your-server.example.com")
-	fmt.Println()
-	fmt.Println("When prompted, paste the USER TOKEN above.")
-	fmt.Println(strings.Repeat(equalChar, width))
-	fmt.Println()
-}
-

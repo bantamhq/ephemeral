@@ -188,6 +188,16 @@ func (s *SQLiteStore) GenerateAdminToken() (string, error) {
 	return "", fmt.Errorf("create admin token: %w", ErrTokenLookupCollision)
 }
 
+// HasAdminToken checks if any admin token exists in the database.
+func (s *SQLiteStore) HasAdminToken() (bool, error) {
+	var count int
+	err := s.db.QueryRow("SELECT COUNT(*) FROM tokens WHERE is_admin = TRUE").Scan(&count)
+	if err != nil {
+		return false, fmt.Errorf("check admin token: %w", err)
+	}
+	return count > 0, nil
+}
+
 // GenerateUserTokenWithGrants creates a new user token with the specified namespace grants.
 // Returns both the raw token (for display) and the Token struct.
 // This creates the token and grants in a single transaction.
