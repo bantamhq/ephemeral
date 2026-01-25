@@ -5,6 +5,8 @@ const (
 	headerHeight = 1
 	repoPageSize = 50
 
+	maxDetailCacheSize = 50
+
 	nameMaxLength = 128
 
 	contentPaddingWidth = 2

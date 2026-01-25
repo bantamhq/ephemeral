@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -76,7 +77,7 @@ func runNew(cmd *cobra.Command, args []string) error {
 		workDir = cwd
 	}
 
-	repo, err := c.CreateRepo(repoName, nil, false)
+	repo, err := c.CreateRepo(context.Background(), repoName, nil, false)
 	if err != nil {
 		return formatAPIError("create repo", err)
 	}

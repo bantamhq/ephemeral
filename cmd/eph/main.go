@@ -23,9 +23,6 @@ type Config struct {
 	Storage struct {
 		DataDir string `toml:"data_dir"`
 	} `toml:"storage"`
-	Auth struct {
-		WebAuthURL string `toml:"web_auth_url"`
-	} `toml:"auth"`
 	LFS struct {
 		Enabled     bool   `toml:"enabled"`
 		MaxFileSize int64  `toml:"max_file_size"`
@@ -117,10 +114,6 @@ func runServe(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	authOpts := server.AuthOptions{
-		WebAuthURL: cfg.Auth.WebAuthURL,
-	}
-
 	lfsBaseURL := cfg.LFS.BaseURL
 	if lfsBaseURL == "" {
 		lfsBaseURL = fmt.Sprintf("http://%s:%d", cfg.Server.Host, cfg.Server.Port)
@@ -132,7 +125,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		BaseURL:     lfsBaseURL,
 	}
 
-	srv := server.NewServer(st, cfg.Storage.DataDir, authOpts, lfsOpts)
+	srv := server.NewServer(st, cfg.Storage.DataDir, lfsOpts)
 
 	fmt.Printf("Starting Ephemeral server on %s:%d\n", cfg.Server.Host, cfg.Server.Port)
 	fmt.Printf("Data directory: %s\n", cfg.Storage.DataDir)

@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -31,8 +32,9 @@ If no server is specified, defaults to http://localhost:8080.`,
 
 type authConfigResponse struct {
 	Data struct {
-		AuthMethods []string `json:"auth_methods"`
-		WebAuthURL  string   `json:"web_auth_url,omitempty"`
+		AuthMethod   string `json:"auth_method"`
+		ServerURL    string `json:"server_url,omitempty"`
+		AuthEndpoint string `json:"auth_endpoint,omitempty"`
 	} `json:"data"`
 }
 
@@ -75,16 +77,24 @@ func runLogin(cmd *cobra.Command, args []string) error {
 		return loginWithToken(serverURL)
 	}
 
-	if containsWebAuth(authConfig.Data.AuthMethods) && authConfig.Data.WebAuthURL != "" {
-		return loginWithWebAuth(serverURL, authConfig.Data.WebAuthURL)
+	targetServer := serverURL
+	if authConfig.Data.ServerURL != "" {
+		targetServer = authConfig.Data.ServerURL
+		if !strings.HasPrefix(targetServer, "http://") && !strings.HasPrefix(targetServer, "https://") {
+			targetServer = "https://" + targetServer
+		}
 	}
 
-	return loginWithToken(serverURL)
+	if authConfig.Data.AuthMethod == "web" && authConfig.Data.AuthEndpoint != "" {
+		return loginWithWebAuth(serverURL, targetServer, authConfig.Data.AuthEndpoint)
+	}
+
+	return loginWithToken(targetServer)
 }
 
 func fetchAuthConfig(serverURL string) (*authConfigResponse, error) {
 	httpClient := &http.Client{Timeout: 10 * time.Second}
-	resp, err := httpClient.Get(serverURL + "/api/v1/auth/config")
+	resp, err := httpClient.Get(serverURL + "/.well-known/ephemeral-auth")
 	if err != nil {
 		return nil, err
 	}
@@ -100,15 +110,6 @@ func fetchAuthConfig(serverURL string) (*authConfigResponse, error) {
 	}
 
 	return &config, nil
-}
-
-func containsWebAuth(methods []string) bool {
-	for _, m := range methods {
-		if m == "web_auth" {
-			return true
-		}
-	}
-	return false
 }
 
 func loginWithToken(serverURL string) error {
@@ -127,14 +128,14 @@ func loginWithToken(serverURL string) error {
 	return completeLogin(serverURL, token)
 }
 
-func loginWithWebAuth(serverURL, webAuthURL string) error {
-	sessionID, err := createAuthSession(serverURL)
+func loginWithWebAuth(connectedServer, targetServer, authEndpoint string) error {
+	sessionID, err := createAuthSession(connectedServer)
 	if err != nil {
 		return fmt.Errorf("create auth session: %w", err)
 	}
 
 	authURL := fmt.Sprintf("%s?session=%s&server=%s",
-		webAuthURL, sessionID, url.QueryEscape(serverURL))
+		authEndpoint, sessionID, url.QueryEscape(connectedServer))
 
 	fmt.Println()
 	fmt.Println("Open this URL to authenticate:")
@@ -142,12 +143,12 @@ func loginWithWebAuth(serverURL, webAuthURL string) error {
 	fmt.Println()
 	fmt.Println("Waiting for authentication...")
 
-	token, err := pollForToken(serverURL, sessionID, 5*time.Minute)
+	token, err := pollForToken(connectedServer, sessionID, 5*time.Minute)
 	if err != nil {
 		return err
 	}
 
-	return completeLogin(serverURL, token)
+	return completeLogin(targetServer, token)
 }
 
 func createAuthSession(serverURL string) (string, error) {
@@ -227,7 +228,7 @@ func pollForToken(serverURL, sessionID string, timeout time.Duration) (string, e
 
 func completeLogin(serverURL, token string) error {
 	c := client.New(serverURL, token)
-	namespaces, err := c.ListNamespaces()
+	namespaces, err := c.ListNamespaces(context.Background())
 	if err != nil {
 		return formatLoginError(err)
 	}

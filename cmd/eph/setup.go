@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"time"
 
@@ -13,30 +12,15 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/google/uuid"
 
+	"github.com/bantamhq/ephemeral/internal/core"
 	"github.com/bantamhq/ephemeral/internal/store"
 )
-
-
-var validNamePattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]*$`)
 
 func validateNamespaceName(s string) error {
 	if s == "" {
 		return nil
 	}
-
-	if strings.Contains(s, "..") {
-		return fmt.Errorf("cannot contain '..'")
-	}
-
-	if strings.Contains(s, "/") || strings.Contains(s, "\\") {
-		return fmt.Errorf("cannot contain path separators")
-	}
-
-	if !validNamePattern.MatchString(s) {
-		return fmt.Errorf("must start with letter/number, use only letters, numbers, dots, underscores, hyphens")
-	}
-
-	return nil
+	return core.ValidateName(s)
 }
 
 type SetupWizard struct {

@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -94,11 +95,9 @@ func (s *SQLiteStore) GetTokenByLookup(lookup string) (*Token, error) {
 		return token, err
 	}
 
-	go func() {
-		if _, err := s.db.Exec("UPDATE tokens SET last_used_at = ? WHERE id = ?", time.Now(), token.ID); err != nil {
-			fmt.Printf("Warning: failed to update token last_used_at: %v\n", err)
-		}
-	}()
+	if _, err := s.db.Exec("UPDATE tokens SET last_used_at = ? WHERE id = ?", time.Now(), token.ID); err != nil {
+		slog.Warn("failed to update token last_used_at", "token_id", token.ID, "error", err)
+	}
 
 	return token, nil
 }
@@ -195,7 +194,7 @@ func (s *SQLiteStore) UpdateRepoLastPush(id string, pushTime time.Time) error {
 }
 
 // UpdateRepoSize updates the stored size of a repository.
-func (s *SQLiteStore) UpdateRepoSize(id string, sizeBytes int) error {
+func (s *SQLiteStore) UpdateRepoSize(id string, sizeBytes int64) error {
 	query := `
 		UPDATE repos
 		SET size_bytes = ?, updated_at = ?

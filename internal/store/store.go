@@ -54,7 +54,7 @@ type Store interface {
 	UpdateRepo(repo *Repo) error
 	DeleteRepo(id string) error
 	UpdateRepoLastPush(id string, pushTime time.Time) error
-	UpdateRepoSize(id string, sizeBytes int) error
+	UpdateRepoSize(id string, sizeBytes int64) error
 
 	// Folder operations
 	CreateFolder(folder *Folder) error
@@ -152,7 +152,7 @@ type Repo struct {
 	Name        string     `json:"name"`
 	Description *string    `json:"description,omitempty"`
 	Public      bool       `json:"public"`
-	SizeBytes   int        `json:"size_bytes"`
+	SizeBytes   int64      `json:"size_bytes"`
 	LastPushAt  *time.Time `json:"last_push_at,omitempty"`
 	CreatedAt   time.Time  `json:"created_at"`
 	UpdatedAt   time.Time  `json:"updated_at"`

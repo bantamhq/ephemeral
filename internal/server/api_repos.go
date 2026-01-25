@@ -2,7 +2,7 @@ package server
 
 import (
 	"encoding/json"
-	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"strings"
@@ -78,16 +78,9 @@ func (s *Server) handleListRepos(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 
-			hasMore := len(repos) > limit
-			if hasMore {
-				repos = repos[:limit]
-			}
-
-			var nextCursor *string
-			if hasMore && len(repos) > 0 {
-				c := repos[len(repos)-1].Name
-				nextCursor = &c
-			}
+			repos, nextCursor, hasMore := paginateSlice(repos, limit, func(r store.RepoWithFolders) string {
+				return r.Name
+			})
 
 			JSONList(w, repos, nextCursor, hasMore)
 			return
@@ -99,16 +92,9 @@ func (s *Server) handleListRepos(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		hasMore := len(repos) > limit
-		if hasMore {
-			repos = repos[:limit]
-		}
-
-		var nextCursor *string
-		if hasMore && len(repos) > 0 {
-			c := repos[len(repos)-1].Name
-			nextCursor = &c
-		}
+		repos, nextCursor, hasMore := paginateSlice(repos, limit, func(r store.Repo) string {
+			return r.Name
+		})
 
 		JSONList(w, repos, nextCursor, hasMore)
 		return
@@ -241,7 +227,7 @@ func (s *Server) handleDeleteRepo(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := os.RemoveAll(repoPath); err != nil {
-		fmt.Printf("Warning: failed to remove repo directory %s: %v\n", repoPath, err)
+		slog.Warn("failed to remove repo directory", "path", repoPath, "error", err)
 	}
 
 	w.WriteHeader(http.StatusNoContent)
@@ -314,7 +300,7 @@ func (s *Server) handleUpdateRepo(w http.ResponseWriter, r *http.Request) {
 
 		if err := s.store.UpdateRepo(repo); err != nil {
 			if rollbackErr := s.renameRepoOnDisk(repo.NamespaceID, *req.Name, oldName); rollbackErr != nil {
-				fmt.Printf("CRITICAL: failed to rollback repo rename from %s to %s: %v\n", *req.Name, oldName, rollbackErr)
+				slog.Error("failed to rollback repo rename", "from", *req.Name, "to", oldName, "error", rollbackErr)
 			}
 			JSONError(w, http.StatusInternalServerError, "Failed to update repo")
 			return

@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/exec"
@@ -225,7 +226,7 @@ func (h *GitHTTPHandler) handleUploadPack(w http.ResponseWriter, r *http.Request
 	cmd.Stdout = w
 
 	if err := cmd.Run(); err != nil {
-		fmt.Printf("git-upload-pack error: %v\n", err)
+		slog.Warn("git-upload-pack error", "error", err)
 	}
 }
 
@@ -283,21 +284,21 @@ func (h *GitHTTPHandler) handleReceivePack(w http.ResponseWriter, r *http.Reques
 	io.Copy(w, stdout)
 
 	if err := cmd.Wait(); err != nil {
-		fmt.Printf("git-receive-pack error: %v\n", err)
+		slog.Warn("git-receive-pack error", "error", err)
 	}
 
 	if err := h.store.UpdateRepoLastPush(repo.ID, time.Now()); err != nil {
-		fmt.Printf("update repo last_push_at error: %v\n", err)
+		slog.Warn("failed to update repo last_push_at", "repo_id", repo.ID, "error", err)
 	}
 
 	sizeBytes, err := repoDiskUsage(repoPath)
 	if err != nil {
-		fmt.Printf("compute repo size error: %v\n", err)
+		slog.Warn("failed to compute repo size", "repo_path", repoPath, "error", err)
 		return
 	}
 
 	if err := h.store.UpdateRepoSize(repo.ID, sizeBytes); err != nil {
-		fmt.Printf("update repo size_bytes error: %v\n", err)
+		slog.Warn("failed to update repo size_bytes", "repo_id", repo.ID, "error", err)
 	}
 }
 
@@ -399,7 +400,7 @@ func initBareRepo(repoPath string) error {
 	return nil
 }
 
-func repoDiskUsage(path string) (int, error) {
+func repoDiskUsage(path string) (int64, error) {
 	var size int64
 
 	err := filepath.Walk(path, func(_ string, info os.FileInfo, err error) error {
@@ -416,5 +417,5 @@ func repoDiskUsage(path string) (int, error) {
 		return 0, err
 	}
 
-	return int(size), nil
+	return size, nil
 }

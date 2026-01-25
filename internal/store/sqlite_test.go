@@ -205,7 +205,7 @@ func TestStore_RepoLifecycle(t *testing.T) {
 		require.NoError(t, s.UpdateRepoSize("repo-1", 2048))
 
 		got, _ := s.GetRepoByID("repo-1")
-		assert.Equal(t, 2048, got.SizeBytes)
+		assert.Equal(t, int64(2048), got.SizeBytes)
 	})
 
 	t.Run("list", func(t *testing.T) {

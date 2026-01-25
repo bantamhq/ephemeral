@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/spf13/cobra"
@@ -29,7 +30,7 @@ func runNamespaceList(cmd *cobra.Command, args []string) error {
 
 	c := client.New(cfg.Server, cfg.Token)
 
-	namespaces, err := c.ListNamespaces()
+	namespaces, err := c.ListNamespaces(context.Background())
 	if err != nil {
 		return formatAPIError("list namespaces", err)
 	}

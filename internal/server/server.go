@@ -13,16 +13,10 @@ import (
 	"github.com/bantamhq/ephemeral/internal/store"
 )
 
-// AuthOptions configures platform authentication settings.
-type AuthOptions struct {
-	WebAuthURL string
-}
-
 // Server is the HTTP server for Ephemeral.
 type Server struct {
 	store       store.Store
 	dataDir     string
-	authOpts    AuthOptions
 	lfsOpts     LFSOptions
 	router      *chi.Mux
 	permissions *store.PermissionChecker
@@ -30,12 +24,11 @@ type Server struct {
 }
 
 // NewServer creates a new server instance.
-func NewServer(st store.Store, dataDir string, authOpts AuthOptions, lfsOpts LFSOptions) *Server {
+func NewServer(st store.Store, dataDir string, lfsOpts LFSOptions) *Server {
 	s := &Server{
-		store:       st,
-		dataDir:     dataDir,
-		authOpts:    authOpts,
-		lfsOpts:     lfsOpts,
+		store:   st,
+		dataDir: dataDir,
+		lfsOpts: lfsOpts,
 		router:      chi.NewRouter(),
 		permissions: store.NewPermissionChecker(st),
 	}
@@ -55,10 +48,10 @@ func (s *Server) setupRoutes() {
 	s.router.Use(middleware.Recoverer)
 
 	s.router.Get("/health", s.handleHealth)
+	s.router.Get("/.well-known/ephemeral-auth", s.handleAuthConfig)
 
 	s.router.Route("/api/v1", func(r chi.Router) {
-		// Auth routes - no auth required
-		r.Get("/auth/config", s.handleAuthConfig)
+		// Auth session routes - no auth required
 		r.Post("/auth/sessions", s.handleCreateAuthSession)
 		r.Get("/auth/sessions/{id}", s.handleGetAuthSession)
 

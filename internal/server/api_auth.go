@@ -22,27 +22,16 @@ func generateSessionID() (string, error) {
 }
 
 // AuthConfigResponse describes available authentication methods.
+// Standalone servers return auth_method="token".
+// Platform-managed servers return auth_method="web" with server_url and auth_endpoint.
 type AuthConfigResponse struct {
-	AuthMethods []string `json:"auth_methods"`
-	WebAuthURL  string   `json:"web_auth_url,omitempty"`
+	AuthMethod   string `json:"auth_method"`
+	ServerURL    string `json:"server_url,omitempty"`
+	AuthEndpoint string `json:"auth_endpoint,omitempty"`
 }
 
 func (s *Server) handleAuthConfig(w http.ResponseWriter, r *http.Request) {
-	methods := []string{"token"}
-
-	webAuthEnabled := s.authOpts.WebAuthURL != ""
-	if webAuthEnabled {
-		methods = append(methods, "web_auth")
-	}
-
-	response := AuthConfigResponse{
-		AuthMethods: methods,
-	}
-	if webAuthEnabled {
-		response.WebAuthURL = s.authOpts.WebAuthURL
-	}
-
-	JSON(w, http.StatusOK, response)
+	JSON(w, http.StatusOK, AuthConfigResponse{AuthMethod: "token"})
 }
 
 type createAuthSessionRequest struct {

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -71,7 +72,8 @@ type repoSelection struct {
 }
 
 func selectRepoInteractive(c *client.Client) (*repoSelection, error) {
-	namespaces, err := c.ListNamespaces()
+	ctx := context.Background()
+	namespaces, err := c.ListNamespaces(ctx)
 	if err != nil {
 		return nil, formatAPIError("list namespaces", err)
 	}
@@ -89,7 +91,7 @@ func selectRepoInteractive(c *client.Client) (*repoSelection, error) {
 
 	for _, ns := range namespaces {
 		nsClient := c.WithNamespace(ns.Name)
-		repos, _, err := nsClient.ListRepos("", 0)
+		repos, _, err := nsClient.ListRepos(ctx, "", 0)
 		if err != nil {
 			continue
 		}

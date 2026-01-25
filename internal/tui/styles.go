@@ -89,6 +89,7 @@ type StyleConfig struct {
 
 var Styles = NewStyles()
 
+// NewStyles creates a new StyleConfig with the default TUI styles.
 func NewStyles() *StyleConfig {
 	colors := Colors{
 		Primary:        lipgloss.AdaptiveColor{Light: "240", Dark: "252"},

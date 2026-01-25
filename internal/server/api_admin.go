@@ -3,7 +3,7 @@ package server
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"time"
@@ -26,16 +26,9 @@ func (s *Server) handleAdminListNamespaces(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	hasMore := len(namespaces) > defaultPageSize
-	if hasMore {
-		namespaces = namespaces[:defaultPageSize]
-	}
-
-	var nextCursor *string
-	if hasMore && len(namespaces) > 0 {
-		c := namespaces[len(namespaces)-1].ID
-		nextCursor = &c
-	}
+	namespaces, nextCursor, hasMore := paginateSlice(namespaces, defaultPageSize, func(ns store.Namespace) string {
+		return ns.ID
+	})
 
 	JSONList(w, namespaces, nextCursor, hasMore)
 }
@@ -155,7 +148,7 @@ func (s *Server) handleAdminDeleteNamespace(w http.ResponseWriter, r *http.Reque
 	}
 
 	if err := os.RemoveAll(reposPath); err != nil {
-		fmt.Printf("Warning: failed to remove namespace directory %s: %v\n", reposPath, err)
+		slog.Warn("failed to remove namespace directory", "path", reposPath, "error", err)
 	}
 
 	w.WriteHeader(http.StatusNoContent)
@@ -227,16 +220,9 @@ func (s *Server) handleAdminListTokens(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	hasMore := len(tokens) > defaultPageSize
-	if hasMore {
-		tokens = tokens[:defaultPageSize]
-	}
-
-	var nextCursor *string
-	if hasMore && len(tokens) > 0 {
-		c := tokens[len(tokens)-1].ID
-		nextCursor = &c
-	}
+	tokens, nextCursor, hasMore := paginateSlice(tokens, defaultPageSize, func(t store.Token) string {
+		return t.ID
+	})
 
 	resp := make([]adminTokenResponse, len(tokens))
 	for i, t := range tokens {
@@ -327,16 +313,9 @@ func (s *Server) handleAdminListUsers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	hasMore := len(users) > defaultPageSize
-	if hasMore {
-		users = users[:defaultPageSize]
-	}
-
-	var nextCursor *string
-	if hasMore && len(users) > 0 {
-		c := users[len(users)-1].ID
-		nextCursor = &c
-	}
+	users, nextCursor, hasMore := paginateSlice(users, defaultPageSize, func(u store.User) string {
+		return u.ID
+	})
 
 	resp := make([]adminUserResponse, len(users))
 	for i, u := range users {
