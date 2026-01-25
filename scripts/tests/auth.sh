@@ -75,9 +75,20 @@ expect_contains "$RESPONSE" "not found" "non-existent session returns 404"
 section "Auth Sessions - Complete (Admin)"
 ###############################################################################
 
+# Create a namespace for the test user
+RESPONSE=$(admin_curl -X POST -H "Content-Type: application/json" \
+    -d '{"name":"auth-test-ns"}' \
+    "$ADMIN_API/namespaces")
+
+AUTH_NS_ID=$(get_id "$RESPONSE")
+if [ -z "$AUTH_NS_ID" ]; then
+    echo "Failed to create test namespace: $RESPONSE"
+    exit 1
+fi
+
 # Create a user to complete the session with
 RESPONSE=$(admin_curl -X POST -H "Content-Type: application/json" \
-    -d '{"username":"auth-test-user"}' \
+    -d "{\"namespace_id\":\"$AUTH_NS_ID\"}" \
     "$ADMIN_API/users")
 
 USER_ID=$(echo "$RESPONSE" | jq -r '.data.id')
@@ -131,8 +142,9 @@ RESPONSE=$(admin_curl -X POST -H "Content-Type: application/json" \
 
 expect_contains "$RESPONSE" "not found" "complete with bad user fails"
 
-# Clean up test user
+# Clean up test user and namespace
 admin_curl -X DELETE "$ADMIN_API/users/$USER_ID" > /dev/null 2>&1
+admin_curl -X DELETE "$ADMIN_API/namespaces/auth-test-ns" > /dev/null 2>&1
 
 ###############################################################################
 section "Auth Sessions - Expiration"

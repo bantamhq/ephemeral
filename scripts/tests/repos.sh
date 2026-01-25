@@ -132,7 +132,7 @@ expect_contains "$RESPONSE" "test-repo-public" "contains test-repo-public"
 # Has data array
 expect_json_length "$RESPONSE" '.data' "2" "returns at least 2 repos"
 
-# expand=folders returns folder associations
+# expand=folders returns folder associations (requires namespace filter)
 RESPONSE=$(auth_curl -X POST -H "Content-Type: application/json" \
     -d '{"name":"expand-folder"}' \
     "$API/folders")
@@ -146,12 +146,12 @@ auth_curl -X POST -H "Content-Type: application/json" \
     -d "{\"folder_ids\":[\"$EXPAND_FOLDER_ID\"]}" \
     "$API/repos/$REPO1_ID/folders" > /dev/null
 
-RESPONSE=$(auth_curl "$API/repos?expand=folders")
+RESPONSE=$(auth_curl "$API/repos?namespace=test&expand=folders")
 FOLDER_COUNT=$(echo "$RESPONSE" | jq -r --arg id "$REPO1_ID" '.data[] | select(.id == $id) | (.folders // []) | length')
 [ "$FOLDER_COUNT" = "1" ] && pass "expand=folders includes folder list" || fail "expand=folders includes folder list" "1" "$FOLDER_COUNT"
 
-# Pagination
-RESPONSE=$(auth_curl "$API/repos?limit=1")
+# Pagination - requires namespace filter to work
+RESPONSE=$(auth_curl "$API/repos?namespace=test&limit=1")
 expect_json "$RESPONSE" '.has_more' "true" "limit=1 has more"
 
 NEXT_CURSOR=$(echo "$RESPONSE" | jq -r '.next_cursor')
@@ -161,7 +161,7 @@ else
     fail "limit=1 returns next_cursor" "non-empty cursor" "$NEXT_CURSOR"
 fi
 
-RESPONSE=$(auth_curl "$API/repos?limit=1&cursor=$NEXT_CURSOR")
+RESPONSE=$(auth_curl "$API/repos?namespace=test&limit=1&cursor=$NEXT_CURSOR")
 NEXT_NAME=$(echo "$RESPONSE" | jq -r '.data[0].name')
 if [ "$NEXT_NAME" != "$NEXT_CURSOR" ]; then
     pass "cursor returns next page"
@@ -272,13 +272,35 @@ RESPONSE=$(anon_curl -X POST -H "Content-Type: application/json" \
     "$API/repos")
 expect_contains "$RESPONSE" "Authentication required\|Unauthorized" "anonymous create denied"
 
-# Create read-only token via admin API (namespace:read + repo:read only)
+# Create a namespace for read-only user
 RESPONSE=$(admin_curl -X POST -H "Content-Type: application/json" \
-    -d "{\"name\":\"repo-readonly\",\"namespace_grants\":[{\"namespace_id\":\"$NS_ID\",\"allow\":[\"namespace:read\",\"repo:read\"],\"is_primary\":true}]}" \
-    "$ADMIN_API/tokens")
+    -d '{"name":"repo-readonly-ns"}' \
+    "$ADMIN_API/namespaces")
+
+RO_NS_ID=$(get_id "$RESPONSE")
+if [ -n "$RO_NS_ID" ]; then
+    track_namespace "$RO_NS_ID"
+fi
+
+# Create a user
+RESPONSE=$(admin_curl -X POST -H "Content-Type: application/json" \
+    -d "{\"namespace_id\":\"$RO_NS_ID\"}" \
+    "$ADMIN_API/users")
+
+RO_USER_ID=$(get_id "$RESPONSE")
+
+# Give the user read-only access to the test namespace
+RESPONSE=$(admin_curl -X POST -H "Content-Type: application/json" \
+    -d "{\"namespace_id\":\"$NS_ID\",\"allow\":[\"namespace:read\",\"repo:read\"]}" \
+    "$ADMIN_API/users/$RO_USER_ID/namespace-grants")
+
+# Create token for the user
+RESPONSE=$(admin_curl -X POST -H "Content-Type: application/json" \
+    -d '{}' \
+    "$ADMIN_API/users/$RO_USER_ID/tokens")
 
 RO_TOKEN=$(echo "$RESPONSE" | jq -r '.data.token')
-RO_TOKEN_ID=$(get_id "$RESPONSE")
+RO_TOKEN_ID=$(echo "$RESPONSE" | jq -r '.data.metadata.id // .metadata.id // empty')
 if [ -n "$RO_TOKEN_ID" ]; then
     track_token "$RO_TOKEN_ID"
 fi
@@ -292,6 +314,9 @@ expect_contains "$RESPONSE" "Insufficient permissions\|Forbidden" "read-only can
 # read-only cannot delete repos
 RESPONSE=$(auth_curl_with "$RO_TOKEN" -X DELETE "$API/repos/$REPO2_ID")
 expect_contains "$RESPONSE" "Insufficient permissions\|Forbidden" "read-only cannot delete repos"
+
+# Clean up read-only user
+admin_curl -X DELETE "$ADMIN_API/users/$RO_USER_ID" > /dev/null 2>&1
 
 ###############################################################################
 summary

@@ -270,13 +270,35 @@ CREATED_FOLDERS=$(echo "$CREATED_FOLDERS" | sed "s/$FOLDER2_ID//g")
 section "Auth"
 ###############################################################################
 
-# Create read-only token via admin API (namespace:read + repo:read only)
+# Create a namespace for read-only user
 RESPONSE=$(admin_curl -X POST -H "Content-Type: application/json" \
-    -d "{\"name\":\"test-ro-folders\",\"namespace_grants\":[{\"namespace_id\":\"$NS_ID\",\"allow\":[\"namespace:read\",\"repo:read\"],\"is_primary\":true}]}" \
-    "$ADMIN_API/tokens")
+    -d '{"name":"folder-readonly-ns"}' \
+    "$ADMIN_API/namespaces")
+
+RO_NS_ID=$(get_id "$RESPONSE")
+if [ -n "$RO_NS_ID" ]; then
+    track_namespace "$RO_NS_ID"
+fi
+
+# Create a user
+RESPONSE=$(admin_curl -X POST -H "Content-Type: application/json" \
+    -d "{\"namespace_id\":\"$RO_NS_ID\"}" \
+    "$ADMIN_API/users")
+
+RO_USER_ID=$(get_id "$RESPONSE")
+
+# Give the user read-only access to the test namespace
+RESPONSE=$(admin_curl -X POST -H "Content-Type: application/json" \
+    -d "{\"namespace_id\":\"$NS_ID\",\"allow\":[\"namespace:read\",\"repo:read\"]}" \
+    "$ADMIN_API/users/$RO_USER_ID/namespace-grants")
+
+# Create token for the user
+RESPONSE=$(admin_curl -X POST -H "Content-Type: application/json" \
+    -d '{}' \
+    "$ADMIN_API/users/$RO_USER_ID/tokens")
 
 RO_TOKEN=$(echo "$RESPONSE" | jq -r '.data.token')
-RO_TOKEN_ID=$(get_id "$RESPONSE")
+RO_TOKEN_ID=$(echo "$RESPONSE" | jq -r '.data.metadata.id // .metadata.id // empty')
 if [ -n "$RO_TOKEN_ID" ]; then
     track_token "$RO_TOKEN_ID"
 fi
@@ -285,10 +307,10 @@ fi
 RESPONSE=$(auth_curl_with "$RO_TOKEN" "$API/folders")
 expect_contains "$RESPONSE" '"data"' "read-only can list folders"
 
-# read-only cannot create folders
+# read-only cannot create folders in test namespace
 RESPONSE=$(auth_curl_with "$RO_TOKEN" -X POST \
     -H "Content-Type: application/json" \
-    -d '{"name":"should-fail"}' \
+    -d '{"name":"should-fail","namespace":"test"}' \
     "$API/folders")
 expect_contains "$RESPONSE" "Insufficient permissions\|Forbidden" "read-only cannot create folders"
 
@@ -302,6 +324,9 @@ expect_contains "$RESPONSE" "Insufficient permissions\|Forbidden" "read-only can
 # read-only cannot delete folders
 RESPONSE=$(auth_curl_with "$RO_TOKEN" -X DELETE "$API/folders/$FOLDER1_ID")
 expect_contains "$RESPONSE" "Insufficient permissions\|Forbidden" "read-only cannot delete folders"
+
+# Clean up read-only user
+admin_curl -X DELETE "$ADMIN_API/users/$RO_USER_ID" > /dev/null 2>&1
 
 ###############################################################################
 summary
