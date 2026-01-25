@@ -121,13 +121,37 @@ if [ -z "$NS_ID" ]; then
     exit 1
 fi
 
-# Create user token for tests (simple mode gives namespace:write + repo:admin)
+# Create test user
+echo -e "${BLUE}Creating test user...${NC}"
+USER_RESPONSE=$(curl -s -X POST \
+    -H "Authorization: Bearer $ADMIN_TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"username":"test"}' \
+    "http://127.0.0.1:$TEST_PORT/api/v1/admin/users")
+
+USER_ID=$(echo "$USER_RESPONSE" | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
+
+if [ -z "$USER_ID" ]; then
+    echo -e "${RED}Failed to create test user${NC}"
+    echo "$USER_RESPONSE"
+    exit 1
+fi
+
+# Grant user access to namespace
+echo -e "${BLUE}Granting namespace access...${NC}"
+GRANT_RESPONSE=$(curl -s -X POST \
+    -H "Authorization: Bearer $ADMIN_TOKEN" \
+    -H "Content-Type: application/json" \
+    -d "{\"namespace_id\":\"$NS_ID\",\"allow\":[\"namespace:admin\",\"repo:admin\"],\"is_primary\":true}" \
+    "http://127.0.0.1:$TEST_PORT/api/v1/admin/users/$USER_ID/namespace-grants")
+
+# Create user token
 echo -e "${BLUE}Creating user token...${NC}"
 TOKEN_RESPONSE=$(curl -s -X POST \
     -H "Authorization: Bearer $ADMIN_TOKEN" \
     -H "Content-Type: application/json" \
-    -d "{\"namespace_id\":\"$NS_ID\",\"name\":\"test-token\"}" \
-    "http://127.0.0.1:$TEST_PORT/api/v1/admin/tokens")
+    -d '{"name":"test-token"}' \
+    "http://127.0.0.1:$TEST_PORT/api/v1/admin/users/$USER_ID/tokens")
 
 TOKEN=$(echo "$TOKEN_RESPONSE" | grep -o '"token":"[^"]*"' | head -1 | cut -d'"' -f4)
 
@@ -168,6 +192,7 @@ run_suite "System" "system.sh"
 run_suite "Auth" "auth.sh"
 run_suite "Repos" "repos.sh"
 run_suite "Admin-Tokens" "tokens.sh"
+run_suite "Admin-Users" "users.sh"
 run_suite "Admin-Namespaces" "namespaces.sh"
 run_suite "Folders" "folders.sh"
 run_suite "Content" "content.sh"

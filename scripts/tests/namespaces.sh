@@ -78,13 +78,12 @@ expect_contains "$RESPONSE" "path separators" "invalid name rejected"
 section "Admin: Get Namespace"
 ###############################################################################
 
-# Get namespace by ID
-RESPONSE=$(admin_curl "$ADMIN_API/namespaces/$NS_ID")
-expect_json "$RESPONSE" '.data.id' "$NS_ID" "returns correct namespace"
-expect_json "$RESPONSE" '.data.name' "test-namespace" "name matches"
+# Get namespace by name
+RESPONSE=$(admin_curl "$ADMIN_API/namespaces/test-namespace")
+expect_json "$RESPONSE" '.data.name' "test-namespace" "returns correct namespace"
 
 # Get non-existent namespace
-RESPONSE=$(admin_curl "$ADMIN_API/namespaces/nonexistent-id")
+RESPONSE=$(admin_curl "$ADMIN_API/namespaces/nonexistent-ns")
 expect_contains "$RESPONSE" "not found" "non-existent returns 404"
 
 ###############################################################################
@@ -96,14 +95,14 @@ RESPONSE=$(admin_curl -X POST -H "Content-Type: application/json" \
     -d '{"name":"test-ns-delete"}' \
     "$ADMIN_API/namespaces")
 
-DELETE_NS_ID=$(get_id "$RESPONSE")
+DELETE_NS_NAME="test-ns-delete"
 
 # Delete it
-admin_curl -X DELETE "$ADMIN_API/namespaces/$DELETE_NS_ID" > /dev/null
+admin_curl -X DELETE "$ADMIN_API/namespaces/$DELETE_NS_NAME" > /dev/null
 pass "namespace deleted"
 
 # Verify it's gone
-RESPONSE=$(admin_curl "$ADMIN_API/namespaces/$DELETE_NS_ID")
+RESPONSE=$(admin_curl "$ADMIN_API/namespaces/$DELETE_NS_NAME")
 expect_contains "$RESPONSE" "not found" "namespace no longer exists"
 
 ###############################################################################
@@ -115,14 +114,43 @@ expect_contains "$RESPONSE" '"data"' "user can list their namespaces"
 expect_contains "$RESPONSE" '"is_primary"' "includes is_primary field"
 
 ###############################################################################
-section "User: Current Namespace"
+section "User: Update Namespace"
 ###############################################################################
 
-RESPONSE=$(auth_curl "$API/namespace")
-expect_json "$RESPONSE" '.data.name' "test" "current namespace returned"
+# Get primary namespace name for update tests
+PRIMARY_NS=$(echo "$RESPONSE" | jq -r '.data[] | select(.is_primary == true) | .name')
 
-RESPONSE=$(anon_curl "$API/namespace")
-expect_contains "$RESPONSE" "Authentication required" "anonymous current namespace denied"
+# Update description
+RESPONSE=$(auth_curl -X PATCH -H "Content-Type: application/json" \
+    -d '{"description":"Updated description"}' \
+    "$API/namespaces/$PRIMARY_NS")
+
+expect_json "$RESPONSE" '.data.description' "Updated description" "description updated"
+
+# Clear description
+RESPONSE=$(auth_curl -X PATCH -H "Content-Type: application/json" \
+    -d '{"description":""}' \
+    "$API/namespaces/$PRIMARY_NS")
+
+expect_json "$RESPONSE" '.data.description' "" "description cleared"
+
+# Update non-existent namespace
+RESPONSE=$(auth_curl -X PATCH -H "Content-Type: application/json" \
+    -d '{"description":"test"}' \
+    "$API/namespaces/nonexistent-ns")
+
+expect_contains "$RESPONSE" "not found\|Forbidden" "non-existent namespace update fails"
+
+###############################################################################
+section "User: List Namespace Grants"
+###############################################################################
+
+RESPONSE=$(auth_curl "$API/namespaces/$PRIMARY_NS/grants")
+expect_contains "$RESPONSE" '"data"' "can list namespace grants"
+
+# Non-existent namespace
+RESPONSE=$(auth_curl "$API/namespaces/nonexistent-ns/grants")
+expect_contains "$RESPONSE" "not found\|Forbidden" "non-existent namespace grants fails"
 
 ###############################################################################
 section "Admin Token Enforcement"

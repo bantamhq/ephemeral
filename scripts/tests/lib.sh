@@ -21,6 +21,7 @@ CREATED_REPOS=""
 CREATED_TOKENS=""
 CREATED_FOLDERS=""
 CREATED_NAMESPACES=""
+CREATED_USERS=""
 
 pass() {
     echo -e "  ${GREEN}✓${NC} $1"
@@ -144,6 +145,10 @@ track_namespace() {
     CREATED_NAMESPACES="$CREATED_NAMESPACES $1"
 }
 
+track_user() {
+    CREATED_USERS="$CREATED_USERS $1"
+}
+
 # Cleanup all tracked resources (uses admin token for admin resources)
 cleanup() {
     echo ""
@@ -167,6 +172,11 @@ cleanup() {
     for id in $CREATED_NAMESPACES; do
         admin_curl -X DELETE "$ADMIN_API/namespaces/$id" > /dev/null 2>&1 || true
         info "Deleted namespace: $id"
+    done
+
+    for id in $CREATED_USERS; do
+        admin_curl -X DELETE "$ADMIN_API/users/$id" > /dev/null 2>&1 || true
+        info "Deleted user: $id"
     done
 }
 

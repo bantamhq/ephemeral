@@ -6,7 +6,6 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$SCRIPT_DIR/lib.sh"
 
 require_token
-trap cleanup EXIT
 
 echo ""
 echo -e "${BLUE}═══════════════════════════════════════${NC}"
