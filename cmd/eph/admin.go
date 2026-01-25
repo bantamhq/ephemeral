@@ -29,11 +29,15 @@ func newAdminCmd() *cobra.Command {
 }
 
 func newAdminInitCmd() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "init",
 		Short: "Initialize the server (first-time setup)",
 		RunE:  runAdminInit,
 	}
+
+	cmd.Flags().Bool("non-interactive", false, "Skip wizard and only generate admin token")
+
+	return cmd
 }
 
 func runAdminInit(cmd *cobra.Command, args []string) error {
@@ -59,14 +63,37 @@ func runAdminInit(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
+	nonInteractive, _ := cmd.Flags().GetBool("non-interactive")
+	if nonInteractive {
+		return runNonInteractiveInit(st, cfg.Storage.DataDir)
+	}
+
 	if !term.IsTerminal(int(os.Stdout.Fd())) {
-		return fmt.Errorf("interactive terminal required for setup wizard")
+		return fmt.Errorf("interactive terminal required for setup wizard (use --non-interactive to skip)")
 	}
 
 	wizard := NewSetupWizard(st, cfg.Storage.DataDir)
 	if _, err := wizard.Run(); err != nil {
 		return fmt.Errorf("setup wizard: %w", err)
 	}
+
+	return nil
+}
+
+func runNonInteractiveInit(st *store.SQLiteStore, dataDir string) error {
+	adminToken, err := st.GenerateAdminToken()
+	if err != nil {
+		return fmt.Errorf("generate admin token: %w", err)
+	}
+
+	tokenPath := filepath.Join(dataDir, "admin-token")
+	if err := os.WriteFile(tokenPath, []byte(adminToken), 0600); err != nil {
+		return fmt.Errorf("save admin token: %w", err)
+	}
+
+	fmt.Println("Server initialized.")
+	fmt.Printf("Admin token saved to %s\n", tokenPath)
+	fmt.Println("\nRun 'eph serve' to start the server.")
 
 	return nil
 }

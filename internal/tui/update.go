@@ -263,7 +263,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.moveCursor(-1)
-		return m, m.maybeLoadDetail()
+		m.setViewportContent()
+		return m, nil
 
 	case key.Matches(msg, m.keys.Down):
 		if m.focusedColumn == columnDetail {
@@ -272,10 +273,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.moveCursor(1)
-		if cmd := m.maybeLoadMoreRepos(); cmd != nil {
-			return m, tea.Batch(cmd, m.maybeLoadDetail())
-		}
-		return m, m.maybeLoadDetail()
+		m.setViewportContent()
+		return m, m.maybeLoadMoreRepos()
 
 	case key.Matches(msg, m.keys.Left):
 		return m.handleLeft()
@@ -284,13 +283,11 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleRight()
 
 	case key.Matches(msg, m.keys.Enter):
-		if m.focusedColumn == columnFolders {
-			m.focusedColumn = columnRepos
-			return m, m.maybeLoadDetail()
-		} else if m.focusedColumn == columnRepos {
-			m.focusedColumn = columnDetail
-			m.switchDetailTab(tabDetails)
-			return m, m.maybeLoadDetail()
+		switch m.focusedColumn {
+		case columnFolders:
+			return m.enterReposColumn()
+		case columnRepos:
+			return m.enterDetailColumn()
 		}
 		return m, nil
 
@@ -323,8 +320,33 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) resetRepoCursor() {
-	m.repoCursor = 0
+	m.repoCursor = -1
 	m.repoScroll = 0
+}
+
+func (m *Model) saveRepoPosition() {
+	m.savedRepoCursor = m.repoCursor
+	m.savedRepoScroll = m.repoScroll
+	m.savedForFolder = m.folderCursor
+}
+
+func (m *Model) clearSavedRepoPosition() {
+	m.savedRepoCursor = -1
+}
+
+func (m *Model) restoreOrSelectFirstRepo() {
+	if m.savedRepoCursor >= 0 && m.savedForFolder == m.folderCursor {
+		m.repoCursor = m.savedRepoCursor
+		m.repoScroll = m.savedRepoScroll
+	} else {
+		m.repoCursor = 0
+		m.repoScroll = 0
+	}
+
+	if m.repoCursor >= len(m.filteredRepos) {
+		m.repoCursor = max(len(m.filteredRepos)-1, 0)
+	}
+	m.clearSavedRepoPosition()
 }
 
 func (m Model) handleEscape() (tea.Model, tea.Cmd) {
@@ -335,6 +357,7 @@ func (m Model) handleEscape() (tea.Model, tea.Cmd) {
 		m.switchDetailTab(tabDetails)
 		return m, nil
 	case columnRepos:
+		m.saveRepoPosition()
 		m.focusedColumn = columnFolders
 		m.deselectRepo()
 		return m, nil
@@ -352,6 +375,7 @@ func (m Model) handleLeft() (tea.Model, tea.Cmd) {
 		m.focusedColumn = columnRepos
 		m.recordDetailScroll()
 	case columnRepos:
+		m.saveRepoPosition()
 		m.focusedColumn = columnFolders
 		m.deselectRepo()
 	}
@@ -361,19 +385,9 @@ func (m Model) handleLeft() (tea.Model, tea.Cmd) {
 func (m Model) handleRight() (tea.Model, tea.Cmd) {
 	switch m.focusedColumn {
 	case columnFolders:
-		if len(m.filteredRepos) == 0 {
-			return m, nil
-		}
-		m.focusedColumn = columnRepos
-		if m.repoCursor < 0 {
-			m.repoCursor = 0
-			m.repoScroll = 0
-		}
-		return m, m.maybeLoadDetail()
+		return m.enterReposColumn()
 	case columnRepos:
-		m.focusedColumn = columnDetail
-		m.switchDetailTab(tabDetails)
-		return m, m.maybeLoadDetail()
+		return m.enterDetailColumn()
 	case columnDetail:
 		if m.detailTab < tabFiles {
 			m.switchDetailTab(m.detailTab + 1)
@@ -381,6 +395,22 @@ func (m Model) handleRight() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	return m, nil
+}
+
+func (m Model) enterReposColumn() (tea.Model, tea.Cmd) {
+	if len(m.filteredRepos) == 0 {
+		return m, nil
+	}
+	m.focusedColumn = columnRepos
+	m.restoreOrSelectFirstRepo()
+	m.setViewportContent()
+	return m, nil
+}
+
+func (m Model) enterDetailColumn() (tea.Model, tea.Cmd) {
+	m.focusedColumn = columnDetail
+	m.switchDetailTab(tabDetails)
+	return m, m.maybeLoadDetail()
 }
 
 func (m Model) handleEditMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -482,6 +512,7 @@ func (m *Model) moveCursor(delta int) {
 		}
 		m.syncFolderScroll()
 		m.filterRepos()
+		m.clearSavedRepoPosition()
 		m.resetRepoCursor()
 
 	case columnRepos:
@@ -511,8 +542,8 @@ func (m *Model) syncRepoScroll() {
 
 	if m.repoCursor < m.repoScroll {
 		m.repoScroll = m.repoCursor
-	} else if m.repoCursor >= m.repoScroll+viewportHeight {
-		m.repoScroll = m.repoCursor - viewportHeight + 1
+	} else if m.repoCursor >= m.repoScroll+viewportHeight-1 {
+		m.repoScroll = m.repoCursor - viewportHeight + 2
 	}
 }
 

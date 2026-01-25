@@ -53,6 +53,10 @@ type Model struct {
 	folderScroll  int
 	repoScroll    int
 
+	savedRepoCursor int
+	savedRepoScroll int
+	savedForFolder  int
+
 	filteredRepos []client.Repo
 
 	repoNextCursor  string
@@ -95,18 +99,20 @@ func NewModel(c *client.Client, namespace, server string) Model {
 	helpModel := help.New()
 
 	return Model{
-		client:         c,
-		namespace:      namespace,
-		server:         server,
-		loading:        true,
-		spinner:        s,
-		keys:           DefaultKeyMap,
-		help:           helpModel,
-		repoFolders:    make(map[string][]client.Folder),
-		folderCounts:   make(map[string]int),
-		detailCache:    make(map[string]*RepoDetail),
-		detailScroll:   make(map[detailTab]int),
-		detailViewport: viewport.New(0, 0),
+		client:          c,
+		namespace:       namespace,
+		server:          server,
+		loading:         true,
+		spinner:         s,
+		keys:            DefaultKeyMap,
+		help:            helpModel,
+		repoFolders:     make(map[string][]client.Folder),
+		folderCounts:    make(map[string]int),
+		detailCache:     make(map[string]*RepoDetail),
+		detailScroll:    make(map[detailTab]int),
+		detailViewport:  viewport.New(0, 0),
+		repoCursor:      -1,
+		savedRepoCursor: -1,
 	}
 }
 

@@ -58,35 +58,35 @@ host = "127.0.0.1"
 data_dir = "./data"
 EOF
 
-# Start server and capture output
-echo -e "${BLUE}Starting server...${NC}"
 cd "$TEST_DIR"
-./eph serve > server.log 2>&1 &
-SERVER_PID=$!
 
-# Wait for server to start and extract admin token
-ADMIN_TOKEN=""
-for i in {1..30}; do
-    if [ -f server.log ]; then
-        ADMIN_TOKEN=$(grep -m1 "^eph_" server.log 2>/dev/null | tr -d ' ' || true)
-        if [ -n "$ADMIN_TOKEN" ] && [[ "$ADMIN_TOKEN" == eph_* ]]; then
-            break
-        fi
-    fi
-    sleep 0.2
-done
+# Initialize server
+echo -e "${BLUE}Initializing server...${NC}"
+./eph admin init --non-interactive
 
-# Also try reading from file
-if [ -z "$ADMIN_TOKEN" ] && [ -f data/admin-token ]; then
-    ADMIN_TOKEN=$(cat data/admin-token)
-fi
+# Read admin token from file
+ADMIN_TOKEN=$(cat data/admin-token)
 
 if [ -z "$ADMIN_TOKEN" ] || [[ "$ADMIN_TOKEN" != eph_* ]]; then
-    echo -e "${RED}Failed to get admin token from server${NC}"
-    echo "Server log:"
-    cat server.log
+    echo -e "${RED}Failed to get admin token${NC}"
     exit 1
 fi
+
+# Create test user using CLI
+echo -e "${BLUE}Creating test user...${NC}"
+USER_OUTPUT=$(./eph admin user add test 2>&1)
+TOKEN=$(echo "$USER_OUTPUT" | grep "^Token: " | cut -d' ' -f2)
+
+if [ -z "$TOKEN" ]; then
+    echo -e "${RED}Failed to create test user${NC}"
+    echo "$USER_OUTPUT"
+    exit 1
+fi
+
+# Start server
+echo -e "${BLUE}Starting server...${NC}"
+./eph serve > server.log 2>&1 &
+SERVER_PID=$!
 
 # Wait for server to be ready
 for i in {1..30}; do
@@ -105,61 +105,9 @@ fi
 
 echo -e "${GREEN}Server ready${NC}"
 
-# Create test namespace
-echo -e "${BLUE}Creating test namespace...${NC}"
-NS_RESPONSE=$(curl -s -X POST \
-    -H "Authorization: Bearer $ADMIN_TOKEN" \
-    -H "Content-Type: application/json" \
-    -d '{"name":"test"}' \
-    "http://127.0.0.1:$TEST_PORT/api/v1/admin/namespaces")
-
+# Get namespace ID for tests that need it
+NS_RESPONSE=$(curl -s -H "Authorization: Bearer $TOKEN" "http://127.0.0.1:$TEST_PORT/api/v1/namespaces")
 NS_ID=$(echo "$NS_RESPONSE" | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
-
-if [ -z "$NS_ID" ]; then
-    echo -e "${RED}Failed to create test namespace${NC}"
-    echo "$NS_RESPONSE"
-    exit 1
-fi
-
-# Create test user
-echo -e "${BLUE}Creating test user...${NC}"
-USER_RESPONSE=$(curl -s -X POST \
-    -H "Authorization: Bearer $ADMIN_TOKEN" \
-    -H "Content-Type: application/json" \
-    -d '{"username":"test"}' \
-    "http://127.0.0.1:$TEST_PORT/api/v1/admin/users")
-
-USER_ID=$(echo "$USER_RESPONSE" | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
-
-if [ -z "$USER_ID" ]; then
-    echo -e "${RED}Failed to create test user${NC}"
-    echo "$USER_RESPONSE"
-    exit 1
-fi
-
-# Grant user access to namespace
-echo -e "${BLUE}Granting namespace access...${NC}"
-GRANT_RESPONSE=$(curl -s -X POST \
-    -H "Authorization: Bearer $ADMIN_TOKEN" \
-    -H "Content-Type: application/json" \
-    -d "{\"namespace_id\":\"$NS_ID\",\"allow\":[\"namespace:admin\",\"repo:admin\"],\"is_primary\":true}" \
-    "http://127.0.0.1:$TEST_PORT/api/v1/admin/users/$USER_ID/namespace-grants")
-
-# Create user token
-echo -e "${BLUE}Creating user token...${NC}"
-TOKEN_RESPONSE=$(curl -s -X POST \
-    -H "Authorization: Bearer $ADMIN_TOKEN" \
-    -H "Content-Type: application/json" \
-    -d '{"name":"test-token"}' \
-    "http://127.0.0.1:$TEST_PORT/api/v1/admin/users/$USER_ID/tokens")
-
-TOKEN=$(echo "$TOKEN_RESPONSE" | grep -o '"token":"[^"]*"' | head -1 | cut -d'"' -f4)
-
-if [ -z "$TOKEN" ]; then
-    echo -e "${RED}Failed to create user token${NC}"
-    echo "$TOKEN_RESPONSE"
-    exit 1
-fi
 
 # Export for test scripts
 export TOKEN

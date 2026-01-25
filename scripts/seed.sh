@@ -108,8 +108,16 @@ create_repo() {
 
     local id=$(api POST /repos "$json" | get_id)
 
-    if [ ${#folders[@]} -gt 0 ]; then
-        local folder_json=$(printf ',"%s"' "${folders[@]}")
+    # Filter out empty folder IDs
+    local valid_folders=()
+    for f in "${folders[@]}"; do
+        if [ -n "$f" ]; then
+            valid_folders+=("$f")
+        fi
+    done
+
+    if [ ${#valid_folders[@]} -gt 0 ]; then
+        local folder_json=$(printf ',"%s"' "${valid_folders[@]}")
         folder_json="[${folder_json:1}]"
         api PUT "/repos/$id/folders" "{\"folder_ids\": $folder_json}" > /dev/null
     fi

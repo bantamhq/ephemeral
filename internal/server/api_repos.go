@@ -28,6 +28,9 @@ func (s *Server) handleListRepos(w http.ResponseWriter, r *http.Request) {
 	}
 
 	nsFilter := r.URL.Query().Get("namespace")
+	if nsFilter == "" {
+		nsFilter = r.Header.Get("X-Namespace")
+	}
 	cursor := r.URL.Query().Get("cursor")
 	limit := parseLimit(r.URL.Query().Get("limit"), defaultPageSize)
 	expand := r.URL.Query().Get("expand")
