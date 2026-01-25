@@ -59,10 +59,15 @@ func (s *Server) setupRoutes() {
 	s.router.Route("/api/v1", func(r chi.Router) {
 		// Auth routes - no auth required
 		r.Get("/auth/config", s.handleAuthConfig)
+		r.Post("/auth/sessions", s.handleCreateAuthSession)
+		r.Get("/auth/sessions/{id}", s.handleGetAuthSession)
 
 		// Admin routes - requires admin token
 		r.Route("/admin", func(r chi.Router) {
 			r.Use(BearerAuthMiddleware(s.store))
+
+			// Auth sessions (platform completes auth)
+			r.Post("/auth/sessions/{id}/complete", s.handleCompleteAuthSession)
 
 			// Namespaces
 			r.Get("/namespaces", s.handleAdminListNamespaces)

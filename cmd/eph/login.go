@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -35,15 +36,16 @@ type authConfigResponse struct {
 	} `json:"data"`
 }
 
-type exchangeRequest struct {
-	Code         string `json:"code"`
-	CodeVerifier string `json:"code_verifier"`
+type createSessionRequest struct {
+	ExpiresInSeconds int `json:"expires_in_seconds"`
 }
 
-type exchangeResponse struct {
+type authSessionResponse struct {
 	Data struct {
-		Token     string `json:"token"`
-		Namespace string `json:"namespace"`
+		ID        string    `json:"id"`
+		Status    string    `json:"status"`
+		Token     string    `json:"token,omitempty"`
+		ExpiresAt time.Time `json:"expires_at"`
 	} `json:"data"`
 	Error *struct {
 		Code    string `json:"code"`
@@ -126,109 +128,101 @@ func loginWithToken(serverURL string) error {
 }
 
 func loginWithWebAuth(serverURL, webAuthURL string) error {
-	sessionID, err := generateSessionID()
+	sessionID, err := createAuthSession(serverURL)
 	if err != nil {
-		return fmt.Errorf("generate session: %w", err)
+		return fmt.Errorf("create auth session: %w", err)
 	}
 
-	codeVerifier, err := generateCodeVerifier()
-	if err != nil {
-		return fmt.Errorf("generate verifier: %w", err)
-	}
-
-	codeChallenge := generateCodeChallenge(codeVerifier)
-
-	authURL := fmt.Sprintf("%s/%s?code_challenge=%s", webAuthURL, sessionID, codeChallenge)
+	authURL := fmt.Sprintf("%s?session=%s&server=%s",
+		webAuthURL, sessionID, url.QueryEscape(serverURL))
 
 	fmt.Println()
 	fmt.Println("Open this URL to authenticate:")
 	fmt.Printf("  %s\n", authURL)
 	fmt.Println()
-	fmt.Print("Enter code: ")
+	fmt.Println("Waiting for authentication...")
 
-	code, err := readLine()
-	if err != nil {
-		return fmt.Errorf("read code: %w", err)
-	}
-
-	if code == "" {
-		return fmt.Errorf("code cannot be empty")
-	}
-
-	token, exchangeNamespace, err := exchangeCode(serverURL, code, codeVerifier)
+	token, err := pollForToken(serverURL, sessionID, 5*time.Minute)
 	if err != nil {
 		return err
 	}
 
-	c := client.New(serverURL, token)
-	namespaces, err := c.ListNamespaces()
-	if err != nil {
-		return formatLoginError(err)
-	}
-
-	if len(namespaces) == 0 {
-		return fmt.Errorf("token has no namespace access")
-	}
-
-	defaultNs := exchangeNamespace
-	nsFound := false
-	for _, ns := range namespaces {
-		if ns.Name == exchangeNamespace {
-			nsFound = true
-			break
-		}
-	}
-
-	if !nsFound {
-		for _, ns := range namespaces {
-			if ns.IsPrimary {
-				defaultNs = ns.Name
-				break
-			}
-		}
-		if defaultNs == exchangeNamespace {
-			defaultNs = namespaces[0].Name
-		}
-	}
-
-	return saveLoginAndConfigure(serverURL, token, defaultNs, len(namespaces))
+	return completeLogin(serverURL, token)
 }
 
-func exchangeCode(serverURL, code, codeVerifier string) (string, string, error) {
-	reqBody := exchangeRequest{
-		Code:         code,
-		CodeVerifier: codeVerifier,
+func createAuthSession(serverURL string) (string, error) {
+	reqBody := createSessionRequest{
+		ExpiresInSeconds: 300,
 	}
 
 	bodyBytes, err := json.Marshal(reqBody)
 	if err != nil {
-		return "", "", fmt.Errorf("marshal request: %w", err)
+		return "", fmt.Errorf("marshal request: %w", err)
 	}
 
 	httpClient := &http.Client{Timeout: 30 * time.Second}
 	resp, err := httpClient.Post(
-		serverURL+"/api/v1/auth/exchange",
+		serverURL+"/api/v1/auth/sessions",
 		"application/json",
 		bytes.NewReader(bodyBytes),
 	)
 	if err != nil {
-		return "", "", fmt.Errorf("exchange request: %w", err)
+		return "", fmt.Errorf("create session request: %w", err)
 	}
 	defer resp.Body.Close()
 
-	var exchangeResp exchangeResponse
-	if err := json.NewDecoder(resp.Body).Decode(&exchangeResp); err != nil {
-		return "", "", fmt.Errorf("decode response: %w", err)
+	var sessionResp authSessionResponse
+	if err := json.NewDecoder(resp.Body).Decode(&sessionResp); err != nil {
+		return "", fmt.Errorf("decode response: %w", err)
 	}
 
-	if resp.StatusCode != http.StatusOK {
-		if exchangeResp.Error != nil {
-			return "", "", fmt.Errorf("exchange failed (%s): %s", exchangeResp.Error.Code, exchangeResp.Error.Message)
+	if resp.StatusCode != http.StatusCreated {
+		if sessionResp.Error != nil {
+			return "", fmt.Errorf("create session failed (%s): %s", sessionResp.Error.Code, sessionResp.Error.Message)
 		}
-		return "", "", fmt.Errorf("exchange failed: status %d", resp.StatusCode)
+		return "", fmt.Errorf("create session failed: status %d", resp.StatusCode)
 	}
 
-	return exchangeResp.Data.Token, exchangeResp.Data.Namespace, nil
+	return sessionResp.Data.ID, nil
+}
+
+func pollForToken(serverURL, sessionID string, timeout time.Duration) (string, error) {
+	httpClient := &http.Client{Timeout: 10 * time.Second}
+	deadline := time.Now().Add(timeout)
+	pollInterval := 2 * time.Second
+
+	for time.Now().Before(deadline) {
+		resp, err := httpClient.Get(serverURL + "/api/v1/auth/sessions/" + sessionID)
+		if err != nil {
+			time.Sleep(pollInterval)
+			continue
+		}
+
+		var sessionResp authSessionResponse
+		if err := json.NewDecoder(resp.Body).Decode(&sessionResp); err != nil {
+			resp.Body.Close()
+			time.Sleep(pollInterval)
+			continue
+		}
+		resp.Body.Close()
+
+		if resp.StatusCode == http.StatusNotFound {
+			return "", fmt.Errorf("session expired or not found")
+		}
+
+		if resp.StatusCode != http.StatusOK {
+			time.Sleep(pollInterval)
+			continue
+		}
+
+		if sessionResp.Data.Status == "completed" && sessionResp.Data.Token != "" {
+			return sessionResp.Data.Token, nil
+		}
+
+		time.Sleep(pollInterval)
+	}
+
+	return "", fmt.Errorf("authentication timed out")
 }
 
 func completeLogin(serverURL, token string) error {

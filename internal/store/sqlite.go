@@ -1613,3 +1613,107 @@ func (s *SQLiteStore) generateUserTokenAttempt(userID string, expiresAt *time.Ti
 
 	return rawToken, token, nil
 }
+
+// CreateAuthSession creates a new auth session.
+func (s *SQLiteStore) CreateAuthSession(session *AuthSession) error {
+	query := `
+		INSERT INTO auth_sessions (id, user_id, token, status, created_at, expires_at)
+		VALUES (?, ?, ?, ?, ?, ?)
+	`
+
+	_, err := s.db.Exec(query,
+		session.ID,
+		ToNullString(session.UserID),
+		ToNullString(session.Token),
+		session.Status,
+		session.CreatedAt,
+		session.ExpiresAt,
+	)
+	if err != nil {
+		return fmt.Errorf("insert auth session: %w", err)
+	}
+	return nil
+}
+
+// GetAuthSession retrieves an auth session by ID.
+func (s *SQLiteStore) GetAuthSession(id string) (*AuthSession, error) {
+	query := `
+		SELECT id, user_id, token, status, created_at, expires_at
+		FROM auth_sessions
+		WHERE id = ?
+	`
+
+	var session AuthSession
+	var userID, token sql.NullString
+
+	err := s.db.QueryRow(query, id).Scan(
+		&session.ID,
+		&userID,
+		&token,
+		&session.Status,
+		&session.CreatedAt,
+		&session.ExpiresAt,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("scan auth session: %w", err)
+	}
+
+	session.UserID = FromNullString(userID)
+	session.Token = FromNullString(token)
+
+	return &session, nil
+}
+
+// CompleteAuthSession marks a session as completed with the user and token.
+func (s *SQLiteStore) CompleteAuthSession(id string, userID string, token string) error {
+	query := `
+		UPDATE auth_sessions
+		SET user_id = ?, token = ?, status = 'completed'
+		WHERE id = ? AND status = 'pending'
+	`
+
+	result, err := s.db.Exec(query, userID, token, id)
+	if err != nil {
+		return fmt.Errorf("complete auth session: %w", err)
+	}
+
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("get rows affected: %w", err)
+	}
+	if rows == 0 {
+		return sql.ErrNoRows
+	}
+
+	return nil
+}
+
+// DeleteAuthSession deletes an auth session by ID.
+func (s *SQLiteStore) DeleteAuthSession(id string) error {
+	result, err := s.db.Exec("DELETE FROM auth_sessions WHERE id = ?", id)
+	if err != nil {
+		return fmt.Errorf("delete auth session: %w", err)
+	}
+
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("get rows affected: %w", err)
+	}
+	if rows == 0 {
+		return sql.ErrNoRows
+	}
+
+	return nil
+}
+
+// DeleteExpiredAuthSessions removes all expired auth sessions.
+func (s *SQLiteStore) DeleteExpiredAuthSessions() error {
+	_, err := s.db.Exec("DELETE FROM auth_sessions WHERE expires_at < ?", time.Now())
+	if err != nil {
+		return fmt.Errorf("delete expired auth sessions: %w", err)
+	}
+	return nil
+}

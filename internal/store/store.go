@@ -88,6 +88,13 @@ type Store interface {
 	DeleteLFSObject(repoID, oid string) error
 	GetRepoLFSSize(repoID string) (int64, error)
 
+	// Auth session operations
+	CreateAuthSession(session *AuthSession) error
+	GetAuthSession(id string) (*AuthSession, error)
+	CompleteAuthSession(id string, userID string, token string) error
+	DeleteAuthSession(id string) error
+	DeleteExpiredAuthSessions() error
+
 	Close() error
 }
 
@@ -169,6 +176,15 @@ type LFSObject struct {
 	OID       string    `json:"oid"`
 	Size      int64     `json:"size"`
 	CreatedAt time.Time `json:"created_at"`
+}
+
+type AuthSession struct {
+	ID        string    `json:"id"`
+	UserID    *string   `json:"user_id,omitempty"`
+	Token     *string   `json:"token,omitempty"`
+	Status    string    `json:"status"`
+	CreatedAt time.Time `json:"created_at"`
+	ExpiresAt time.Time `json:"expires_at"`
 }
 
 func ToNullString(s *string) sql.NullString {

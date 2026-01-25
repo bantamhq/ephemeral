@@ -127,6 +127,16 @@ func (s *SQLiteStore) createSchema() error {
 		PRIMARY KEY (repo_id, oid)
 	);
 
+	-- Auth sessions for CLI polling-based web auth flow
+	CREATE TABLE IF NOT EXISTS auth_sessions (
+		id TEXT PRIMARY KEY,
+		user_id TEXT REFERENCES users(id) ON DELETE CASCADE,
+		token TEXT,
+		status TEXT NOT NULL DEFAULT 'pending',
+		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		expires_at TIMESTAMP NOT NULL
+	);
+
 	-- Create indexes
 	CREATE INDEX IF NOT EXISTS idx_repos_namespace ON repos(namespace_id);
 	CREATE UNIQUE INDEX IF NOT EXISTS idx_tokens_lookup ON tokens(token_lookup);
@@ -136,6 +146,7 @@ func (s *SQLiteStore) createSchema() error {
 	CREATE INDEX IF NOT EXISTS idx_namespace_grants_user ON user_namespace_grants(user_id);
 	CREATE INDEX IF NOT EXISTS idx_repo_grants_user ON user_repo_grants(user_id);
 	CREATE INDEX IF NOT EXISTS idx_users_primary_namespace ON users(primary_namespace_id);
+	CREATE INDEX IF NOT EXISTS idx_auth_sessions_expires ON auth_sessions(expires_at);
 	`
 
 	_, err := s.db.Exec(schema)
