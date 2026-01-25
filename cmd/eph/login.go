@@ -31,11 +31,9 @@ If no server is specified, defaults to http://localhost:8080.`,
 }
 
 type authConfigResponse struct {
-	Data struct {
-		AuthMethod   string `json:"auth_method"`
-		ServerURL    string `json:"server_url,omitempty"`
-		AuthEndpoint string `json:"auth_endpoint,omitempty"`
-	} `json:"data"`
+	AuthMethod   string `json:"auth_method"`
+	ServerURL    string `json:"server_url,omitempty"`
+	AuthEndpoint string `json:"auth_endpoint,omitempty"`
 }
 
 type createSessionRequest struct {
@@ -78,15 +76,15 @@ func runLogin(cmd *cobra.Command, args []string) error {
 	}
 
 	targetServer := serverURL
-	if authConfig.Data.ServerURL != "" {
-		targetServer = authConfig.Data.ServerURL
+	if authConfig.ServerURL != "" {
+		targetServer = authConfig.ServerURL
 		if !strings.HasPrefix(targetServer, "http://") && !strings.HasPrefix(targetServer, "https://") {
 			targetServer = "https://" + targetServer
 		}
 	}
 
-	if authConfig.Data.AuthMethod == "web" && authConfig.Data.AuthEndpoint != "" {
-		return loginWithWebAuth(serverURL, targetServer, authConfig.Data.AuthEndpoint)
+	if authConfig.AuthMethod == "web" && authConfig.AuthEndpoint != "" {
+		return loginWithWebAuth(serverURL, targetServer, authConfig.AuthEndpoint)
 	}
 
 	return loginWithToken(targetServer)

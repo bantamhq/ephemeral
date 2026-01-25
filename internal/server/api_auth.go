@@ -31,7 +31,8 @@ type AuthConfigResponse struct {
 }
 
 func (s *Server) handleAuthConfig(w http.ResponseWriter, r *http.Request) {
-	JSON(w, http.StatusOK, AuthConfigResponse{AuthMethod: "token"})
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(AuthConfigResponse{AuthMethod: "token"})
 }
 
 type createAuthSessionRequest struct {
