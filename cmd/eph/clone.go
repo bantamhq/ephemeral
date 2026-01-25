@@ -20,9 +20,9 @@ func newCloneCmd() *cobra.Command {
 		Long: `Clone a repository from the server.
 
 Examples:
-  eph clone              # Interactive repo selection
-  eph clone myrepo       # Clone from default namespace
-  eph clone user/myrepo  # Clone from specified namespace`,
+  eph clone                   # Interactive repo selection
+  eph clone myrepo            # Clone from default namespace
+  eph clone namespace/myrepo  # Clone from specified namespace`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: runClone,
 	}

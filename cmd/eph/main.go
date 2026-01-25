@@ -7,7 +7,6 @@ import (
 
 	"github.com/BurntSushi/toml"
 	"github.com/spf13/cobra"
-	"golang.org/x/term"
 
 	"github.com/bantamhq/ephemeral/internal/client"
 	"github.com/bantamhq/ephemeral/internal/config"
@@ -53,21 +52,13 @@ func main() {
 		RunE:  runServe,
 	}
 
-	serveInitCmd := &cobra.Command{
-		Use:   "init",
-		Short: "Initialize the server (first-time setup)",
-		RunE:  runServeInit,
-	}
-	serveCmd.AddCommand(serveInitCmd)
-	serveCmd.AddCommand(newServeNamespaceCmd())
-
 	rootCmd.AddCommand(
 		serveCmd,
+		newAdminCmd(),
 		newLoginCmd(),
 		newLogoutCmd(),
-		newWhoamiCmd(),
 		newCredentialCmd(),
-		newNamespaceCmd(),
+		newNamespacesCmd(),
 		newNewCmd(),
 		newCloneCmd(),
 	)
@@ -122,7 +113,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	if !hasAdmin {
 		fmt.Println()
 		fmt.Println("Server not initialized.")
-		fmt.Println("Run 'eph serve init' to set up your server.")
+		fmt.Println("Run 'eph admin init' to set up your server.")
 		return nil
 	}
 
@@ -149,41 +140,6 @@ func runServe(cmd *cobra.Command, args []string) error {
 	fmt.Println("Example: git clone http://x-token:<token>@localhost:8080/git/<namespace>/myrepo.git")
 
 	return srv.Start(cfg.Server.Host, cfg.Server.Port)
-}
-
-func runServeInit(cmd *cobra.Command, args []string) error {
-	cfg, _, err := loadConfig("server.toml")
-	if err != nil {
-		return fmt.Errorf("load config: %w", err)
-	}
-
-	st, err := initStore(cfg.Storage.DataDir)
-	if err != nil {
-		return err
-	}
-	defer st.Close()
-
-	hasAdmin, err := st.HasAdminToken()
-	if err != nil {
-		return fmt.Errorf("check admin token: %w", err)
-	}
-
-	if hasAdmin {
-		fmt.Println("Server is already initialized.")
-		fmt.Println("Run 'eph serve' to start the server.")
-		return nil
-	}
-
-	if !term.IsTerminal(int(os.Stdout.Fd())) {
-		return fmt.Errorf("interactive terminal required for setup wizard")
-	}
-
-	wizard := NewSetupWizard(st, cfg.Storage.DataDir)
-	if _, err := wizard.Run(); err != nil {
-		return fmt.Errorf("setup wizard: %w", err)
-	}
-
-	return nil
 }
 
 func initStore(dataDir string) (*store.SQLiteStore, error) {

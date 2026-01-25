@@ -75,8 +75,8 @@ func (w *SetupWizard) Run() (*SetupResult, error) {
 
 		huh.NewGroup(
 			huh.NewConfirm().
-				Title("Create a default namespace?").
-				Description("A namespace organizes your repositories and generates a user token for daily use.").
+				Title("Create a user?").
+				Description("Creates a user with their own namespace for repositories and a token for daily use.").
 				Affirmative("Yes").
 				Negative("No").
 				Value(&createNamespace).
@@ -85,8 +85,8 @@ func (w *SetupWizard) Run() (*SetupResult, error) {
 
 		huh.NewGroup(
 			huh.NewInput().
-				Title("Namespace name").
-				Description("The namespace for your repositories.").
+				Title("Username").
+				Description("This will also be the name of your primary namespace.").
 				Placeholder("default").
 				CharLimit(128).
 				Validate(validateNamespaceName).
@@ -136,7 +136,7 @@ func (w *SetupWizard) printResults(result *SetupResult) {
 	fmt.Fprintf(&sb, "Start your server with: eph serve")
 
 	if result.UserToken != "" {
-		fmt.Fprintf(&sb, "\n\nNamespace '%s' created.\n\n", result.NamespaceName)
+		fmt.Fprintf(&sb, "\n\nUser '%s' created.\n\n", result.NamespaceName)
 		fmt.Fprintf(&sb, "User token:\n")
 		fmt.Fprintf(&sb, "%s\n\n", result.UserToken)
 		fmt.Fprintf(&sb, "Save this token - you'll need it to login.")
