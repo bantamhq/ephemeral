@@ -106,7 +106,10 @@ func NewStyles() *StyleConfig {
 	}
 
 	repoCursor := RepoItemStyles{
-		Base:  lipgloss.NewStyle().PaddingLeft(2),
+		Base: lipgloss.NewStyle().
+			Border(lipgloss.ThickBorder(), false, false, false, true).
+			BorderForeground(colors.Subtle).
+			PaddingLeft(1),
 		Title: lipgloss.NewStyle(),
 	}
 

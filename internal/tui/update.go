@@ -361,8 +361,11 @@ func (m Model) handleLeft() (tea.Model, tea.Cmd) {
 func (m Model) handleRight() (tea.Model, tea.Cmd) {
 	switch m.focusedColumn {
 	case columnFolders:
+		if len(m.filteredRepos) == 0 {
+			return m, nil
+		}
 		m.focusedColumn = columnRepos
-		if m.repoCursor < 0 && len(m.filteredRepos) > 0 {
+		if m.repoCursor < 0 {
 			m.repoCursor = 0
 			m.repoScroll = 0
 		}
