@@ -15,9 +15,7 @@ import (
 
 // AuthOptions configures platform authentication settings.
 type AuthOptions struct {
-	WebAuthURL            string
-	ExchangeValidationURL string
-	ExchangeSecret        string
+	WebAuthURL string
 }
 
 // Server is the HTTP server for Ephemeral.
@@ -61,7 +59,6 @@ func (s *Server) setupRoutes() {
 	s.router.Route("/api/v1", func(r chi.Router) {
 		// Auth routes - no auth required
 		r.Get("/auth/config", s.handleAuthConfig)
-		r.Post("/auth/exchange", s.handleAuthExchange)
 
 		// Admin routes - requires admin token
 		r.Route("/admin", func(r chi.Router) {
@@ -70,38 +67,48 @@ func (s *Server) setupRoutes() {
 			// Namespaces
 			r.Get("/namespaces", s.handleAdminListNamespaces)
 			r.Post("/namespaces", s.handleAdminCreateNamespace)
-			r.Get("/namespaces/{id}", s.handleAdminGetNamespace)
-			r.Delete("/namespaces/{id}", s.handleAdminDeleteNamespace)
+			r.Get("/namespaces/{name}", s.handleAdminGetNamespace)
+			r.Delete("/namespaces/{name}", s.handleAdminDeleteNamespace)
 
 			// Tokens
 			r.Get("/tokens", s.handleAdminListTokens)
-			r.Post("/tokens", s.handleAdminCreateToken)
 			r.Get("/tokens/{id}", s.handleAdminGetToken)
 			r.Delete("/tokens/{id}", s.handleAdminDeleteToken)
 
-			// Namespace grants
-			r.Post("/tokens/{id}/namespace-grants", s.handleAdminCreateNamespaceGrant)
-			r.Get("/tokens/{id}/namespace-grants", s.handleAdminListNamespaceGrants)
-			r.Delete("/tokens/{id}/namespace-grants/{nsID}", s.handleAdminDeleteNamespaceGrant)
+			// Users
+			r.Get("/users", s.handleAdminListUsers)
+			r.Post("/users", s.handleAdminCreateUser)
+			r.Get("/users/{id}", s.handleAdminGetUser)
+			r.Delete("/users/{id}", s.handleAdminDeleteUser)
 
-			// Repo grants
-			r.Post("/tokens/{id}/repo-grants", s.handleAdminCreateRepoGrant)
-			r.Get("/tokens/{id}/repo-grants", s.handleAdminListRepoGrants)
-			r.Delete("/tokens/{id}/repo-grants/{repoID}", s.handleAdminDeleteRepoGrant)
+			// User tokens
+			r.Get("/users/{id}/tokens", s.handleAdminListUserTokens)
+			r.Post("/users/{id}/tokens", s.handleAdminCreateUserToken)
+
+			// User namespace grants
+			r.Post("/users/{id}/namespace-grants", s.handleAdminCreateUserNamespaceGrant)
+			r.Get("/users/{id}/namespace-grants", s.handleAdminListUserNamespaceGrants)
+			r.Get("/users/{id}/namespace-grants/{nsID}", s.handleAdminGetUserNamespaceGrant)
+			r.Delete("/users/{id}/namespace-grants/{nsID}", s.handleAdminDeleteUserNamespaceGrant)
+
+			// User repo grants
+			r.Post("/users/{id}/repo-grants", s.handleAdminCreateUserRepoGrant)
+			r.Get("/users/{id}/repo-grants", s.handleAdminListUserRepoGrants)
+			r.Get("/users/{id}/repo-grants/{repoID}", s.handleAdminGetUserRepoGrant)
+			r.Delete("/users/{id}/repo-grants/{repoID}", s.handleAdminDeleteUserRepoGrant)
 		})
 
 		// User routes - requires user token (non-admin)
 		r.Group(func(r chi.Router) {
 			r.Use(BearerAuthMiddleware(s.store))
 
-			// Current user info
+			// Namespaces
 			r.Get("/namespaces", s.handleListNamespaces)
-			r.Get("/namespace", s.handleGetCurrentNamespace)
 
 			// Namespace-scoped admin routes (requires namespace:admin)
-			r.Patch("/namespaces/{id}", s.handleUpdateNamespace)
-			r.Delete("/namespaces/{id}", s.handleDeleteNamespaceScoped)
-			r.Get("/namespaces/{id}/grants", s.handleListNamespaceGrants)
+			r.Patch("/namespaces/{name}", s.handleUpdateNamespace)
+			r.Delete("/namespaces/{name}", s.handleDeleteNamespaceScoped)
+			r.Get("/namespaces/{name}/grants", s.handleListNamespaceGrants)
 
 			// Repos
 			r.Get("/repos", s.handleListRepos)

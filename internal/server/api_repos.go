@@ -22,14 +22,47 @@ func (s *Server) handleListRepos(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	nsID := s.getActiveNamespaceID(w, r, token)
-	if nsID == "" {
+	if token.UserID == nil {
+		JSONError(w, http.StatusForbidden, "Token has no associated user")
 		return
 	}
 
+	nsFilter := r.URL.Query().Get("namespace")
 	cursor := r.URL.Query().Get("cursor")
 	limit := parseLimit(r.URL.Query().Get("limit"), defaultPageSize)
 	expand := r.URL.Query().Get("expand")
+
+	if nsFilter == "" {
+		repos, err := s.store.ListAllUserAccessibleRepos(*token.UserID)
+		if err != nil {
+			JSONError(w, http.StatusInternalServerError, "Failed to list repos")
+			return
+		}
+
+		JSONList(w, repos, nil, false)
+		return
+	}
+
+	ns, err := s.store.GetNamespaceByName(nsFilter)
+	if err != nil {
+		JSONError(w, http.StatusInternalServerError, "Failed to get namespace")
+		return
+	}
+	if ns == nil {
+		JSONError(w, http.StatusNotFound, "Namespace not found")
+		return
+	}
+	nsID := ns.ID
+
+	canAccess, err := s.permissions.CanAccessNamespace(token.ID, nsID)
+	if err != nil {
+		JSONError(w, http.StatusInternalServerError, "Failed to check namespace access")
+		return
+	}
+	if !canAccess {
+		JSONError(w, http.StatusForbidden, "Access denied to namespace")
+		return
+	}
 
 	hasNSRead, err := s.permissions.CheckNamespacePermission(token.ID, nsID, store.PermNamespaceRead)
 	if err != nil {
@@ -81,7 +114,7 @@ func (s *Server) handleListRepos(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	repos, err := s.store.ListReposWithGrants(token.ID, nsID)
+	repos, err := s.store.ListUserReposWithGrants(*token.UserID, nsID)
 	if err != nil {
 		JSONError(w, http.StatusInternalServerError, "Failed to list repos")
 		return
@@ -94,6 +127,7 @@ type createRepoRequest struct {
 	Name        string  `json:"name"`
 	Description *string `json:"description,omitempty"`
 	Public      bool    `json:"public"`
+	Namespace   *string `json:"namespace,omitempty"`
 }
 
 func (s *Server) handleCreateRepo(w http.ResponseWriter, r *http.Request) {
@@ -102,14 +136,18 @@ func (s *Server) handleCreateRepo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	nsID := s.getNamespaceIDWithPermission(w, r, token, store.PermNamespaceWrite)
+	var req createRepoRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		JSONError(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+
+	nsID := s.resolveNamespaceID(w, token, req.Namespace)
 	if nsID == "" {
 		return
 	}
 
-	var req createRepoRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		JSONError(w, http.StatusBadRequest, "Invalid request body")
+	if !s.requireNamespacePermission(w, token, nsID, store.PermNamespaceWrite) {
 		return
 	}
 

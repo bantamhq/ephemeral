@@ -25,9 +25,7 @@ type Config struct {
 		DataDir string `toml:"data_dir"`
 	} `toml:"storage"`
 	Auth struct {
-		WebAuthURL            string `toml:"web_auth_url"`
-		ExchangeValidationURL string `toml:"exchange_validation_url"`
-		ExchangeSecret        string `toml:"exchange_secret"`
+		WebAuthURL string `toml:"web_auth_url"`
 	} `toml:"auth"`
 	LFS struct {
 		Enabled     bool   `toml:"enabled"`
@@ -129,9 +127,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	}
 
 	authOpts := server.AuthOptions{
-		WebAuthURL:            cfg.Auth.WebAuthURL,
-		ExchangeValidationURL: cfg.Auth.ExchangeValidationURL,
-		ExchangeSecret:        cfg.Auth.ExchangeSecret,
+		WebAuthURL: cfg.Auth.WebAuthURL,
 	}
 
 	lfsBaseURL := cfg.LFS.BaseURL

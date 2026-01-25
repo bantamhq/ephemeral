@@ -17,45 +17,48 @@ func (s *Server) handleListFolders(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	nsID := s.getNamespaceIDWithPermission(w, r, token, store.PermNamespaceRead)
+	nsFilter := r.URL.Query().Get("namespace")
+	cursor := r.URL.Query().Get("cursor")
+	limit := parseLimit(r.URL.Query().Get("limit"), defaultPageSize)
+
+	var nsName *string
+	if nsFilter != "" {
+		nsName = &nsFilter
+	}
+
+	nsID := s.resolveNamespaceID(w, token, nsName)
 	if nsID == "" {
 		return
 	}
 
-	cursor := r.URL.Query().Get("cursor")
-	limit := parseLimit(r.URL.Query().Get("limit"), defaultPageSize)
-
-	fetchLimit := limit
-	if limit > 0 {
-		fetchLimit = limit + 1
+	if !s.requireNamespacePermission(w, token, nsID, store.PermNamespaceRead) {
+		return
 	}
 
-	folders, err := s.store.ListFolders(nsID, cursor, fetchLimit)
+	folders, err := s.store.ListFolders(nsID, cursor, limit+1)
 	if err != nil {
 		JSONError(w, http.StatusInternalServerError, "Failed to list folders")
 		return
 	}
 
-	var hasMore bool
-	var nextCursor *string
+	hasMore := len(folders) > limit
+	if hasMore {
+		folders = folders[:limit]
+	}
 
-	if limit > 0 {
-		hasMore = len(folders) > limit
-		if hasMore {
-			folders = folders[:limit]
-		}
-		if hasMore && len(folders) > 0 {
-			c := folders[len(folders)-1].Name
-			nextCursor = &c
-		}
+	var nextCursor *string
+	if hasMore && len(folders) > 0 {
+		c := folders[len(folders)-1].Name
+		nextCursor = &c
 	}
 
 	JSONList(w, folders, nextCursor, hasMore)
 }
 
 type createFolderRequest struct {
-	Name  string  `json:"name"`
-	Color *string `json:"color,omitempty"`
+	Name      string  `json:"name"`
+	Color     *string `json:"color,omitempty"`
+	Namespace *string `json:"namespace,omitempty"`
 }
 
 func (s *Server) handleCreateFolder(w http.ResponseWriter, r *http.Request) {
@@ -64,14 +67,18 @@ func (s *Server) handleCreateFolder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	nsID := s.getNamespaceIDWithPermission(w, r, token, store.PermNamespaceWrite)
+	var req createFolderRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		JSONError(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+
+	nsID := s.resolveNamespaceID(w, token, req.Namespace)
 	if nsID == "" {
 		return
 	}
 
-	var req createFolderRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		JSONError(w, http.StatusBadRequest, "Invalid request body")
+	if !s.requireNamespacePermission(w, token, nsID, store.PermNamespaceWrite) {
 		return
 	}
 

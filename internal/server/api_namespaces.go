@@ -16,25 +16,28 @@ type namespaceGrantResponse struct {
 	NamespaceID string   `json:"namespace_id"`
 	Allow       []string `json:"allow"`
 	Deny        []string `json:"deny,omitempty"`
-	IsPrimary   bool     `json:"is_primary"`
 }
 
-// namespaceListResponse represents a namespace with its grant for the current token.
+// namespaceListResponse represents a namespace with its grant for the current user.
 type namespaceListResponse struct {
 	store.Namespace
-	Allow     []string `json:"allow"`
-	Deny      []string `json:"deny,omitempty"`
-	IsPrimary bool     `json:"is_primary"`
+	Allow []string `json:"allow"`
+	Deny  []string `json:"deny,omitempty"`
 }
 
-// handleListNamespaces lists all namespaces the current user token has access to.
+// handleListNamespaces lists all namespaces the current user has access to.
 func (s *Server) handleListNamespaces(w http.ResponseWriter, r *http.Request) {
 	token := s.requireUserToken(w, r)
 	if token == nil {
 		return
 	}
 
-	grants, err := s.store.ListTokenNamespaceGrants(token.ID)
+	if token.UserID == nil {
+		JSONError(w, http.StatusForbidden, "Token has no associated user")
+		return
+	}
+
+	grants, err := s.store.ListUserNamespaceGrants(*token.UserID)
 	if err != nil {
 		JSONError(w, http.StatusInternalServerError, "Failed to list namespaces")
 		return
@@ -50,37 +53,10 @@ func (s *Server) handleListNamespaces(w http.ResponseWriter, r *http.Request) {
 			Namespace: *ns,
 			Allow:     g.AllowBits.ToStrings(),
 			Deny:      g.DenyBits.ToStrings(),
-			IsPrimary: g.IsPrimary,
 		})
 	}
 
 	JSON(w, http.StatusOK, result)
-}
-
-// handleGetCurrentNamespace returns the currently active namespace based on X-Namespace header
-// or the token's primary namespace.
-func (s *Server) handleGetCurrentNamespace(w http.ResponseWriter, r *http.Request) {
-	token := s.requireUserToken(w, r)
-	if token == nil {
-		return
-	}
-
-	nsID := s.getActiveNamespaceID(w, r, token)
-	if nsID == "" {
-		return
-	}
-
-	ns, err := s.store.GetNamespace(nsID)
-	if err != nil {
-		JSONError(w, http.StatusInternalServerError, "Failed to get namespace")
-		return
-	}
-	if ns == nil {
-		JSONError(w, http.StatusNotFound, "Namespace not found")
-		return
-	}
-
-	JSON(w, http.StatusOK, ns)
 }
 
 type updateNamespaceRequest struct {
@@ -96,8 +72,8 @@ func (s *Server) handleUpdateNamespace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	nsID := chi.URLParam(r, "id")
-	ns, err := s.store.GetNamespace(nsID)
+	name := chi.URLParam(r, "name")
+	ns, err := s.store.GetNamespaceByName(name)
 	if err != nil {
 		JSONError(w, http.StatusInternalServerError, "Failed to get namespace")
 		return
@@ -107,7 +83,7 @@ func (s *Server) handleUpdateNamespace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !s.requireNamespacePermission(w, token, nsID, store.PermNamespaceAdmin) {
+	if !s.requireNamespacePermission(w, token, ns.ID, store.PermNamespaceAdmin) {
 		return
 	}
 
@@ -148,8 +124,8 @@ func (s *Server) handleDeleteNamespaceScoped(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	nsID := chi.URLParam(r, "id")
-	ns, err := s.store.GetNamespace(nsID)
+	name := chi.URLParam(r, "name")
+	ns, err := s.store.GetNamespaceByName(name)
 	if err != nil {
 		JSONError(w, http.StatusInternalServerError, "Failed to get namespace")
 		return
@@ -159,11 +135,11 @@ func (s *Server) handleDeleteNamespaceScoped(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	if !s.requireNamespacePermission(w, token, nsID, store.PermNamespaceAdmin) {
+	if !s.requireNamespacePermission(w, token, ns.ID, store.PermNamespaceAdmin) {
 		return
 	}
 
-	repos, err := s.store.ListRepos(nsID, "", 1)
+	repos, err := s.store.ListRepos(ns.ID, "", 1)
 	if err != nil {
 		JSONError(w, http.StatusInternalServerError, "Failed to check repos")
 		return
@@ -173,13 +149,13 @@ func (s *Server) handleDeleteNamespaceScoped(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	tokenCount, err := s.store.CountNamespaceTokens(nsID)
+	userCount, err := s.store.CountNamespaceUsers(ns.ID)
 	if err != nil {
-		JSONError(w, http.StatusInternalServerError, "Failed to check tokens")
+		JSONError(w, http.StatusInternalServerError, "Failed to check users")
 		return
 	}
-	if tokenCount > 1 {
-		JSONError(w, http.StatusConflict, "Cannot delete namespace with other tokens having access")
+	if userCount > 1 {
+		JSONError(w, http.StatusConflict, "Cannot delete namespace with other users having access")
 		return
 	}
 
@@ -189,7 +165,7 @@ func (s *Server) handleDeleteNamespaceScoped(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	if err := s.store.DeleteNamespace(nsID); err != nil {
+	if err := s.store.DeleteNamespace(ns.ID); err != nil {
 		JSONError(w, http.StatusInternalServerError, "Failed to delete namespace")
 		return
 	}
@@ -201,15 +177,20 @@ func (s *Server) handleDeleteNamespaceScoped(w http.ResponseWriter, r *http.Requ
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// handleListNamespaceGrants returns the current token's grant for a namespace (requires namespace:admin).
+// handleListNamespaceGrants returns the current user's grant for a namespace (requires namespace:admin).
 func (s *Server) handleListNamespaceGrants(w http.ResponseWriter, r *http.Request) {
 	token := s.requireUserToken(w, r)
 	if token == nil {
 		return
 	}
 
-	nsID := chi.URLParam(r, "id")
-	ns, err := s.store.GetNamespace(nsID)
+	if token.UserID == nil {
+		JSONError(w, http.StatusForbidden, "Token has no associated user")
+		return
+	}
+
+	name := chi.URLParam(r, "name")
+	ns, err := s.store.GetNamespaceByName(name)
 	if err != nil {
 		JSONError(w, http.StatusInternalServerError, "Failed to get namespace")
 		return
@@ -219,11 +200,11 @@ func (s *Server) handleListNamespaceGrants(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	if !s.requireNamespacePermission(w, token, nsID, store.PermNamespaceAdmin) {
+	if !s.requireNamespacePermission(w, token, ns.ID, store.PermNamespaceAdmin) {
 		return
 	}
 
-	grant, err := s.store.GetNamespaceGrant(token.ID, nsID)
+	grant, err := s.store.GetNamespaceGrant(*token.UserID, ns.ID)
 	if err != nil {
 		JSONError(w, http.StatusInternalServerError, "Failed to get grant")
 		return
@@ -235,7 +216,6 @@ func (s *Server) handleListNamespaceGrants(w http.ResponseWriter, r *http.Reques
 			NamespaceID: grant.NamespaceID,
 			Allow:       grant.AllowBits.ToStrings(),
 			Deny:        grant.DenyBits.ToStrings(),
-			IsPrimary:   grant.IsPrimary,
 		})
 	}
 

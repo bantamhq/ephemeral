@@ -171,33 +171,49 @@ func (w *SetupWizard) createResources(createNamespace bool, namespaceName string
 		return result, nil
 	}
 
-	ns, err := w.store.GetNamespaceByName(namespaceName)
+	existing, err := w.store.GetNamespaceByName(namespaceName)
 	if err != nil {
 		return result, fmt.Errorf("check namespace: %w", err)
 	}
-
-	var namespaceID string
-	if ns == nil {
-		ns = &store.Namespace{
-			ID:        uuid.New().String(),
-			Name:      namespaceName,
-			CreatedAt: time.Now(),
-		}
-		if err := w.store.CreateNamespace(ns); err != nil {
-			return result, fmt.Errorf("create namespace: %w", err)
-		}
+	if existing != nil {
+		return result, fmt.Errorf("namespace %q already exists", namespaceName)
 	}
-	namespaceID = ns.ID
 
-	userName := "User Token"
-	defaultGrant := store.NamespaceGrant{
-		NamespaceID: namespaceID,
+	now := time.Now()
+
+	ns := &store.Namespace{
+		ID:        uuid.New().String(),
+		Name:      namespaceName,
+		CreatedAt: now,
+	}
+	if err := w.store.CreateNamespace(ns); err != nil {
+		return result, fmt.Errorf("create namespace: %w", err)
+	}
+
+	user := &store.User{
+		ID:                 uuid.New().String(),
+		PrimaryNamespaceID: ns.ID,
+		CreatedAt:          now,
+		UpdatedAt:          now,
+	}
+	if err := w.store.CreateUser(user); err != nil {
+		return result, fmt.Errorf("create user: %w", err)
+	}
+
+	grant := &store.NamespaceGrant{
+		UserID:      user.ID,
+		NamespaceID: ns.ID,
 		AllowBits:   store.DefaultNamespaceGrant(),
-		IsPrimary:   true,
+		CreatedAt:   now,
+		UpdatedAt:   now,
 	}
-	userToken, _, err := w.store.GenerateUserTokenWithGrants(&userName, nil, []store.NamespaceGrant{defaultGrant}, nil)
+	if err := w.store.UpsertNamespaceGrant(grant); err != nil {
+		return result, fmt.Errorf("create grant: %w", err)
+	}
+
+	userToken, _, err := w.store.GenerateUserToken(user.ID, nil)
 	if err != nil {
-		return result, fmt.Errorf("generate user token: %w", err)
+		return result, fmt.Errorf("create token: %w", err)
 	}
 
 	result.NamespaceName = namespaceName

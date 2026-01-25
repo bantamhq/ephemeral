@@ -84,35 +84,29 @@ func runServeNamespaceAdd(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("create namespace: %w", err)
 	}
 
-	// Find all non-admin tokens and grant access
-	tokens, err := st.ListTokens("", 100)
+	// Find all users and grant access
+	users, err := st.ListUsers("", 100)
 	if err != nil {
-		return fmt.Errorf("list tokens: %w", err)
+		return fmt.Errorf("list users: %w", err)
 	}
 
-	grantedCount := 0
-	for _, token := range tokens {
-		if token.IsAdmin {
-			continue
-		}
-
+	now := time.Now()
+	for _, user := range users {
 		grant := &store.NamespaceGrant{
-			TokenID:     token.ID,
+			UserID:      user.ID,
 			NamespaceID: ns.ID,
 			AllowBits:   store.DefaultNamespaceGrant(),
-			IsPrimary:   false,
-			CreatedAt:   time.Now(),
-			UpdatedAt:   time.Now(),
+			CreatedAt:   now,
+			UpdatedAt:   now,
 		}
 		if err := st.UpsertNamespaceGrant(grant); err != nil {
-			return fmt.Errorf("grant access to token %s: %w", token.ID, err)
+			return fmt.Errorf("grant access to user %s: %w", user.ID, err)
 		}
-		grantedCount++
 	}
 
 	fmt.Printf("Created namespace %q\n", name)
-	if grantedCount > 0 {
-		fmt.Printf("Granted access to %d user token(s)\n", grantedCount)
+	if len(users) > 0 {
+		fmt.Printf("Granted access to %d user(s)\n", len(users))
 	}
 
 	return nil

@@ -32,44 +32,53 @@ func (s *SQLiteStore) createSchema() error {
 		storage_limit_bytes INTEGER,  -- NULL = unlimited
 
 		-- For platform correlation (opaque to core)
-		external_id TEXT              -- e.g., platform user_id or org_id
+		external_id TEXT
 	);
 
-	-- Tokens are the only auth primitive
-	CREATE TABLE IF NOT EXISTS tokens (
+	-- Users own permissions; tokens are just auth credentials for users
+	CREATE TABLE IF NOT EXISTS users (
 		id TEXT PRIMARY KEY,
-		token_hash TEXT NOT NULL,          -- argon2id hash with embedded salt
-		token_lookup TEXT NOT NULL,        -- first 8 chars of ID for fast lookup (global, not per-namespace)
-		name TEXT,                         -- human-friendly label
-		is_admin BOOLEAN NOT NULL DEFAULT FALSE,  -- admin tokens only access /api/v1/admin/* routes
-
-		-- Lifecycle
+		primary_namespace_id TEXT NOT NULL UNIQUE REFERENCES namespaces(id) ON DELETE CASCADE,
 		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-		expires_at TIMESTAMP,            -- NULL = never
-		last_used_at TIMESTAMP
+		updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 	);
 
-	-- Namespace grants: permissions a token has for a namespace
-	CREATE TABLE IF NOT EXISTS token_namespace_grants (
-		token_id TEXT NOT NULL REFERENCES tokens(id) ON DELETE CASCADE,
+	-- Namespace grants: permissions a user has for a namespace
+	CREATE TABLE IF NOT EXISTS user_namespace_grants (
+		user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
 		namespace_id TEXT NOT NULL REFERENCES namespaces(id) ON DELETE CASCADE,
 		allow_bits INTEGER NOT NULL DEFAULT 0,
 		deny_bits INTEGER NOT NULL DEFAULT 0,
-		is_primary BOOLEAN NOT NULL DEFAULT FALSE,
 		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 		updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-		PRIMARY KEY (token_id, namespace_id)
+		PRIMARY KEY (user_id, namespace_id)
 	);
 
-	-- Repo grants: permissions a token has for a specific repo
-	CREATE TABLE IF NOT EXISTS token_repo_grants (
-		token_id TEXT NOT NULL REFERENCES tokens(id) ON DELETE CASCADE,
+	-- Repo grants: permissions a user has for a specific repo
+	CREATE TABLE IF NOT EXISTS user_repo_grants (
+		user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
 		repo_id TEXT NOT NULL REFERENCES repos(id) ON DELETE CASCADE,
 		allow_bits INTEGER NOT NULL DEFAULT 0,
 		deny_bits INTEGER NOT NULL DEFAULT 0,
 		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 		updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-		PRIMARY KEY (token_id, repo_id)
+		PRIMARY KEY (user_id, repo_id)
+	);
+
+	-- Tokens are auth credentials; non-admin tokens must belong to a user
+	CREATE TABLE IF NOT EXISTS tokens (
+		id TEXT PRIMARY KEY,
+		token_hash TEXT NOT NULL,          -- argon2id hash with embedded salt
+		token_lookup TEXT NOT NULL,        -- first 8 chars of ID for fast lookup
+		is_admin BOOLEAN NOT NULL DEFAULT FALSE,  -- admin tokens only access /api/v1/admin/* routes
+
+		-- User binding (required for non-admin tokens, NULL only for admin tokens)
+		user_id TEXT REFERENCES users(id) ON DELETE CASCADE,
+
+		-- Lifecycle
+		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		expires_at TIMESTAMP,            -- NULL = never
+		last_used_at TIMESTAMP
 	);
 
 	-- Folders for organizing repos (flat, no nesting)
@@ -121,12 +130,12 @@ func (s *SQLiteStore) createSchema() error {
 	-- Create indexes
 	CREATE INDEX IF NOT EXISTS idx_repos_namespace ON repos(namespace_id);
 	CREATE UNIQUE INDEX IF NOT EXISTS idx_tokens_lookup ON tokens(token_lookup);
+	CREATE INDEX IF NOT EXISTS idx_tokens_user ON tokens(user_id);
 	CREATE INDEX IF NOT EXISTS idx_folders_namespace ON folders(namespace_id);
 	CREATE INDEX IF NOT EXISTS idx_lfs_objects_repo ON lfs_objects(repo_id);
-
-	-- Ensure each token has at most one primary namespace
-	CREATE UNIQUE INDEX IF NOT EXISTS idx_token_primary_ns
-		ON token_namespace_grants(token_id) WHERE is_primary = TRUE;
+	CREATE INDEX IF NOT EXISTS idx_namespace_grants_user ON user_namespace_grants(user_id);
+	CREATE INDEX IF NOT EXISTS idx_repo_grants_user ON user_repo_grants(user_id);
+	CREATE INDEX IF NOT EXISTS idx_users_primary_namespace ON users(primary_namespace_id);
 	`
 
 	_, err := s.db.Exec(schema)
@@ -165,12 +174,10 @@ func (s *SQLiteStore) GenerateAdminToken() (string, error) {
 			return "", fmt.Errorf("hash token: %w", err)
 		}
 
-		name := "Admin Token"
 		token := &Token{
 			ID:          tokenID,
 			TokenHash:   tokenHash,
 			TokenLookup: tokenLookup,
-			Name:        &name,
 			IsAdmin:     true,
 			CreatedAt:   time.Now(),
 		}
@@ -198,76 +205,3 @@ func (s *SQLiteStore) HasAdminToken() (bool, error) {
 	return count > 0, nil
 }
 
-// GenerateUserTokenWithGrants creates a new user token with the specified namespace grants.
-// Returns both the raw token (for display) and the Token struct.
-// This creates the token and grants in a single transaction.
-func (s *SQLiteStore) GenerateUserTokenWithGrants(name *string, expiresAt *time.Time, namespaceGrants []NamespaceGrant, repoGrants []RepoGrant) (string, *Token, error) {
-	const tokenCreateAttempts = 5
-
-	for attempt := 0; attempt < tokenCreateAttempts; attempt++ {
-		tokenID := uuid.New().String()
-		tokenLookup := tokenID[:8]
-
-		secret, err := core.GenerateTokenSecret(24)
-		if err != nil {
-			return "", nil, fmt.Errorf("generate token secret: %w", err)
-		}
-
-		tokenValue := core.BuildToken(tokenLookup, secret)
-
-		tokenHash, err := core.HashToken(tokenValue)
-		if err != nil {
-			return "", nil, fmt.Errorf("hash token: %w", err)
-		}
-
-		now := time.Now()
-		token := &Token{
-			ID:          tokenID,
-			TokenHash:   tokenHash,
-			TokenLookup: tokenLookup,
-			Name:        name,
-			IsAdmin:     false,
-			CreatedAt:   now,
-			ExpiresAt:   expiresAt,
-		}
-
-		tx, err := s.db.Begin()
-		if err != nil {
-			return "", nil, fmt.Errorf("begin transaction: %w", err)
-		}
-		defer tx.Rollback()
-
-		if err := s.createTokenTx(tx, token); err != nil {
-			if errors.Is(err, ErrTokenLookupCollision) {
-				continue
-			}
-			return "", nil, fmt.Errorf("create user token: %w", err)
-		}
-
-		for _, grant := range namespaceGrants {
-			grant.TokenID = tokenID
-			grant.CreatedAt = now
-			grant.UpdatedAt = now
-			if err := s.upsertNamespaceGrantTx(tx, &grant); err != nil {
-				return "", nil, fmt.Errorf("create namespace grant: %w", err)
-			}
-		}
-
-		for _, grant := range repoGrants {
-			grant.TokenID = tokenID
-			grant.CreatedAt = now
-			grant.UpdatedAt = now
-			if err := s.upsertRepoGrantTx(tx, &grant); err != nil {
-				return "", nil, fmt.Errorf("create repo grant: %w", err)
-			}
-		}
-
-		if err := tx.Commit(); err != nil {
-			return "", nil, fmt.Errorf("commit transaction: %w", err)
-		}
-
-		return tokenValue, token, nil
-	}
-
-	return "", nil, fmt.Errorf("create user token: %w", ErrTokenLookupCollision)
-}

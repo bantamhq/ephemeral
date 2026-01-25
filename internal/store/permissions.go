@@ -154,13 +154,25 @@ func NewPermissionChecker(store Store) *PermissionChecker {
 }
 
 // CheckNamespacePermission checks if a token has the required permission for a namespace.
-// It evaluates namespace grants only, expanding allow bits but not deny bits.
+// For user-bound tokens, it checks user grants; for machine tokens, it checks token grants.
+// Expand allow bits but not deny bits.
 func (pc *PermissionChecker) CheckNamespacePermission(tokenID, namespaceID string, required Permission) (bool, error) {
-	grant, err := pc.store.GetNamespaceGrant(tokenID, namespaceID)
+	token, err := pc.store.GetTokenByID(tokenID)
 	if err != nil {
 		return false, err
 	}
+	if token == nil {
+		return false, nil
+	}
 
+	if token.UserID == nil {
+		return false, nil
+	}
+
+	grant, err := pc.store.GetNamespaceGrant(*token.UserID, namespaceID)
+	if err != nil {
+		return false, err
+	}
 	if grant == nil {
 		return false, nil
 	}
@@ -173,25 +185,36 @@ func (pc *PermissionChecker) CheckNamespacePermission(tokenID, namespaceID strin
 }
 
 // CheckRepoPermission checks if a token has the required permission for a repo.
-// It combines namespace grants and repo grants, expanding allow bits but not deny bits.
+// For user-bound tokens, it checks user grants; for machine tokens, it checks token grants.
+// Combines namespace and repo grants, expanding allow bits but not deny bits.
 func (pc *PermissionChecker) CheckRepoPermission(tokenID string, repo *Repo, required Permission) (bool, error) {
-	nsGrant, err := pc.store.GetNamespaceGrant(tokenID, repo.NamespaceID)
+	token, err := pc.store.GetTokenByID(tokenID)
 	if err != nil {
 		return false, err
 	}
+	if token == nil {
+		return false, nil
+	}
 
-	repoGrant, err := pc.store.GetRepoGrant(tokenID, repo.ID)
+	if token.UserID == nil {
+		return false, nil
+	}
+
+	var allowNS, denyNS, allowRepo, denyRepo Permission
+
+	nsGrant, err := pc.store.GetNamespaceGrant(*token.UserID, repo.NamespaceID)
 	if err != nil {
 		return false, err
 	}
-
-	var allowNS, denyNS Permission
 	if nsGrant != nil {
 		allowNS = ExpandImplied(nsGrant.AllowBits)
 		denyNS = nsGrant.DenyBits
 	}
 
-	var allowRepo, denyRepo Permission
+	repoGrant, err := pc.store.GetRepoGrant(*token.UserID, repo.ID)
+	if err != nil {
+		return false, err
+	}
 	if repoGrant != nil {
 		allowRepo = ExpandImplied(repoGrant.AllowBits)
 		denyRepo = repoGrant.DenyBits
@@ -206,13 +229,29 @@ func (pc *PermissionChecker) CheckRepoPermission(tokenID string, repo *Repo, req
 
 // HasAnyRepoGrants checks if a token has any repo grants in a namespace.
 func (pc *PermissionChecker) HasAnyRepoGrants(tokenID, namespaceID string) (bool, error) {
-	return pc.store.HasRepoGrantsInNamespace(tokenID, namespaceID)
+	token, err := pc.store.GetTokenByID(tokenID)
+	if err != nil {
+		return false, err
+	}
+	if token == nil || token.UserID == nil {
+		return false, nil
+	}
+
+	return pc.store.HasRepoGrantsInNamespace(*token.UserID, namespaceID)
 }
 
 // CanAccessNamespace checks if a token can access a namespace at all.
-// Returns true if the token has a namespace grant OR has any repo grants in the namespace.
+// Returns true if the user has a namespace grant OR has any repo grants in the namespace.
 func (pc *PermissionChecker) CanAccessNamespace(tokenID, namespaceID string) (bool, error) {
-	grant, err := pc.store.GetNamespaceGrant(tokenID, namespaceID)
+	token, err := pc.store.GetTokenByID(tokenID)
+	if err != nil {
+		return false, err
+	}
+	if token == nil || token.UserID == nil {
+		return false, nil
+	}
+
+	grant, err := pc.store.GetNamespaceGrant(*token.UserID, namespaceID)
 	if err != nil {
 		return false, err
 	}
@@ -220,5 +259,5 @@ func (pc *PermissionChecker) CanAccessNamespace(tokenID, namespaceID string) (bo
 		return true, nil
 	}
 
-	return pc.store.HasRepoGrantsInNamespace(tokenID, namespaceID)
+	return pc.store.HasRepoGrantsInNamespace(*token.UserID, namespaceID)
 }

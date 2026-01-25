@@ -7,8 +7,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	sqlite "modernc.org/sqlite"
 	sqlite3 "modernc.org/sqlite/lib"
+
+	"github.com/bantamhq/ephemeral/internal/core"
 )
 
 // SQLiteStore implements the Store interface using SQLite.
@@ -45,46 +48,16 @@ func (s *SQLiteStore) Close() error {
 // CreateToken creates a new token.
 func (s *SQLiteStore) CreateToken(token *Token) error {
 	query := `
-		INSERT INTO tokens (
-			id, token_hash, token_lookup, name, is_admin,
-			created_at, expires_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO tokens (id, token_hash, token_lookup, is_admin, user_id, created_at, expires_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
 	`
 
 	_, err := s.db.Exec(query,
 		token.ID,
 		token.TokenHash,
 		token.TokenLookup,
-		ToNullString(token.Name),
 		token.IsAdmin,
-		token.CreatedAt,
-		ToNullTime(token.ExpiresAt),
-	)
-
-	if err != nil {
-		if isTokenLookupCollision(err) {
-			return ErrTokenLookupCollision
-		}
-		return fmt.Errorf("insert token: %w", err)
-	}
-	return nil
-}
-
-// createTokenTx creates a token within a transaction.
-func (s *SQLiteStore) createTokenTx(tx *sql.Tx, token *Token) error {
-	query := `
-		INSERT INTO tokens (
-			id, token_hash, token_lookup, name, is_admin,
-			created_at, expires_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?)
-	`
-
-	_, err := tx.Exec(query,
-		token.ID,
-		token.TokenHash,
-		token.TokenLookup,
-		ToNullString(token.Name),
-		token.IsAdmin,
+		ToNullString(token.UserID),
 		token.CreatedAt,
 		ToNullTime(token.ExpiresAt),
 	)
@@ -110,7 +83,7 @@ func isTokenLookupCollision(err error) bool {
 // GetTokenByLookup retrieves a token by lookup key.
 func (s *SQLiteStore) GetTokenByLookup(lookup string) (*Token, error) {
 	query := `
-		SELECT id, token_hash, token_lookup, name, is_admin,
+		SELECT id, token_hash, token_lookup, is_admin, user_id,
 			   created_at, expires_at, last_used_at
 		FROM tokens
 		WHERE token_lookup = ?
@@ -400,7 +373,7 @@ func (s *SQLiteStore) DeleteNamespace(id string) error {
 // GetTokenByID retrieves a token by ID.
 func (s *SQLiteStore) GetTokenByID(id string) (*Token, error) {
 	query := `
-		SELECT id, token_hash, token_lookup, name, is_admin,
+		SELECT id, token_hash, token_lookup, is_admin, user_id,
 			   created_at, expires_at, last_used_at
 		FROM tokens
 		WHERE id = ?
@@ -410,15 +383,15 @@ func (s *SQLiteStore) GetTokenByID(id string) (*Token, error) {
 
 func (s *SQLiteStore) scanToken(row *sql.Row) (*Token, error) {
 	var token Token
-	var name sql.NullString
+	var userID sql.NullString
 	var expiresAt, lastUsedAt sql.NullTime
 
 	err := row.Scan(
 		&token.ID,
 		&token.TokenHash,
 		&token.TokenLookup,
-		&name,
 		&token.IsAdmin,
+		&userID,
 		&token.CreatedAt,
 		&expiresAt,
 		&lastUsedAt,
@@ -430,7 +403,7 @@ func (s *SQLiteStore) scanToken(row *sql.Row) (*Token, error) {
 		return nil, fmt.Errorf("scan token: %w", err)
 	}
 
-	token.Name = FromNullString(name)
+	token.UserID = FromNullString(userID)
 	token.ExpiresAt = FromNullTime(expiresAt)
 	token.LastUsedAt = FromNullTime(lastUsedAt)
 
@@ -440,7 +413,7 @@ func (s *SQLiteStore) scanToken(row *sql.Row) (*Token, error) {
 // ListTokens lists all tokens with cursor-based pagination.
 func (s *SQLiteStore) ListTokens(cursor string, limit int) ([]Token, error) {
 	query := `
-		SELECT id, token_hash, token_lookup, name, is_admin,
+		SELECT id, token_hash, token_lookup, is_admin, user_id,
 			   created_at, expires_at, last_used_at
 		FROM tokens
 		WHERE id > ?
@@ -457,15 +430,15 @@ func (s *SQLiteStore) ListTokens(cursor string, limit int) ([]Token, error) {
 	var tokens []Token
 	for rows.Next() {
 		var token Token
-		var name sql.NullString
+		var userID sql.NullString
 		var expiresAt, lastUsedAt sql.NullTime
 
 		if err := rows.Scan(
 			&token.ID,
 			&token.TokenHash,
 			&token.TokenLookup,
-			&name,
 			&token.IsAdmin,
+			&userID,
 			&token.CreatedAt,
 			&expiresAt,
 			&lastUsedAt,
@@ -473,7 +446,7 @@ func (s *SQLiteStore) ListTokens(cursor string, limit int) ([]Token, error) {
 			return nil, fmt.Errorf("scan token: %w", err)
 		}
 
-		token.Name = FromNullString(name)
+		token.UserID = FromNullString(userID)
 		token.ExpiresAt = FromNullTime(expiresAt)
 		token.LastUsedAt = FromNullTime(lastUsedAt)
 		tokens = append(tokens, token)
@@ -982,363 +955,6 @@ func (s *SQLiteStore) AddRepoFolders(repoID string, folderIDs []string) error {
 	return tx.Commit()
 }
 
-// UpsertNamespaceGrant creates or updates a namespace grant.
-func (s *SQLiteStore) UpsertNamespaceGrant(grant *NamespaceGrant) error {
-	tx, err := s.db.Begin()
-	if err != nil {
-		return fmt.Errorf("begin transaction: %w", err)
-	}
-	defer tx.Rollback()
-
-	if err := s.upsertNamespaceGrantTx(tx, grant); err != nil {
-		return err
-	}
-
-	return tx.Commit()
-}
-
-// upsertNamespaceGrantTx creates or updates a namespace grant within a transaction.
-func (s *SQLiteStore) upsertNamespaceGrantTx(tx *sql.Tx, grant *NamespaceGrant) error {
-	if grant.IsPrimary {
-		_, err := tx.Exec(
-			"UPDATE token_namespace_grants SET is_primary = FALSE, updated_at = ? WHERE token_id = ? AND is_primary = TRUE",
-			time.Now(), grant.TokenID,
-		)
-		if err != nil {
-			return fmt.Errorf("clear existing primary: %w", err)
-		}
-	}
-
-	query := `
-		INSERT INTO token_namespace_grants (token_id, namespace_id, allow_bits, deny_bits, is_primary, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT (token_id, namespace_id) DO UPDATE SET
-			allow_bits = excluded.allow_bits,
-			deny_bits = excluded.deny_bits,
-			is_primary = excluded.is_primary,
-			updated_at = excluded.updated_at
-	`
-
-	_, err := tx.Exec(query,
-		grant.TokenID,
-		grant.NamespaceID,
-		grant.AllowBits,
-		grant.DenyBits,
-		grant.IsPrimary,
-		grant.CreatedAt,
-		grant.UpdatedAt,
-	)
-	if err != nil {
-		return fmt.Errorf("upsert namespace grant: %w", err)
-	}
-
-	return nil
-}
-
-// DeleteNamespaceGrant removes a token's namespace grant.
-func (s *SQLiteStore) DeleteNamespaceGrant(tokenID, namespaceID string) error {
-	result, err := s.db.Exec(
-		"DELETE FROM token_namespace_grants WHERE token_id = ? AND namespace_id = ?",
-		tokenID, namespaceID,
-	)
-	if err != nil {
-		return fmt.Errorf("delete namespace grant: %w", err)
-	}
-
-	rows, err := result.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("get rows affected: %w", err)
-	}
-	if rows == 0 {
-		return sql.ErrNoRows
-	}
-
-	return nil
-}
-
-// GetNamespaceGrant retrieves a token's namespace grant.
-func (s *SQLiteStore) GetNamespaceGrant(tokenID, namespaceID string) (*NamespaceGrant, error) {
-	query := `
-		SELECT token_id, namespace_id, allow_bits, deny_bits, is_primary, created_at, updated_at
-		FROM token_namespace_grants
-		WHERE token_id = ? AND namespace_id = ?
-	`
-
-	var grant NamespaceGrant
-	err := s.db.QueryRow(query, tokenID, namespaceID).Scan(
-		&grant.TokenID,
-		&grant.NamespaceID,
-		&grant.AllowBits,
-		&grant.DenyBits,
-		&grant.IsPrimary,
-		&grant.CreatedAt,
-		&grant.UpdatedAt,
-	)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, fmt.Errorf("scan namespace grant: %w", err)
-	}
-
-	return &grant, nil
-}
-
-// ListTokenNamespaceGrants lists all namespace grants for a token, primary first.
-func (s *SQLiteStore) ListTokenNamespaceGrants(tokenID string) ([]NamespaceGrant, error) {
-	query := `
-		SELECT token_id, namespace_id, allow_bits, deny_bits, is_primary, created_at, updated_at
-		FROM token_namespace_grants
-		WHERE token_id = ?
-		ORDER BY is_primary DESC, namespace_id
-	`
-
-	rows, err := s.db.Query(query, tokenID)
-	if err != nil {
-		return nil, fmt.Errorf("query namespace grants: %w", err)
-	}
-	defer rows.Close()
-
-	var grants []NamespaceGrant
-	for rows.Next() {
-		var grant NamespaceGrant
-		if err := rows.Scan(
-			&grant.TokenID,
-			&grant.NamespaceID,
-			&grant.AllowBits,
-			&grant.DenyBits,
-			&grant.IsPrimary,
-			&grant.CreatedAt,
-			&grant.UpdatedAt,
-		); err != nil {
-			return nil, fmt.Errorf("scan namespace grant: %w", err)
-		}
-		grants = append(grants, grant)
-	}
-
-	return grants, rows.Err()
-}
-
-// GetTokenPrimaryNamespace returns the token's primary namespace.
-func (s *SQLiteStore) GetTokenPrimaryNamespace(tokenID string) (*Namespace, error) {
-	query := `
-		SELECT n.id, n.name, n.created_at, n.repo_limit, n.storage_limit_bytes, n.external_id
-		FROM token_namespace_grants g
-		JOIN namespaces n ON n.id = g.namespace_id
-		WHERE g.token_id = ? AND g.is_primary = TRUE
-	`
-
-	return s.scanNamespace(s.db.QueryRow(query, tokenID))
-}
-
-// CountNamespaceTokens returns the number of tokens with grants to a namespace.
-func (s *SQLiteStore) CountNamespaceTokens(namespaceID string) (int, error) {
-	var count int
-	err := s.db.QueryRow(
-		"SELECT COUNT(*) FROM token_namespace_grants WHERE namespace_id = ?",
-		namespaceID,
-	).Scan(&count)
-	if err != nil {
-		return 0, fmt.Errorf("count namespace tokens: %w", err)
-	}
-	return count, nil
-}
-
-// UpsertRepoGrant creates or updates a repo grant.
-func (s *SQLiteStore) UpsertRepoGrant(grant *RepoGrant) error {
-	query := `
-		INSERT INTO token_repo_grants (token_id, repo_id, allow_bits, deny_bits, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?)
-		ON CONFLICT (token_id, repo_id) DO UPDATE SET
-			allow_bits = excluded.allow_bits,
-			deny_bits = excluded.deny_bits,
-			updated_at = excluded.updated_at
-	`
-
-	_, err := s.db.Exec(query,
-		grant.TokenID,
-		grant.RepoID,
-		grant.AllowBits,
-		grant.DenyBits,
-		grant.CreatedAt,
-		grant.UpdatedAt,
-	)
-	if err != nil {
-		return fmt.Errorf("upsert repo grant: %w", err)
-	}
-
-	return nil
-}
-
-// upsertRepoGrantTx creates or updates a repo grant within a transaction.
-func (s *SQLiteStore) upsertRepoGrantTx(tx *sql.Tx, grant *RepoGrant) error {
-	query := `
-		INSERT INTO token_repo_grants (token_id, repo_id, allow_bits, deny_bits, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?)
-		ON CONFLICT (token_id, repo_id) DO UPDATE SET
-			allow_bits = excluded.allow_bits,
-			deny_bits = excluded.deny_bits,
-			updated_at = excluded.updated_at
-	`
-
-	_, err := tx.Exec(query,
-		grant.TokenID,
-		grant.RepoID,
-		grant.AllowBits,
-		grant.DenyBits,
-		grant.CreatedAt,
-		grant.UpdatedAt,
-	)
-	if err != nil {
-		return fmt.Errorf("upsert repo grant: %w", err)
-	}
-
-	return nil
-}
-
-// DeleteRepoGrant removes a token's repo grant.
-func (s *SQLiteStore) DeleteRepoGrant(tokenID, repoID string) error {
-	result, err := s.db.Exec(
-		"DELETE FROM token_repo_grants WHERE token_id = ? AND repo_id = ?",
-		tokenID, repoID,
-	)
-	if err != nil {
-		return fmt.Errorf("delete repo grant: %w", err)
-	}
-
-	rows, err := result.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("get rows affected: %w", err)
-	}
-	if rows == 0 {
-		return sql.ErrNoRows
-	}
-
-	return nil
-}
-
-// GetRepoGrant retrieves a token's repo grant.
-func (s *SQLiteStore) GetRepoGrant(tokenID, repoID string) (*RepoGrant, error) {
-	query := `
-		SELECT token_id, repo_id, allow_bits, deny_bits, created_at, updated_at
-		FROM token_repo_grants
-		WHERE token_id = ? AND repo_id = ?
-	`
-
-	var grant RepoGrant
-	err := s.db.QueryRow(query, tokenID, repoID).Scan(
-		&grant.TokenID,
-		&grant.RepoID,
-		&grant.AllowBits,
-		&grant.DenyBits,
-		&grant.CreatedAt,
-		&grant.UpdatedAt,
-	)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, fmt.Errorf("scan repo grant: %w", err)
-	}
-
-	return &grant, nil
-}
-
-// ListTokenRepoGrants lists all repo grants for a token.
-func (s *SQLiteStore) ListTokenRepoGrants(tokenID string) ([]RepoGrant, error) {
-	query := `
-		SELECT token_id, repo_id, allow_bits, deny_bits, created_at, updated_at
-		FROM token_repo_grants
-		WHERE token_id = ?
-		ORDER BY repo_id
-	`
-
-	rows, err := s.db.Query(query, tokenID)
-	if err != nil {
-		return nil, fmt.Errorf("query repo grants: %w", err)
-	}
-	defer rows.Close()
-
-	var grants []RepoGrant
-	for rows.Next() {
-		var grant RepoGrant
-		if err := rows.Scan(
-			&grant.TokenID,
-			&grant.RepoID,
-			&grant.AllowBits,
-			&grant.DenyBits,
-			&grant.CreatedAt,
-			&grant.UpdatedAt,
-		); err != nil {
-			return nil, fmt.Errorf("scan repo grant: %w", err)
-		}
-		grants = append(grants, grant)
-	}
-
-	return grants, rows.Err()
-}
-
-// ListReposWithGrants returns repos in a namespace that the token has repo grants for.
-func (s *SQLiteStore) ListReposWithGrants(tokenID, namespaceID string) ([]Repo, error) {
-	query := `
-		SELECT r.id, r.namespace_id, r.name, r.description, r.public,
-			   r.size_bytes, r.last_push_at, r.created_at, r.updated_at
-		FROM repos r
-		JOIN token_repo_grants g ON g.repo_id = r.id
-		WHERE g.token_id = ? AND r.namespace_id = ?
-		ORDER BY r.name
-	`
-
-	rows, err := s.db.Query(query, tokenID, namespaceID)
-	if err != nil {
-		return nil, fmt.Errorf("query repos with grants: %w", err)
-	}
-	defer rows.Close()
-
-	var repos []Repo
-	for rows.Next() {
-		var repo Repo
-		var description sql.NullString
-		var lastPushAt sql.NullTime
-
-		if err := rows.Scan(
-			&repo.ID,
-			&repo.NamespaceID,
-			&repo.Name,
-			&description,
-			&repo.Public,
-			&repo.SizeBytes,
-			&lastPushAt,
-			&repo.CreatedAt,
-			&repo.UpdatedAt,
-		); err != nil {
-			return nil, fmt.Errorf("scan repo: %w", err)
-		}
-
-		repo.Description = FromNullString(description)
-		repo.LastPushAt = FromNullTime(lastPushAt)
-		repos = append(repos, repo)
-	}
-
-	return repos, rows.Err()
-}
-
-// HasRepoGrantsInNamespace returns true if the token has any repo grants in the namespace.
-func (s *SQLiteStore) HasRepoGrantsInNamespace(tokenID, namespaceID string) (bool, error) {
-	query := `
-		SELECT COUNT(*) FROM token_repo_grants g
-		JOIN repos r ON r.id = g.repo_id
-		WHERE g.token_id = ? AND r.namespace_id = ?
-	`
-
-	var count int
-	err := s.db.QueryRow(query, tokenID, namespaceID).Scan(&count)
-	if err != nil {
-		return false, fmt.Errorf("check repo grants in namespace: %w", err)
-	}
-	return count > 0, nil
-}
-
 // CreateLFSObject creates a new LFS object record.
 func (s *SQLiteStore) CreateLFSObject(obj *LFSObject) error {
 	query := `
@@ -1431,4 +1047,569 @@ func (s *SQLiteStore) GetRepoLFSSize(repoID string) (int64, error) {
 		return 0, nil
 	}
 	return size.Int64, nil
+}
+
+// CreateUser creates a new user.
+func (s *SQLiteStore) CreateUser(user *User) error {
+	query := `
+		INSERT INTO users (id, primary_namespace_id, created_at, updated_at)
+		VALUES (?, ?, ?, ?)
+	`
+
+	_, err := s.db.Exec(query,
+		user.ID,
+		user.PrimaryNamespaceID,
+		user.CreatedAt,
+		user.UpdatedAt,
+	)
+	if err != nil {
+		return fmt.Errorf("insert user: %w", err)
+	}
+	return nil
+}
+
+func (s *SQLiteStore) scanUser(row *sql.Row) (*User, error) {
+	var user User
+
+	err := row.Scan(
+		&user.ID,
+		&user.PrimaryNamespaceID,
+		&user.CreatedAt,
+		&user.UpdatedAt,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("scan user: %w", err)
+	}
+
+	return &user, nil
+}
+
+// GetUser retrieves a user by ID.
+func (s *SQLiteStore) GetUser(id string) (*User, error) {
+	query := `
+		SELECT id, primary_namespace_id, created_at, updated_at
+		FROM users
+		WHERE id = ?
+	`
+	return s.scanUser(s.db.QueryRow(query, id))
+}
+
+// ListUsers lists all users with cursor-based pagination.
+func (s *SQLiteStore) ListUsers(cursor string, limit int) ([]User, error) {
+	query := `
+		SELECT id, primary_namespace_id, created_at, updated_at
+		FROM users
+		WHERE id > ?
+		ORDER BY id
+		LIMIT ?
+	`
+
+	rows, err := s.db.Query(query, cursor, limit)
+	if err != nil {
+		return nil, fmt.Errorf("query users: %w", err)
+	}
+	defer rows.Close()
+
+	var users []User
+	for rows.Next() {
+		var user User
+
+		if err := rows.Scan(
+			&user.ID,
+			&user.PrimaryNamespaceID,
+			&user.CreatedAt,
+			&user.UpdatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan user: %w", err)
+		}
+
+		users = append(users, user)
+	}
+
+	return users, rows.Err()
+}
+
+// UpdateUser updates an existing user.
+func (s *SQLiteStore) UpdateUser(user *User) error {
+	query := `
+		UPDATE users
+		SET primary_namespace_id = ?, updated_at = ?
+		WHERE id = ?
+	`
+
+	result, err := s.db.Exec(query,
+		user.PrimaryNamespaceID,
+		user.UpdatedAt,
+		user.ID,
+	)
+	if err != nil {
+		return fmt.Errorf("update user: %w", err)
+	}
+
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("get rows affected: %w", err)
+	}
+	if rows == 0 {
+		return sql.ErrNoRows
+	}
+
+	return nil
+}
+
+// DeleteUser deletes a user by ID.
+func (s *SQLiteStore) DeleteUser(id string) error {
+	result, err := s.db.Exec("DELETE FROM users WHERE id = ?", id)
+	if err != nil {
+		return fmt.Errorf("delete user: %w", err)
+	}
+
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("get rows affected: %w", err)
+	}
+	if rows == 0 {
+		return sql.ErrNoRows
+	}
+
+	return nil
+}
+
+// UpsertNamespaceGrant creates or updates a user namespace grant.
+func (s *SQLiteStore) UpsertNamespaceGrant(grant *NamespaceGrant) error {
+	query := `
+		INSERT INTO user_namespace_grants (user_id, namespace_id, allow_bits, deny_bits, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?)
+		ON CONFLICT (user_id, namespace_id) DO UPDATE SET
+			allow_bits = excluded.allow_bits,
+			deny_bits = excluded.deny_bits,
+			updated_at = excluded.updated_at
+	`
+
+	_, err := s.db.Exec(query,
+		grant.UserID,
+		grant.NamespaceID,
+		grant.AllowBits,
+		grant.DenyBits,
+		grant.CreatedAt,
+		grant.UpdatedAt,
+	)
+	if err != nil {
+		return fmt.Errorf("upsert namespace grant: %w", err)
+	}
+
+	return nil
+}
+
+// DeleteNamespaceGrant removes a user's namespace grant.
+func (s *SQLiteStore) DeleteNamespaceGrant(userID, namespaceID string) error {
+	result, err := s.db.Exec(
+		"DELETE FROM user_namespace_grants WHERE user_id = ? AND namespace_id = ?",
+		userID, namespaceID,
+	)
+	if err != nil {
+		return fmt.Errorf("delete namespace grant: %w", err)
+	}
+
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("get rows affected: %w", err)
+	}
+	if rows == 0 {
+		return sql.ErrNoRows
+	}
+
+	return nil
+}
+
+// GetNamespaceGrant retrieves a user's namespace grant.
+func (s *SQLiteStore) GetNamespaceGrant(userID, namespaceID string) (*NamespaceGrant, error) {
+	query := `
+		SELECT user_id, namespace_id, allow_bits, deny_bits, created_at, updated_at
+		FROM user_namespace_grants
+		WHERE user_id = ? AND namespace_id = ?
+	`
+
+	var grant NamespaceGrant
+	err := s.db.QueryRow(query, userID, namespaceID).Scan(
+		&grant.UserID,
+		&grant.NamespaceID,
+		&grant.AllowBits,
+		&grant.DenyBits,
+		&grant.CreatedAt,
+		&grant.UpdatedAt,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("scan namespace grant: %w", err)
+	}
+
+	return &grant, nil
+}
+
+// ListUserNamespaceGrants lists all namespace grants for a user.
+func (s *SQLiteStore) ListUserNamespaceGrants(userID string) ([]NamespaceGrant, error) {
+	query := `
+		SELECT user_id, namespace_id, allow_bits, deny_bits, created_at, updated_at
+		FROM user_namespace_grants
+		WHERE user_id = ?
+		ORDER BY namespace_id
+	`
+
+	rows, err := s.db.Query(query, userID)
+	if err != nil {
+		return nil, fmt.Errorf("query namespace grants: %w", err)
+	}
+	defer rows.Close()
+
+	var grants []NamespaceGrant
+	for rows.Next() {
+		var grant NamespaceGrant
+		if err := rows.Scan(
+			&grant.UserID,
+			&grant.NamespaceID,
+			&grant.AllowBits,
+			&grant.DenyBits,
+			&grant.CreatedAt,
+			&grant.UpdatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan namespace grant: %w", err)
+		}
+		grants = append(grants, grant)
+	}
+
+	return grants, rows.Err()
+}
+
+// CountNamespaceUsers counts the number of users with grants for a namespace.
+func (s *SQLiteStore) CountNamespaceUsers(namespaceID string) (int, error) {
+	query := `SELECT COUNT(*) FROM user_namespace_grants WHERE namespace_id = ?`
+	var count int
+	if err := s.db.QueryRow(query, namespaceID).Scan(&count); err != nil {
+		return 0, fmt.Errorf("count namespace users: %w", err)
+	}
+	return count, nil
+}
+
+// UpsertRepoGrant creates or updates a user repo grant.
+func (s *SQLiteStore) UpsertRepoGrant(grant *RepoGrant) error {
+	query := `
+		INSERT INTO user_repo_grants (user_id, repo_id, allow_bits, deny_bits, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?)
+		ON CONFLICT (user_id, repo_id) DO UPDATE SET
+			allow_bits = excluded.allow_bits,
+			deny_bits = excluded.deny_bits,
+			updated_at = excluded.updated_at
+	`
+
+	_, err := s.db.Exec(query,
+		grant.UserID,
+		grant.RepoID,
+		grant.AllowBits,
+		grant.DenyBits,
+		grant.CreatedAt,
+		grant.UpdatedAt,
+	)
+	if err != nil {
+		return fmt.Errorf("upsert repo grant: %w", err)
+	}
+
+	return nil
+}
+
+// DeleteRepoGrant removes a user's repo grant.
+func (s *SQLiteStore) DeleteRepoGrant(userID, repoID string) error {
+	result, err := s.db.Exec(
+		"DELETE FROM user_repo_grants WHERE user_id = ? AND repo_id = ?",
+		userID, repoID,
+	)
+	if err != nil {
+		return fmt.Errorf("delete repo grant: %w", err)
+	}
+
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("get rows affected: %w", err)
+	}
+	if rows == 0 {
+		return sql.ErrNoRows
+	}
+
+	return nil
+}
+
+// GetRepoGrant retrieves a user's repo grant.
+func (s *SQLiteStore) GetRepoGrant(userID, repoID string) (*RepoGrant, error) {
+	query := `
+		SELECT user_id, repo_id, allow_bits, deny_bits, created_at, updated_at
+		FROM user_repo_grants
+		WHERE user_id = ? AND repo_id = ?
+	`
+
+	var grant RepoGrant
+	err := s.db.QueryRow(query, userID, repoID).Scan(
+		&grant.UserID,
+		&grant.RepoID,
+		&grant.AllowBits,
+		&grant.DenyBits,
+		&grant.CreatedAt,
+		&grant.UpdatedAt,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("scan repo grant: %w", err)
+	}
+
+	return &grant, nil
+}
+
+// ListUserRepoGrants lists all repo grants for a user.
+func (s *SQLiteStore) ListUserRepoGrants(userID string) ([]RepoGrant, error) {
+	query := `
+		SELECT user_id, repo_id, allow_bits, deny_bits, created_at, updated_at
+		FROM user_repo_grants
+		WHERE user_id = ?
+		ORDER BY repo_id
+	`
+
+	rows, err := s.db.Query(query, userID)
+	if err != nil {
+		return nil, fmt.Errorf("query repo grants: %w", err)
+	}
+	defer rows.Close()
+
+	var grants []RepoGrant
+	for rows.Next() {
+		var grant RepoGrant
+		if err := rows.Scan(
+			&grant.UserID,
+			&grant.RepoID,
+			&grant.AllowBits,
+			&grant.DenyBits,
+			&grant.CreatedAt,
+			&grant.UpdatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan repo grant: %w", err)
+		}
+		grants = append(grants, grant)
+	}
+
+	return grants, rows.Err()
+}
+
+// ListUserReposWithGrants returns repos in a namespace that the user has repo grants for.
+func (s *SQLiteStore) ListUserReposWithGrants(userID, namespaceID string) ([]Repo, error) {
+	query := `
+		SELECT r.id, r.namespace_id, r.name, r.description, r.public,
+			   r.size_bytes, r.last_push_at, r.created_at, r.updated_at
+		FROM repos r
+		JOIN user_repo_grants g ON g.repo_id = r.id
+		WHERE g.user_id = ? AND r.namespace_id = ?
+		ORDER BY r.name
+	`
+
+	rows, err := s.db.Query(query, userID, namespaceID)
+	if err != nil {
+		return nil, fmt.Errorf("query repos with grants: %w", err)
+	}
+	defer rows.Close()
+
+	var repos []Repo
+	for rows.Next() {
+		var repo Repo
+		var description sql.NullString
+		var lastPushAt sql.NullTime
+
+		if err := rows.Scan(
+			&repo.ID,
+			&repo.NamespaceID,
+			&repo.Name,
+			&description,
+			&repo.Public,
+			&repo.SizeBytes,
+			&lastPushAt,
+			&repo.CreatedAt,
+			&repo.UpdatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan repo: %w", err)
+		}
+
+		repo.Description = FromNullString(description)
+		repo.LastPushAt = FromNullTime(lastPushAt)
+		repos = append(repos, repo)
+	}
+
+	return repos, rows.Err()
+}
+
+// HasRepoGrantsInNamespace returns true if the user has any repo grants in the namespace.
+func (s *SQLiteStore) HasRepoGrantsInNamespace(userID, namespaceID string) (bool, error) {
+	query := `
+		SELECT COUNT(*) FROM user_repo_grants g
+		JOIN repos r ON r.id = g.repo_id
+		WHERE g.user_id = ? AND r.namespace_id = ?
+	`
+
+	var count int
+	err := s.db.QueryRow(query, userID, namespaceID).Scan(&count)
+	if err != nil {
+		return false, fmt.Errorf("check repo grants in namespace: %w", err)
+	}
+	return count > 0, nil
+}
+
+// ListAllUserAccessibleRepos returns all repos the user can read across all namespaces.
+func (s *SQLiteStore) ListAllUserAccessibleRepos(userID string) ([]Repo, error) {
+	repoReadBits := int(PermRepoRead | PermRepoWrite | PermRepoAdmin)
+
+	query := `
+		SELECT DISTINCT r.id, r.namespace_id, r.name, r.description, r.public,
+			   r.size_bytes, r.last_push_at, r.created_at, r.updated_at
+		FROM repos r
+		JOIN user_namespace_grants ng ON ng.namespace_id = r.namespace_id
+		WHERE ng.user_id = ? AND (ng.allow_bits & ?) != 0 AND (ng.deny_bits & ?) = 0
+		UNION
+		SELECT DISTINCT r.id, r.namespace_id, r.name, r.description, r.public,
+			   r.size_bytes, r.last_push_at, r.created_at, r.updated_at
+		FROM repos r
+		JOIN user_repo_grants rg ON rg.repo_id = r.id
+		WHERE rg.user_id = ? AND (rg.allow_bits & ?) != 0 AND (rg.deny_bits & ?) = 0
+		ORDER BY namespace_id, name
+	`
+
+	rows, err := s.db.Query(query, userID, repoReadBits, repoReadBits, userID, repoReadBits, repoReadBits)
+	if err != nil {
+		return nil, fmt.Errorf("query accessible repos: %w", err)
+	}
+	defer rows.Close()
+
+	var repos []Repo
+	for rows.Next() {
+		var repo Repo
+		var description sql.NullString
+		var lastPushAt sql.NullTime
+
+		if err := rows.Scan(
+			&repo.ID,
+			&repo.NamespaceID,
+			&repo.Name,
+			&description,
+			&repo.Public,
+			&repo.SizeBytes,
+			&lastPushAt,
+			&repo.CreatedAt,
+			&repo.UpdatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan repo: %w", err)
+		}
+
+		repo.Description = FromNullString(description)
+		repo.LastPushAt = FromNullTime(lastPushAt)
+		repos = append(repos, repo)
+	}
+
+	return repos, rows.Err()
+}
+
+// ListUserTokens lists all tokens belonging to a user.
+func (s *SQLiteStore) ListUserTokens(userID string) ([]Token, error) {
+	query := `
+		SELECT id, token_hash, token_lookup, is_admin, user_id,
+			   created_at, expires_at, last_used_at
+		FROM tokens
+		WHERE user_id = ?
+		ORDER BY created_at DESC
+	`
+
+	rows, err := s.db.Query(query, userID)
+	if err != nil {
+		return nil, fmt.Errorf("query user tokens: %w", err)
+	}
+	defer rows.Close()
+
+	var tokens []Token
+	for rows.Next() {
+		var token Token
+		var userID sql.NullString
+		var expiresAt, lastUsedAt sql.NullTime
+
+		if err := rows.Scan(
+			&token.ID,
+			&token.TokenHash,
+			&token.TokenLookup,
+			&token.IsAdmin,
+			&userID,
+			&token.CreatedAt,
+			&expiresAt,
+			&lastUsedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan token: %w", err)
+		}
+
+		token.UserID = FromNullString(userID)
+		token.ExpiresAt = FromNullTime(expiresAt)
+		token.LastUsedAt = FromNullTime(lastUsedAt)
+		tokens = append(tokens, token)
+	}
+
+	return tokens, rows.Err()
+}
+
+// GenerateUserToken creates a new token bound to a user.
+func (s *SQLiteStore) GenerateUserToken(userID string, expiresAt *time.Time) (string, *Token, error) {
+	const maxAttempts = 5
+
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		rawToken, token, err := s.generateUserTokenAttempt(userID, expiresAt)
+		if err != nil {
+			if errors.Is(err, ErrTokenLookupCollision) {
+				continue
+			}
+			return "", nil, err
+		}
+		return rawToken, token, nil
+	}
+
+	return "", nil, fmt.Errorf("generate user token: %w", ErrTokenLookupCollision)
+}
+
+func (s *SQLiteStore) generateUserTokenAttempt(userID string, expiresAt *time.Time) (string, *Token, error) {
+	now := time.Now()
+	tokenID := uuid.New().String()
+	tokenLookup := tokenID[:8]
+
+	secret, err := core.GenerateTokenSecret(24)
+	if err != nil {
+		return "", nil, fmt.Errorf("generate token secret: %w", err)
+	}
+
+	rawToken := core.BuildToken(tokenLookup, secret)
+
+	tokenHash, err := core.HashToken(rawToken)
+	if err != nil {
+		return "", nil, fmt.Errorf("hash token: %w", err)
+	}
+
+	token := &Token{
+		ID:          tokenID,
+		TokenHash:   tokenHash,
+		TokenLookup: tokenLookup,
+		IsAdmin:     false,
+		UserID:      &userID,
+		CreatedAt:   now,
+		ExpiresAt:   expiresAt,
+	}
+
+	if err := s.CreateToken(token); err != nil {
+		return "", nil, err
+	}
+
+	return rawToken, token, nil
 }

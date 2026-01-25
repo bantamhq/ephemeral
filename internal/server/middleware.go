@@ -13,10 +13,7 @@ import (
 
 type contextKey string
 
-const (
-	tokenContextKey     contextKey = "token"
-	namespaceContextKey contextKey = "namespace"
-)
+const tokenContextKey contextKey = "token"
 
 // authError represents an authentication error with an associated HTTP status code.
 type authError struct {

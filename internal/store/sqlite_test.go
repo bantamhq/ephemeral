@@ -121,19 +121,18 @@ func TestStore_NamespaceLifecycle(t *testing.T) {
 		folder := createTestFolder(t, s, ns.ID, "cascade-folder", nil)
 		s.AddRepoFolder(repo.ID, folder.ID)
 
-		// Create token with namespace grant
-		token := createTestToken(t, s, "cascade-token", "cascade0", "hash", false)
+		// Create user with namespace grant
+		user := createTestUser(t, s, "cascade-user", ns.ID)
 		require.NoError(t, s.UpsertNamespaceGrant(&NamespaceGrant{
-			TokenID:     token.ID,
+			UserID:      user.ID,
 			NamespaceID: ns.ID,
 			AllowBits:   DefaultNamespaceGrant(),
-			IsPrimary:   true,
 			CreatedAt:   time.Now(),
 			UpdatedAt:   time.Now(),
 		}))
 
 		// Verify grant exists
-		grant, err := s.GetNamespaceGrant(token.ID, ns.ID)
+		grant, err := s.GetNamespaceGrant(user.ID, ns.ID)
 		require.NoError(t, err)
 		require.NotNil(t, grant)
 
@@ -146,7 +145,7 @@ func TestStore_NamespaceLifecycle(t *testing.T) {
 		r, _ := s.GetRepoByID(repo.ID)
 		assert.Nil(t, r, "repo should be cascade deleted")
 
-		g, _ := s.GetNamespaceGrant(token.ID, ns.ID)
+		g, _ := s.GetNamespaceGrant(user.ID, ns.ID)
 		assert.Nil(t, g, "grant should be cascade deleted")
 	})
 }
@@ -357,8 +356,10 @@ func TestStore_RepoFolderM2M(t *testing.T) {
 func TestStore_TokenLifecycle(t *testing.T) {
 	s := newTestStore(t)
 	ns := createTestNamespace(t, s, "ns-1")
+	user := createTestUser(t, s, "user-1", ns.ID)
 
 	var token *Token
+	userID := user.ID
 
 	t.Run("create user token", func(t *testing.T) {
 		token = &Token{
@@ -366,6 +367,7 @@ func TestStore_TokenLifecycle(t *testing.T) {
 			TokenHash:   "hash123",
 			TokenLookup: "lookup01",
 			IsAdmin:     false,
+			UserID:      &userID,
 			CreatedAt:   time.Now(),
 		}
 		require.NoError(t, s.CreateToken(token))
@@ -373,10 +375,9 @@ func TestStore_TokenLifecycle(t *testing.T) {
 
 	t.Run("upsert namespace grant", func(t *testing.T) {
 		require.NoError(t, s.UpsertNamespaceGrant(&NamespaceGrant{
-			TokenID:     token.ID,
+			UserID:      user.ID,
 			NamespaceID: ns.ID,
 			AllowBits:   DefaultNamespaceGrant(),
-			IsPrimary:   true,
 			CreatedAt:   time.Now(),
 			UpdatedAt:   time.Now(),
 		}))
@@ -394,6 +395,7 @@ func TestStore_TokenLifecycle(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, got)
 		assert.False(t, got.IsAdmin)
+		assert.Equal(t, user.ID, *got.UserID)
 	})
 
 	t.Run("list", func(t *testing.T) {
@@ -402,27 +404,19 @@ func TestStore_TokenLifecycle(t *testing.T) {
 		assert.Len(t, tokens, 1)
 	})
 
-	t.Run("list token namespace grants", func(t *testing.T) {
-		grants, err := s.ListTokenNamespaceGrants(token.ID)
+	t.Run("list user namespace grants", func(t *testing.T) {
+		grants, err := s.ListUserNamespaceGrants(user.ID)
 		require.NoError(t, err)
 		assert.Len(t, grants, 1)
-		assert.True(t, grants[0].IsPrimary)
 		assert.True(t, grants[0].AllowBits.Has(PermNamespaceWrite))
 	})
 
-	t.Run("get primary namespace", func(t *testing.T) {
-		primary, err := s.GetTokenPrimaryNamespace(token.ID)
-		require.NoError(t, err)
-		require.NotNil(t, primary)
-		assert.Equal(t, ns.ID, primary.ID)
-	})
-
 	t.Run("get namespace grant", func(t *testing.T) {
-		grant, err := s.GetNamespaceGrant(token.ID, ns.ID)
+		grant, err := s.GetNamespaceGrant(user.ID, ns.ID)
 		require.NoError(t, err)
 		require.NotNil(t, grant)
 
-		grant, err = s.GetNamespaceGrant(token.ID, "nonexistent")
+		grant, err = s.GetNamespaceGrant(user.ID, "nonexistent")
 		require.NoError(t, err)
 		assert.Nil(t, grant)
 	})
@@ -584,22 +578,18 @@ func TestStore_OptionalFields(t *testing.T) {
 
 	t.Run("token with expiry", func(t *testing.T) {
 		expiry := time.Now().Add(24 * time.Hour)
-		name := "test-token"
 		token := &Token{
 			ID:          "token-expiry",
 			TokenHash:   "hash-expiry",
 			TokenLookup: "token-ex",
 			IsAdmin:     false,
-			Name:        &name,
 			ExpiresAt:   &expiry,
 			CreatedAt:   time.Now(),
 		}
 		require.NoError(t, s.CreateToken(token))
 
 		got, _ := s.GetTokenByID("token-expiry")
-		require.NotNil(t, got.Name)
 		require.NotNil(t, got.ExpiresAt)
-		assert.Equal(t, "test-token", *got.Name)
 	})
 
 	t.Run("folder without color", func(t *testing.T) {
@@ -684,17 +674,26 @@ func TestPermission_ExpandImplied(t *testing.T) {
 func TestPermissionChecker_DenyBehavior(t *testing.T) {
 	s := newTestStore(t)
 	ns := createTestNamespace(t, s, "ns-deny")
-	token := createTestToken(t, s, "token-deny", "denytest", "hash", false)
+	user := createTestUser(t, s, "user-deny", ns.ID)
+	userID := user.ID
+	token := &Token{
+		ID:          "token-deny",
+		TokenHash:   "hash",
+		TokenLookup: "denytest",
+		IsAdmin:     false,
+		UserID:      &userID,
+		CreatedAt:   time.Now(),
+	}
+	require.NoError(t, s.CreateToken(token))
 
 	t.Run("deny blocks specific permission without expanding", func(t *testing.T) {
 		// Grant namespace:admin but deny namespace:admin specifically
 		// Deny should NOT expand, so namespace:write should still work
 		require.NoError(t, s.UpsertNamespaceGrant(&NamespaceGrant{
-			TokenID:     token.ID,
+			UserID:      user.ID,
 			NamespaceID: ns.ID,
 			AllowBits:   PermNamespaceAdmin,
 			DenyBits:    PermNamespaceAdmin,
-			IsPrimary:   true,
 			CreatedAt:   time.Now(),
 			UpdatedAt:   time.Now(),
 		}))
@@ -725,19 +724,30 @@ func TestPermissionChecker_RepoOnlyListing(t *testing.T) {
 	repo2 := createTestRepo(t, s, ns.ID, "repo2")
 	createTestRepo(t, s, ns.ID, "repo3") // no grant
 
-	token := createTestToken(t, s, "token-repo-only", "repoonly", "hash", false)
+	userNs := createTestNamespace(t, s, "ns-user-primary")
+	user := createTestUser(t, s, "user-repo-only", userNs.ID)
+	userID := user.ID
+	token := &Token{
+		ID:          "token-repo-only",
+		TokenHash:   "hash",
+		TokenLookup: "repoonly",
+		IsAdmin:     false,
+		UserID:      &userID,
+		CreatedAt:   time.Now(),
+	}
+	require.NoError(t, s.CreateToken(token))
 
 	t.Run("repo grants without namespace grant", func(t *testing.T) {
 		// Grant repo:read on repo1 and repo2, but no namespace grant
 		require.NoError(t, s.UpsertRepoGrant(&RepoGrant{
-			TokenID:   token.ID,
+			UserID:    user.ID,
 			RepoID:    repo1.ID,
 			AllowBits: PermRepoRead,
 			CreatedAt: time.Now(),
 			UpdatedAt: time.Now(),
 		}))
 		require.NoError(t, s.UpsertRepoGrant(&RepoGrant{
-			TokenID:   token.ID,
+			UserID:    user.ID,
 			RepoID:    repo2.ID,
 			AllowBits: PermRepoRead | PermRepoWrite,
 			CreatedAt: time.Now(),
@@ -766,7 +776,7 @@ func TestPermissionChecker_RepoOnlyListing(t *testing.T) {
 		assert.True(t, has, "should have repo:write on repo2")
 
 		// List repos with grants should return only granted repos
-		repos, err := s.ListReposWithGrants(token.ID, ns.ID)
+		repos, err := s.ListUserReposWithGrants(user.ID, ns.ID)
 		require.NoError(t, err)
 		assert.Len(t, repos, 2)
 
@@ -777,5 +787,260 @@ func TestPermissionChecker_RepoOnlyListing(t *testing.T) {
 		assert.Contains(t, names, "repo1")
 		assert.Contains(t, names, "repo2")
 		assert.NotContains(t, names, "repo3")
+	})
+}
+
+func createTestUser(t *testing.T, s *SQLiteStore, id string, primaryNamespaceID string) *User {
+	t.Helper()
+	user := &User{
+		ID:                 id,
+		PrimaryNamespaceID: primaryNamespaceID,
+		CreatedAt:          time.Now(),
+		UpdatedAt:          time.Now(),
+	}
+	require.NoError(t, s.CreateUser(user))
+	return user
+}
+
+func TestStore_UserLifecycle(t *testing.T) {
+	s := newTestStore(t)
+	ns := createTestNamespace(t, s, "ns-user-lifecycle")
+
+	t.Run("create", func(t *testing.T) {
+		createTestUser(t, s, "user-1", ns.ID)
+	})
+
+	t.Run("get by ID", func(t *testing.T) {
+		got, err := s.GetUser("user-1")
+		require.NoError(t, err)
+		require.NotNil(t, got)
+		assert.Equal(t, ns.ID, got.PrimaryNamespaceID)
+	})
+
+	t.Run("list", func(t *testing.T) {
+		users, err := s.ListUsers("", 10)
+		require.NoError(t, err)
+		assert.Len(t, users, 1)
+	})
+
+	t.Run("delete", func(t *testing.T) {
+		require.NoError(t, s.DeleteUser("user-1"))
+
+		got, err := s.GetUser("user-1")
+		require.NoError(t, err)
+		assert.Nil(t, got)
+	})
+}
+
+func TestStore_UserGrants(t *testing.T) {
+	s := newTestStore(t)
+	ns := createTestNamespace(t, s, "ns-1")
+	repo := createTestRepo(t, s, ns.ID, "test-repo")
+	user := createTestUser(t, s, "user-grants", ns.ID)
+
+	t.Run("namespace grant CRUD", func(t *testing.T) {
+		grant := &NamespaceGrant{
+			UserID:      user.ID,
+			NamespaceID: ns.ID,
+			AllowBits:   PermNamespaceWrite | PermRepoAdmin,
+			CreatedAt:   time.Now(),
+			UpdatedAt:   time.Now(),
+		}
+		require.NoError(t, s.UpsertNamespaceGrant(grant))
+
+		got, err := s.GetNamespaceGrant(user.ID, ns.ID)
+		require.NoError(t, err)
+		require.NotNil(t, got)
+		assert.True(t, got.AllowBits.Has(PermNamespaceWrite))
+
+		grants, err := s.ListUserNamespaceGrants(user.ID)
+		require.NoError(t, err)
+		assert.Len(t, grants, 1)
+
+		require.NoError(t, s.DeleteNamespaceGrant(user.ID, ns.ID))
+		got, _ = s.GetNamespaceGrant(user.ID, ns.ID)
+		assert.Nil(t, got)
+	})
+
+	t.Run("repo grant CRUD", func(t *testing.T) {
+		grant := &RepoGrant{
+			UserID:    user.ID,
+			RepoID:    repo.ID,
+			AllowBits: PermRepoRead | PermRepoWrite,
+			CreatedAt: time.Now(),
+			UpdatedAt: time.Now(),
+		}
+		require.NoError(t, s.UpsertRepoGrant(grant))
+
+		got, err := s.GetRepoGrant(user.ID, repo.ID)
+		require.NoError(t, err)
+		require.NotNil(t, got)
+		assert.True(t, got.AllowBits.Has(PermRepoWrite))
+
+		grants, err := s.ListUserRepoGrants(user.ID)
+		require.NoError(t, err)
+		assert.Len(t, grants, 1)
+
+		repos, err := s.ListUserReposWithGrants(user.ID, ns.ID)
+		require.NoError(t, err)
+		assert.Len(t, repos, 1)
+
+		has, err := s.HasRepoGrantsInNamespace(user.ID, ns.ID)
+		require.NoError(t, err)
+		assert.True(t, has)
+
+		require.NoError(t, s.DeleteRepoGrant(user.ID, repo.ID))
+		got, _ = s.GetRepoGrant(user.ID, repo.ID)
+		assert.Nil(t, got)
+	})
+}
+
+func TestStore_UserBoundTokens(t *testing.T) {
+	s := newTestStore(t)
+	ns := createTestNamespace(t, s, "ns-user-tokens")
+	user := createTestUser(t, s, "user-tokens", ns.ID)
+
+	t.Run("generate user bound token", func(t *testing.T) {
+		rawToken, token, err := s.GenerateUserToken(user.ID, nil)
+		require.NoError(t, err)
+		assert.NotEmpty(t, rawToken)
+		require.NotNil(t, token.UserID)
+		assert.Equal(t, user.ID, *token.UserID)
+	})
+
+	t.Run("list user tokens", func(t *testing.T) {
+		tokens, err := s.ListUserTokens(user.ID)
+		require.NoError(t, err)
+		assert.Len(t, tokens, 1)
+	})
+
+	t.Run("token with user_id", func(t *testing.T) {
+		userID := user.ID
+		token := &Token{
+			ID:          "token-with-user",
+			TokenHash:   "hash",
+			TokenLookup: "usertok1",
+			IsAdmin:     false,
+			UserID:      &userID,
+			CreatedAt:   time.Now(),
+		}
+		require.NoError(t, s.CreateToken(token))
+
+		got, err := s.GetTokenByID("token-with-user")
+		require.NoError(t, err)
+		require.NotNil(t, got.UserID)
+		assert.Equal(t, user.ID, *got.UserID)
+	})
+}
+
+func TestPermissionChecker_UserBoundTokenPermissions(t *testing.T) {
+	s := newTestStore(t)
+	ns := createTestNamespace(t, s, "ns-user-perms")
+	repo := createTestRepo(t, s, ns.ID, "test-repo")
+	user := createTestUser(t, s, "user-perms", ns.ID)
+
+	userID := user.ID
+	token := &Token{
+		ID:          "user-bound-token",
+		TokenHash:   "hash",
+		TokenLookup: "userbndt",
+		IsAdmin:     false,
+		UserID:      &userID,
+		CreatedAt:   time.Now(),
+	}
+	require.NoError(t, s.CreateToken(token))
+
+	t.Run("user namespace grant gives token access", func(t *testing.T) {
+		require.NoError(t, s.UpsertNamespaceGrant(&NamespaceGrant{
+			UserID:      user.ID,
+			NamespaceID: ns.ID,
+			AllowBits:   PermNamespaceWrite | PermRepoAdmin,
+			CreatedAt:   time.Now(),
+			UpdatedAt:   time.Now(),
+		}))
+
+		checker := NewPermissionChecker(s)
+
+		has, err := checker.CheckNamespacePermission(token.ID, ns.ID, PermNamespaceRead)
+		require.NoError(t, err)
+		assert.True(t, has, "user-bound token should inherit user's namespace:read via write")
+
+		has, err = checker.CheckNamespacePermission(token.ID, ns.ID, PermNamespaceWrite)
+		require.NoError(t, err)
+		assert.True(t, has, "user-bound token should inherit user's namespace:write")
+
+		has, err = checker.CheckRepoPermission(token.ID, repo, PermRepoAdmin)
+		require.NoError(t, err)
+		assert.True(t, has, "user-bound token should inherit user's repo:admin")
+	})
+
+	t.Run("user repo grant gives token access", func(t *testing.T) {
+		require.NoError(t, s.DeleteNamespaceGrant(user.ID, ns.ID))
+
+		require.NoError(t, s.UpsertRepoGrant(&RepoGrant{
+			UserID:    user.ID,
+			RepoID:    repo.ID,
+			AllowBits: PermRepoRead,
+			CreatedAt: time.Now(),
+			UpdatedAt: time.Now(),
+		}))
+
+		checker := NewPermissionChecker(s)
+
+		has, err := checker.CheckRepoPermission(token.ID, repo, PermRepoRead)
+		require.NoError(t, err)
+		assert.True(t, has, "user-bound token should inherit user's repo:read")
+
+		has, err = checker.CheckRepoPermission(token.ID, repo, PermRepoWrite)
+		require.NoError(t, err)
+		assert.False(t, has, "user-bound token should not have repo:write without grant")
+	})
+
+	t.Run("can access namespace via user grants", func(t *testing.T) {
+		checker := NewPermissionChecker(s)
+
+		canAccess, err := checker.CanAccessNamespace(token.ID, ns.ID)
+		require.NoError(t, err)
+		assert.True(t, canAccess, "user-bound token should access namespace via user repo grants")
+	})
+}
+
+func TestStore_UserCascadeDelete(t *testing.T) {
+	s := newTestStore(t)
+	userNs := createTestNamespace(t, s, "ns-user-cascade-primary")
+	ns := createTestNamespace(t, s, "ns-cascade")
+	repo := createTestRepo(t, s, ns.ID, "test-repo")
+	user := createTestUser(t, s, "user-cascade", userNs.ID)
+
+	require.NoError(t, s.UpsertNamespaceGrant(&NamespaceGrant{
+		UserID:      user.ID,
+		NamespaceID: ns.ID,
+		AllowBits:   PermNamespaceWrite,
+		CreatedAt:   time.Now(),
+		UpdatedAt:   time.Now(),
+	}))
+
+	require.NoError(t, s.UpsertRepoGrant(&RepoGrant{
+		UserID:    user.ID,
+		RepoID:    repo.ID,
+		AllowBits: PermRepoRead,
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}))
+
+	_, token, err := s.GenerateUserToken(user.ID, nil)
+	require.NoError(t, err)
+
+	t.Run("deleting user cascades grants and tokens", func(t *testing.T) {
+		require.NoError(t, s.DeleteUser(user.ID))
+
+		got, _ := s.GetNamespaceGrant(user.ID, ns.ID)
+		assert.Nil(t, got, "user namespace grant should be deleted")
+
+		repoGrant, _ := s.GetRepoGrant(user.ID, repo.ID)
+		assert.Nil(t, repoGrant, "user repo grant should be deleted")
+
+		tokenGot, _ := s.GetTokenByID(token.ID)
+		assert.Nil(t, tokenGot, "user-bound token should be deleted")
 	})
 }

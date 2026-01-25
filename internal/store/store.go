@@ -5,7 +5,6 @@ import (
 	"time"
 )
 
-
 // Store defines the database interface.
 type Store interface {
 	Initialize() error
@@ -17,24 +16,34 @@ type Store interface {
 	ListTokens(cursor string, limit int) ([]Token, error)
 	DeleteToken(id string) error
 	GenerateAdminToken() (string, error)
-	GenerateUserTokenWithGrants(name *string, expiresAt *time.Time, namespaceGrants []NamespaceGrant, repoGrants []RepoGrant) (string, *Token, error)
 	HasAdminToken() (bool, error)
 
-	// Namespace grant operations
-	UpsertNamespaceGrant(grant *NamespaceGrant) error
-	DeleteNamespaceGrant(tokenID, namespaceID string) error
-	GetNamespaceGrant(tokenID, namespaceID string) (*NamespaceGrant, error)
-	ListTokenNamespaceGrants(tokenID string) ([]NamespaceGrant, error)
-	GetTokenPrimaryNamespace(tokenID string) (*Namespace, error)
-	CountNamespaceTokens(namespaceID string) (int, error)
+	// User operations
+	CreateUser(user *User) error
+	GetUser(id string) (*User, error)
+	ListUsers(cursor string, limit int) ([]User, error)
+	UpdateUser(user *User) error
+	DeleteUser(id string) error
 
-	// Repo grant operations
+	// User token operations
+	ListUserTokens(userID string) ([]Token, error)
+	GenerateUserToken(userID string, expiresAt *time.Time) (rawToken string, token *Token, err error)
+
+	// Namespace grant operations (user-level)
+	UpsertNamespaceGrant(grant *NamespaceGrant) error
+	DeleteNamespaceGrant(userID, namespaceID string) error
+	GetNamespaceGrant(userID, namespaceID string) (*NamespaceGrant, error)
+	ListUserNamespaceGrants(userID string) ([]NamespaceGrant, error)
+	CountNamespaceUsers(namespaceID string) (int, error)
+
+	// Repo grant operations (user-level)
 	UpsertRepoGrant(grant *RepoGrant) error
-	DeleteRepoGrant(tokenID, repoID string) error
-	GetRepoGrant(tokenID, repoID string) (*RepoGrant, error)
-	ListTokenRepoGrants(tokenID string) ([]RepoGrant, error)
-	ListReposWithGrants(tokenID, namespaceID string) ([]Repo, error)
-	HasRepoGrantsInNamespace(tokenID, namespaceID string) (bool, error)
+	DeleteRepoGrant(userID, repoID string) error
+	GetRepoGrant(userID, repoID string) (*RepoGrant, error)
+	ListUserRepoGrants(userID string) ([]RepoGrant, error)
+	ListUserReposWithGrants(userID, namespaceID string) ([]Repo, error)
+	ListAllUserAccessibleRepos(userID string) ([]Repo, error)
+	HasRepoGrantsInNamespace(userID, namespaceID string) (bool, error)
 
 	// Repo operations
 	CreateRepo(repo *Repo) error
@@ -83,39 +92,46 @@ type Store interface {
 }
 
 type Namespace struct {
-	ID                string     `json:"id"`
-	Name              string     `json:"name"`
-	CreatedAt         time.Time  `json:"created_at"`
-	RepoLimit         *int       `json:"repo_limit,omitempty"`
-	StorageLimitBytes *int       `json:"storage_limit_bytes,omitempty"`
-	ExternalID        *string    `json:"external_id,omitempty"`
+	ID                string    `json:"id"`
+	Name              string    `json:"name"`
+	CreatedAt         time.Time `json:"created_at"`
+	RepoLimit         *int      `json:"repo_limit,omitempty"`
+	StorageLimitBytes *int      `json:"storage_limit_bytes,omitempty"`
+	ExternalID        *string   `json:"external_id,omitempty"`
 }
 
 type Token struct {
 	ID          string     `json:"id"`
 	TokenHash   string     `json:"-"`
 	TokenLookup string     `json:"-"`
-	Name        *string    `json:"name,omitempty"`
 	IsAdmin     bool       `json:"is_admin"`
+	UserID      *string    `json:"user_id,omitempty"`
 	CreatedAt   time.Time  `json:"created_at"`
 	ExpiresAt   *time.Time `json:"expires_at,omitempty"`
 	LastUsedAt  *time.Time `json:"last_used_at,omitempty"`
 }
 
-// NamespaceGrant represents permissions granted to a token for a namespace.
+// User represents a user that can have multiple tokens sharing permissions.
+type User struct {
+	ID                 string    `json:"id"`
+	PrimaryNamespaceID string    `json:"primary_namespace_id"`
+	CreatedAt          time.Time `json:"created_at"`
+	UpdatedAt          time.Time `json:"updated_at"`
+}
+
+// NamespaceGrant represents permissions granted to a user for a namespace.
 type NamespaceGrant struct {
-	TokenID     string     `json:"token_id"`
+	UserID      string     `json:"user_id"`
 	NamespaceID string     `json:"namespace_id"`
 	AllowBits   Permission `json:"allow_bits"`
 	DenyBits    Permission `json:"deny_bits"`
-	IsPrimary   bool       `json:"is_primary"`
 	CreatedAt   time.Time  `json:"created_at"`
 	UpdatedAt   time.Time  `json:"updated_at"`
 }
 
-// RepoGrant represents permissions granted to a token for a specific repo.
+// RepoGrant represents permissions granted to a user for a specific repo.
 type RepoGrant struct {
-	TokenID   string     `json:"token_id"`
+	UserID    string     `json:"user_id"`
 	RepoID    string     `json:"repo_id"`
 	AllowBits Permission `json:"allow_bits"`
 	DenyBits  Permission `json:"deny_bits"`
