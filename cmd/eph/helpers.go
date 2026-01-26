@@ -92,6 +92,19 @@ func unconfigureGitHelper(serverURL string) error {
 
 var errNotLoggedIn = fmt.Errorf("not logged in - run 'eph login' to authenticate")
 
+func isConnectionError(err error) bool {
+	if err == nil {
+		return false
+	}
+	errStr := err.Error()
+	return strings.Contains(errStr, "connection refused") ||
+		strings.Contains(errStr, "no such host") ||
+		strings.Contains(errStr, "timeout") ||
+		strings.Contains(errStr, "deadline exceeded") ||
+		strings.Contains(errStr, "network is unreachable") ||
+		strings.Contains(errStr, "no route to host")
+}
+
 func formatAPIError(context string, err error) error {
 	errStr := err.Error()
 

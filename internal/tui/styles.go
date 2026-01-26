@@ -67,6 +67,11 @@ type FooterStyles struct {
 	StatusMessage lipgloss.Style
 }
 
+type ErrorStyles struct {
+	Box   lipgloss.Style
+	Title lipgloss.Style
+}
+
 type CommonStyles struct {
 	Header   lipgloss.Style
 	MetaText lipgloss.Style
@@ -80,6 +85,7 @@ type StyleConfig struct {
 	Detail DetailStyles
 	Dialog DialogStyles
 	Help   HelpStyles
+	Error  ErrorStyles
 	Picker PickerStyles
 	Commit CommitStyles
 	Tree   TreeStyles
@@ -174,6 +180,16 @@ func NewStyles() *StyleConfig {
 				Padding(1, 2),
 			Title: lipgloss.NewStyle().
 				Foreground(colors.Primary).
+				Bold(true),
+		},
+
+		Error: ErrorStyles{
+			Box: lipgloss.NewStyle().
+				Border(lipgloss.RoundedBorder()).
+				BorderForeground(colors.Critical).
+				Padding(1, 2),
+			Title: lipgloss.NewStyle().
+				Foreground(colors.Critical).
 				Bold(true),
 		},
 

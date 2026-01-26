@@ -72,6 +72,9 @@ func runLogin(cmd *cobra.Command, args []string) error {
 
 	authConfig, err := fetchAuthConfig(serverURL)
 	if err != nil {
+		if isConnectionError(err) {
+			return fmt.Errorf("could not connect to Ephemeral server at %s", serverURL)
+		}
 		return loginWithToken(serverURL)
 	}
 

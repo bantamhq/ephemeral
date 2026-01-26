@@ -56,7 +56,8 @@ func (m Model) mainContentView(height int) string {
 	}
 
 	if m.err != nil {
-		return lipgloss.NewStyle().Height(height).Padding(0, 1).Render(m.errorView())
+		background := lipgloss.NewStyle().Width(m.width).Height(height).Render("")
+		return overlay.Composite(m.errorView(), background, overlay.Center, overlay.Center, 0, 0)
 	}
 
 	layout := m.layoutSizes()
@@ -354,7 +355,21 @@ func (m Model) loadingView() string {
 }
 
 func (m Model) errorView() string {
-	return Styles.Common.Error.Render(fmt.Sprintf("\n  Error: %v\n", m.err))
+	title, message := friendlyError(m.err)
+
+	width := errorDialogWidth
+	if m.width > 0 && m.width < width+4 {
+		width = max(m.width-4, 20)
+	}
+
+	var content strings.Builder
+	content.WriteString(Styles.Error.Title.Render(title))
+	content.WriteString("\n\n")
+	content.WriteString(message)
+	content.WriteString("\n\n")
+	content.WriteString(Styles.Dialog.Hint.Render("q quit"))
+
+	return Styles.Error.Box.Width(width).Render(content.String())
 }
 
 func (m Model) footerView() string {

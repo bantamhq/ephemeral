@@ -38,6 +38,7 @@ const (
 
 	dialogWidth          = 40
 	dialogInputWidth     = 30
+	errorDialogWidth     = 45
 	helpDialogMinWidth   = 40
 	helpDialogMaxWidth   = 80
 	folderPickerWidth    = 40

@@ -136,3 +136,29 @@ func (m Model) rightAlignInWidth(left, right string, width int) string {
 	}
 	return left + strings.Repeat(" ", gap) + right
 }
+
+func friendlyError(err error) (title, message string) {
+	if err == nil {
+		return "Error", "An unknown error occurred"
+	}
+
+	errStr := err.Error()
+
+	if strings.Contains(errStr, "connection refused") {
+		return "Connection Failed", "Could not connect to the server."
+	}
+
+	if strings.Contains(errStr, "no such host") {
+		return "Server Not Found", "Could not find the server.\nCheck your server configuration."
+	}
+
+	if strings.Contains(errStr, "timeout") || strings.Contains(errStr, "deadline exceeded") {
+		return "Connection Timeout", "The server took too long to respond.\nPlease try again."
+	}
+
+	if strings.Contains(errStr, "certificate") || strings.Contains(errStr, "x509") {
+		return "Certificate Error", "Could not verify the server's certificate.\nCheck your server configuration."
+	}
+
+	return "Error", errStr
+}
