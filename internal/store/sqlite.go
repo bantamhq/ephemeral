@@ -1096,6 +1096,17 @@ func (s *SQLiteStore) GetUser(id string) (*User, error) {
 	return s.scanUser(s.db.QueryRow(query, id))
 }
 
+// GetUserByPrimaryNamespaceID retrieves a user by their primary namespace ID.
+// Returns nil if no user has this namespace as their primary.
+func (s *SQLiteStore) GetUserByPrimaryNamespaceID(namespaceID string) (*User, error) {
+	query := `
+		SELECT id, primary_namespace_id, created_at, updated_at
+		FROM users
+		WHERE primary_namespace_id = ?
+	`
+	return s.scanUser(s.db.QueryRow(query, namespaceID))
+}
+
 // ListUsers lists all users with cursor-based pagination.
 func (s *SQLiteStore) ListUsers(cursor string, limit int) ([]User, error) {
 	query := `
@@ -1179,6 +1190,14 @@ func (s *SQLiteStore) DeleteUser(id string) error {
 
 // UpsertNamespaceGrant creates or updates a user namespace grant.
 func (s *SQLiteStore) UpsertNamespaceGrant(grant *NamespaceGrant) error {
+	owner, err := s.GetUserByPrimaryNamespaceID(grant.NamespaceID)
+	if err != nil {
+		return fmt.Errorf("check namespace owner: %w", err)
+	}
+	if owner != nil && owner.ID != grant.UserID {
+		return ErrPrimaryNamespaceGrant
+	}
+
 	query := `
 		INSERT INTO user_namespace_grants (user_id, namespace_id, allow_bits, deny_bits, created_at, updated_at)
 		VALUES (?, ?, ?, ?, ?, ?)
@@ -1188,7 +1207,7 @@ func (s *SQLiteStore) UpsertNamespaceGrant(grant *NamespaceGrant) error {
 			updated_at = excluded.updated_at
 	`
 
-	_, err := s.db.Exec(query,
+	_, err = s.db.Exec(query,
 		grant.UserID,
 		grant.NamespaceID,
 		grant.AllowBits,

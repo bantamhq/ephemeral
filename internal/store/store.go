@@ -21,6 +21,7 @@ type Store interface {
 	// User operations
 	CreateUser(user *User) error
 	GetUser(id string) (*User, error)
+	GetUserByPrimaryNamespaceID(namespaceID string) (*User, error)
 	ListUsers(cursor string, limit int) ([]User, error)
 	UpdateUser(user *User) error
 	DeleteUser(id string) error

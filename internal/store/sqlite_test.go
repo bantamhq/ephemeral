@@ -895,6 +895,75 @@ func TestStore_UserGrants(t *testing.T) {
 	})
 }
 
+func TestStore_PrimaryNamespaceGrantProtection(t *testing.T) {
+	s := newTestStore(t)
+
+	ns1 := createTestNamespace(t, s, "user1-ns")
+	user1 := createTestUser(t, s, "user1", ns1.ID)
+
+	ns2 := createTestNamespace(t, s, "user2-ns")
+	user2 := createTestUser(t, s, "user2", ns2.ID)
+
+	sharedNs := createTestNamespace(t, s, "shared-ns")
+
+	t.Run("owner can grant themselves access to their primary namespace", func(t *testing.T) {
+		grant := &NamespaceGrant{
+			UserID:      user1.ID,
+			NamespaceID: ns1.ID,
+			AllowBits:   PermNamespaceWrite | PermRepoAdmin,
+			CreatedAt:   time.Now(),
+			UpdatedAt:   time.Now(),
+		}
+		err := s.UpsertNamespaceGrant(grant)
+		require.NoError(t, err)
+	})
+
+	t.Run("cannot grant other user access to primary namespace", func(t *testing.T) {
+		grant := &NamespaceGrant{
+			UserID:      user2.ID,
+			NamespaceID: ns1.ID,
+			AllowBits:   PermNamespaceWrite | PermRepoAdmin,
+			CreatedAt:   time.Now(),
+			UpdatedAt:   time.Now(),
+		}
+		err := s.UpsertNamespaceGrant(grant)
+		require.ErrorIs(t, err, ErrPrimaryNamespaceGrant)
+	})
+
+	t.Run("can grant any user access to non-primary namespace", func(t *testing.T) {
+		grant1 := &NamespaceGrant{
+			UserID:      user1.ID,
+			NamespaceID: sharedNs.ID,
+			AllowBits:   PermNamespaceWrite | PermRepoAdmin,
+			CreatedAt:   time.Now(),
+			UpdatedAt:   time.Now(),
+		}
+		require.NoError(t, s.UpsertNamespaceGrant(grant1))
+
+		grant2 := &NamespaceGrant{
+			UserID:      user2.ID,
+			NamespaceID: sharedNs.ID,
+			AllowBits:   PermNamespaceWrite | PermRepoAdmin,
+			CreatedAt:   time.Now(),
+			UpdatedAt:   time.Now(),
+		}
+		require.NoError(t, s.UpsertNamespaceGrant(grant2))
+	})
+
+	t.Run("GetUserByPrimaryNamespaceID returns correct user", func(t *testing.T) {
+		owner, err := s.GetUserByPrimaryNamespaceID(ns1.ID)
+		require.NoError(t, err)
+		require.NotNil(t, owner)
+		assert.Equal(t, user1.ID, owner.ID)
+	})
+
+	t.Run("GetUserByPrimaryNamespaceID returns nil for non-primary namespace", func(t *testing.T) {
+		owner, err := s.GetUserByPrimaryNamespaceID(sharedNs.ID)
+		require.NoError(t, err)
+		assert.Nil(t, owner)
+	})
+}
+
 func TestStore_UserBoundTokens(t *testing.T) {
 	s := newTestStore(t)
 	ns := createTestNamespace(t, s, "ns-user-tokens")
