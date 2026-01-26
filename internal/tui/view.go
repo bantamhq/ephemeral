@@ -590,6 +590,10 @@ func (m Model) getDetailsContent(width int) string {
 }
 
 func (m Model) getReadmeContent(width int) string {
+	if m.detailLoading {
+		return " " + Styles.Common.MetaText.Render("Loading...")
+	}
+
 	if m.currentDetail == nil || m.currentDetail.Readme == nil {
 		return " " + Styles.Common.MetaText.Render("No README found")
 	}
@@ -598,6 +602,10 @@ func (m Model) getReadmeContent(width int) string {
 }
 
 func (m Model) getActivityContent(width int) string {
+	if m.detailLoading {
+		return " " + Styles.Common.MetaText.Render("Loading...")
+	}
+
 	if m.currentDetail == nil || len(m.currentDetail.Commits) == 0 {
 		return " " + Styles.Common.MetaText.Render("No commits")
 	}
