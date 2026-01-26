@@ -68,9 +68,36 @@ func runLogin(cmd *cobra.Command, args []string) error {
 		serverURL = "http://" + serverURL
 	}
 
-	fmt.Printf("Connecting to %s...\n", serverURL)
+	var authConfig *authConfigResponse
+	var sessionID string
+	var targetServer string
 
-	authConfig, err := fetchAuthConfig(serverURL)
+	err := runSpinner(
+		"Connecting to "+serverURL+"...",
+		"Connected to "+serverURL,
+		func() error {
+			var fetchErr error
+			authConfig, fetchErr = fetchAuthConfig(serverURL)
+			if fetchErr != nil {
+				return fetchErr
+			}
+
+			targetServer = serverURL
+			if authConfig.ServerURL != "" {
+				targetServer = authConfig.ServerURL
+				if !strings.HasPrefix(targetServer, "http://") && !strings.HasPrefix(targetServer, "https://") {
+					targetServer = "https://" + targetServer
+				}
+			}
+
+			if authConfig.AuthMethod == "web" && authConfig.AuthEndpoint != "" {
+				sessionID, fetchErr = createAuthSession(serverURL)
+				return fetchErr
+			}
+
+			return nil
+		},
+	)
 	if err != nil {
 		if isConnectionError(err) {
 			return fmt.Errorf("could not connect to Ephemeral server at %s", serverURL)
@@ -78,16 +105,8 @@ func runLogin(cmd *cobra.Command, args []string) error {
 		return loginWithToken(serverURL)
 	}
 
-	targetServer := serverURL
-	if authConfig.ServerURL != "" {
-		targetServer = authConfig.ServerURL
-		if !strings.HasPrefix(targetServer, "http://") && !strings.HasPrefix(targetServer, "https://") {
-			targetServer = "https://" + targetServer
-		}
-	}
-
 	if authConfig.AuthMethod == "web" && authConfig.AuthEndpoint != "" {
-		return loginWithWebAuth(serverURL, targetServer, authConfig.AuthEndpoint)
+		return loginWithWebAuth(serverURL, targetServer, authConfig.AuthEndpoint, sessionID)
 	}
 
 	return loginWithToken(targetServer)
@@ -129,12 +148,7 @@ func loginWithToken(serverURL string) error {
 	return completeLogin(serverURL, token)
 }
 
-func loginWithWebAuth(connectedServer, targetServer, authEndpoint string) error {
-	sessionID, err := createAuthSession(connectedServer)
-	if err != nil {
-		return fmt.Errorf("create auth session: %w", err)
-	}
-
+func loginWithWebAuth(connectedServer, targetServer, authEndpoint, sessionID string) error {
 	authURL := fmt.Sprintf("%s?session=%s&server=%s",
 		authEndpoint, sessionID, url.QueryEscape(connectedServer))
 
@@ -142,9 +156,13 @@ func loginWithWebAuth(connectedServer, targetServer, authEndpoint string) error 
 	fmt.Println("Open this URL to authenticate:")
 	fmt.Printf("  %s\n", authURL)
 	fmt.Println()
-	fmt.Println("Waiting for authentication...")
 
-	token, err := pollForToken(connectedServer, sessionID, 5*time.Minute)
+	var token string
+	err := runSpinner("Waiting for authentication...", "Authenticated", func() error {
+		var pollErr error
+		token, pollErr = pollForToken(connectedServer, sessionID, 5*time.Minute)
+		return pollErr
+	})
 	if err != nil {
 		return err
 	}
@@ -229,7 +247,13 @@ func pollForToken(serverURL, sessionID string, timeout time.Duration) (string, e
 
 func completeLogin(serverURL, token string) error {
 	c := client.New(serverURL, token)
-	namespaces, err := c.ListNamespaces(context.Background())
+
+	var namespaces []client.NamespaceWithAccess
+	err := runSpinner("Validating token...", "Token validated", func() error {
+		var validateErr error
+		namespaces, validateErr = c.ListNamespaces(context.Background())
+		return validateErr
+	})
 	if err != nil {
 		return formatLoginError(err)
 	}

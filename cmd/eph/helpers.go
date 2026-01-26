@@ -9,6 +9,8 @@ import (
 	"os/exec"
 	"strings"
 
+	"github.com/charmbracelet/huh/spinner"
+	"github.com/charmbracelet/lipgloss"
 	"golang.org/x/term"
 )
 
@@ -137,4 +139,26 @@ func formatAPIError(context string, err error) error {
 	}
 
 	return fmt.Errorf("%s: %s", context, err.Error())
+}
+
+var styleCheckmark = lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Render("✓")
+
+func runSpinner(spinnerTitle, completedTitle string, action func() error) error {
+	var actionErr error
+	err := spinner.New().
+		Title(spinnerTitle).
+		Action(func() {
+			actionErr = action()
+		}).
+		Run()
+	if err != nil {
+		if strings.Contains(err.Error(), "interrupt") || strings.Contains(err.Error(), "killed") {
+			os.Exit(0)
+		}
+		return err
+	}
+	if actionErr == nil {
+		fmt.Printf("%s %s\n", styleCheckmark, completedTitle)
+	}
+	return actionErr
 }
