@@ -191,6 +191,16 @@ func (m Model) loadMoreRepos() tea.Cmd {
 	}
 }
 
+func (m Model) loadNamespaces() tea.Cmd {
+	return func() tea.Msg {
+		namespaces, err := m.client.ListNamespaces(context.Background())
+		if err != nil {
+			return ActionErrorMsg{Operation: "load namespaces", Err: err}
+		}
+		return namespacesLoadedMsg{namespaces: namespaces}
+	}
+}
+
 func (m Model) loadDetail(repoID string) tea.Cmd {
 	return func() tea.Msg {
 		ctx := context.Background()

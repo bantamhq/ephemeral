@@ -43,6 +43,10 @@ const (
 	folderPickerWidth    = 40
 	folderPickerHeight   = 15
 	folderPickerMaxItems = 8
+
+	namespacePickerWidth    = 40
+	namespacePickerHeight   = 15
+	namespacePickerMaxItems = 8
 )
 
 type layoutSizes struct {

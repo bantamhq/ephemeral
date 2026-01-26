@@ -40,6 +40,8 @@ func (m Model) overlayModal(background string) string {
 	switch m.modal {
 	case modalManageFolders:
 		modalView = m.folderPicker.View()
+	case modalNamespaceSwitcher:
+		modalView = m.namespacePicker.View()
 	case modalHelp:
 		modalView = m.helpModalView()
 	default:

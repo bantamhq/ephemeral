@@ -24,6 +24,7 @@ type KeyMap struct {
 	Clone           key.Binding
 	CloneDir        key.Binding
 	ManageFolders   key.Binding
+	SwitchNamespace key.Binding
 }
 
 var DefaultKeyMap = KeyMap{
@@ -87,6 +88,10 @@ var DefaultKeyMap = KeyMap{
 		key.WithKeys("m"),
 		key.WithHelp("m", "manage folders"),
 	),
+	SwitchNamespace: key.NewBinding(
+		key.WithKeys("tab"),
+		key.WithHelp("tab", "switch namespace"),
+	),
 }
 
 type helpKeyMap struct {
@@ -96,15 +101,15 @@ type helpKeyMap struct {
 
 func (h helpKeyMap) ShortHelp() []key.Binding {
 	if h.hasSelectedRepo {
-		return []key.Binding{h.Help, h.Clone, h.ManageFolders, h.Rename, h.Delete, h.Quit}
+		return []key.Binding{h.Help, h.Clone, h.ManageFolders, h.SwitchNamespace, h.Quit}
 	}
-	return []key.Binding{h.Help, h.NewFolder, h.Rename, h.Delete, h.Quit}
+	return []key.Binding{h.Help, h.NewFolder, h.SwitchNamespace, h.Quit}
 }
 
 func (h helpKeyMap) FullHelp() [][]key.Binding {
 	shortcuts := []key.Binding{h.Up, h.Down, h.Left, h.Right, h.Enter, h.Escape}
 	editActions := []key.Binding{h.NewFolder, h.Rename, h.Delete}
-	meta := []key.Binding{h.Help, h.Quit}
+	meta := []key.Binding{h.SwitchNamespace, h.Help, h.Quit}
 
 	if !h.hasSelectedRepo {
 		return [][]key.Binding{shortcuts, editActions, meta}

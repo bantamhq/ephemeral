@@ -298,3 +298,138 @@ func (f FolderPickerModel) renderItem(item FolderPickerItem, isCursor bool) stri
 func (f FolderPickerModel) RepoID() string {
 	return f.repoID
 }
+
+type NamespacePickerItem struct {
+	Name      string
+	IsPrimary bool
+	IsActive  bool
+}
+
+type NamespacePickerCloseMsg struct{}
+
+type NamespacePickerSelectMsg struct {
+	Name string
+}
+
+type NamespacePickerModel struct {
+	items  []NamespacePickerItem
+	cursor int
+	width  int
+	height int
+}
+
+func NewNamespacePickerModel(items []NamespacePickerItem) NamespacePickerModel {
+	cursor := 0
+	for i, item := range items {
+		if item.IsActive {
+			cursor = i
+			break
+		}
+	}
+
+	return NamespacePickerModel{
+		items:  items,
+		cursor: cursor,
+		width:  namespacePickerWidth,
+		height: namespacePickerHeight,
+	}
+}
+
+func (n NamespacePickerModel) Init() tea.Cmd {
+	return nil
+}
+
+func (n NamespacePickerModel) Update(msg tea.Msg) (NamespacePickerModel, tea.Cmd) {
+	keyMsg, ok := msg.(tea.KeyMsg)
+	if !ok {
+		return n, nil
+	}
+
+	switch keyMsg.String() {
+	case "esc":
+		return n, func() tea.Msg { return NamespacePickerCloseMsg{} }
+
+	case "up", "k":
+		if n.cursor > 0 {
+			n.cursor--
+		}
+		return n, nil
+
+	case "down", "j":
+		if n.cursor < len(n.items)-1 {
+			n.cursor++
+		}
+		return n, nil
+
+	case "enter":
+		if n.cursor >= len(n.items) {
+			return n, nil
+		}
+		item := n.items[n.cursor]
+		return n, func() tea.Msg {
+			return NamespacePickerSelectMsg{Name: item.Name}
+		}
+	}
+
+	return n, nil
+}
+
+func (n NamespacePickerModel) View() string {
+	var content strings.Builder
+
+	content.WriteString(Styles.Common.Header.Render("Switch Namespace"))
+	content.WriteString("\n\n")
+
+	if len(n.items) == 0 {
+		content.WriteString(Styles.Common.MetaText.Render("No namespaces available"))
+		content.WriteString("\n\n")
+		content.WriteString(Styles.Dialog.Hint.Render("esc close"))
+		return Styles.Dialog.Box.Width(n.width).Render(content.String())
+	}
+
+	startIdx, endIdx := n.visibleRange()
+	for i := startIdx; i < endIdx; i++ {
+		item := n.items[i]
+		line := n.renderItem(item, i == n.cursor)
+		content.WriteString(line)
+		content.WriteString("\n")
+	}
+	content.WriteString("\n")
+	content.WriteString(Styles.Dialog.Hint.Render("enter select • esc close"))
+
+	return Styles.Dialog.Box.Width(n.width).Render(content.String())
+}
+
+func (n NamespacePickerModel) visibleRange() (start, end int) {
+	const maxVisible = namespacePickerMaxItems
+	start = 0
+	if n.cursor >= maxVisible {
+		start = n.cursor - maxVisible + 1
+	}
+	end = start + maxVisible
+	if end > len(n.items) {
+		end = len(n.items)
+	}
+	return start, end
+}
+
+func (n NamespacePickerModel) renderItem(item NamespacePickerItem, isCursor bool) string {
+	prefix := " "
+	if item.IsActive {
+		prefix = "✓"
+	} else if isCursor {
+		prefix = "→"
+	}
+
+	suffix := ""
+	if item.IsPrimary {
+		suffix = " ★"
+	}
+
+	line := prefix + " " + item.Name + suffix
+
+	if isCursor {
+		return Styles.Picker.Selected.Width(n.width - 4).Render(line)
+	}
+	return line
+}

@@ -20,6 +20,14 @@ if [ -z "$USER_TOKEN" ]; then
     exit 1
 fi
 
+echo "Creating additional namespaces..."
+./eph admin namespace add team-alpha
+./eph admin namespace add sandbox
+
+echo "Granting dev user access to namespaces..."
+./eph admin namespace grant team-alpha dev
+./eph admin namespace grant sandbox dev
+
 echo "Creating client config..."
 cat > client.toml << EOF
 server = "http://localhost:8080"

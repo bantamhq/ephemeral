@@ -23,11 +23,17 @@ api() {
     local method=$1
     local path=$2
     local data=$3
+    local namespace=$4
+
+    local headers=(-H "$AUTH_HEADER")
+    if [ -n "$namespace" ]; then
+        headers+=(-H "X-Namespace: $namespace")
+    fi
 
     if [ -n "$data" ]; then
-        curl -s -X "$method" -H "$AUTH_HEADER" -H "Content-Type: application/json" -d "$data" "$API$path"
+        curl -s -X "$method" "${headers[@]}" -H "Content-Type: application/json" -d "$data" "$API$path"
     else
-        curl -s -X "$method" -H "$AUTH_HEADER" "$API$path"
+        curl -s -X "$method" "${headers[@]}" "$API$path"
     fi
 }
 
@@ -225,12 +231,76 @@ push_seed_repo() {
 push_seed_repo "admin-panel"
 push_seed_repo "analytics-pipeline"
 
+###############################################################################
+# Team Alpha namespace - additional namespace with some data
+###############################################################################
+echo ""
+echo "Seeding team-alpha namespace..."
+
+TEAM_NS="team-alpha"
+
+# Create folders in team-alpha
+ALPHA_FRONTEND=$(api POST /folders '{"name": "frontend", "color": "#61DAFB"}' "" "$TEAM_NS" | get_id)
+echo "  frontend folder"
+
+ALPHA_BACKEND=$(api POST /folders '{"name": "backend", "color": "#00ADD8"}' "" "$TEAM_NS" | get_id)
+echo "  backend folder"
+
+ALPHA_SHARED=$(api POST /folders '{"name": "shared", "color": "#10B981"}' "" "$TEAM_NS" | get_id)
+echo "  shared folder"
+
+# Helper to create repos in team-alpha namespace
+create_team_repo() {
+    local name=$1
+    local desc=$2
+    shift 2
+    local folders=("$@")
+
+    local json="{\"name\": \"$name\""
+    if [ -n "$desc" ]; then
+        json="$json, \"description\": \"$desc\""
+    fi
+    json="$json}"
+
+    local id=$(api POST /repos "$json" "" "$TEAM_NS" | get_id)
+
+    local valid_folders=()
+    for f in "${folders[@]}"; do
+        if [ -n "$f" ]; then
+            valid_folders+=("$f")
+        fi
+    done
+
+    if [ ${#valid_folders[@]} -gt 0 ]; then
+        local folder_json=$(printf ',"%s"' "${valid_folders[@]}")
+        folder_json="[${folder_json:1}]"
+        api PUT "/repos/$id/folders" "{\"folder_ids\": $folder_json}" "$TEAM_NS" > /dev/null
+    fi
+
+    echo "  $name"
+}
+
+# Create repos in team-alpha
+create_team_repo "team-dashboard" "Team metrics and OKR tracking dashboard" "$ALPHA_FRONTEND"
+create_team_repo "customer-portal" "Customer-facing web application" "$ALPHA_FRONTEND"
+create_team_repo "orders-api" "Order management microservice" "$ALPHA_BACKEND"
+create_team_repo "inventory-service" "Inventory tracking and management" "$ALPHA_BACKEND"
+create_team_repo "common-types" "Shared TypeScript types and interfaces" "$ALPHA_SHARED"
+create_team_repo "design-tokens" "" "$ALPHA_SHARED"
+
+# Note: sandbox namespace is intentionally left empty
+
 echo ""
 echo "Seed complete!"
 echo ""
 echo "Summary:"
-echo "  Folders: 13"
-echo "  Repos: 35"
-echo "  Repos with history: 2"
+echo "  Primary namespace (dev):"
+echo "    Folders: 13"
+echo "    Repos: 35"
+echo "    Repos with history: 2"
+echo "  team-alpha namespace:"
+echo "    Folders: 3"
+echo "    Repos: 6"
+echo "  sandbox namespace: (empty)"
 echo ""
 echo "Run the TUI to see the data: eph"

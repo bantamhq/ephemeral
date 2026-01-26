@@ -89,3 +89,7 @@ type DetailLoadedMsg struct {
 	ReadmeFilename string
 	Err            error
 }
+
+type namespacesLoadedMsg struct {
+	namespaces []client.NamespaceWithAccess
+}

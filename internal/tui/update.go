@@ -81,6 +81,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case DetailLoadedMsg:
 		return m.handleDetailLoaded(msg)
+
+	case namespacesLoadedMsg:
+		return m.handleNamespacesLoaded(msg)
+
+	case NamespacePickerCloseMsg:
+		m.modal = modalNone
+		return m, nil
+
+	case NamespacePickerSelectMsg:
+		return m.handleNamespaceSelected(msg)
 	}
 
 	return m, nil
@@ -314,6 +324,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case key.Matches(msg, m.keys.ManageFolders):
 		return m.openManageFolders()
+
+	case key.Matches(msg, m.keys.SwitchNamespace):
+		return m.openNamespaceSwitcher()
 	}
 
 	return m, nil
@@ -643,14 +656,17 @@ func (m *Model) adjustFolderCount(folderID string, delta int) {
 }
 
 func (m Model) handleModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	if m.modal == modalManageFolders {
-		var cmd tea.Cmd
+	var cmd tea.Cmd
+
+	switch m.modal {
+	case modalManageFolders:
 		m.folderPicker, cmd = m.folderPicker.Update(msg)
-		return m, cmd
+	case modalNamespaceSwitcher:
+		m.namespacePicker, cmd = m.namespacePicker.Update(msg)
+	default:
+		m.dialog, cmd = m.dialog.Update(msg)
 	}
 
-	var cmd tea.Cmd
-	m.dialog, cmd = m.dialog.Update(msg)
 	return m, cmd
 }
 
@@ -915,4 +931,54 @@ func (m *Model) cacheDetail(repoID string, detail *RepoDetail) {
 		}
 	}
 	m.detailCache[repoID] = detail
+}
+
+func (m Model) handleNamespacesLoaded(msg namespacesLoadedMsg) (tea.Model, tea.Cmd) {
+	m.namespaces = msg.namespaces
+	m.namespacesLoaded = true
+	return m.showNamespacePicker()
+}
+
+func (m Model) handleNamespaceSelected(msg NamespacePickerSelectMsg) (tea.Model, tea.Cmd) {
+	m.modal = modalNone
+
+	if msg.Name == m.namespace {
+		return m, nil
+	}
+
+	m.namespace = msg.Name
+	m.client = m.client.WithNamespace(msg.Name)
+
+	m.loading = true
+	m.detailCache = make(map[string]*RepoDetail)
+	m.currentDetail = nil
+	m.lastLoadedRepo = ""
+	m.folderCursor = 0
+	m.repoCursor = -1
+	m.focusedColumn = columnFolders
+	m.statusMsg = "Switched to namespace: " + msg.Name
+
+	return m, tea.Batch(m.spinner.Tick, m.loadData())
+}
+
+func (m Model) openNamespaceSwitcher() (tea.Model, tea.Cmd) {
+	if !m.namespacesLoaded {
+		return m, m.loadNamespaces()
+	}
+	return m.showNamespacePicker()
+}
+
+func (m Model) showNamespacePicker() (tea.Model, tea.Cmd) {
+	items := make([]NamespacePickerItem, len(m.namespaces))
+	for i, ns := range m.namespaces {
+		items[i] = NamespacePickerItem{
+			Name:      ns.Name,
+			IsPrimary: ns.IsPrimary,
+			IsActive:  ns.Name == m.namespace,
+		}
+	}
+
+	m.modal = modalNamespaceSwitcher
+	m.namespacePicker = NewNamespacePickerModel(items)
+	return m, nil
 }

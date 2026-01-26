@@ -21,8 +21,9 @@ type namespaceGrantResponse struct {
 // namespaceListResponse represents a namespace with its grant for the current user.
 type namespaceListResponse struct {
 	store.Namespace
-	Allow []string `json:"allow"`
-	Deny  []string `json:"deny,omitempty"`
+	IsPrimary bool     `json:"is_primary"`
+	Allow     []string `json:"allow"`
+	Deny      []string `json:"deny,omitempty"`
 }
 
 // handleListNamespaces lists all namespaces the current user has access to.
@@ -34,6 +35,16 @@ func (s *Server) handleListNamespaces(w http.ResponseWriter, r *http.Request) {
 
 	if token.UserID == nil {
 		JSONError(w, http.StatusForbidden, "Token has no associated user")
+		return
+	}
+
+	user, err := s.store.GetUser(*token.UserID)
+	if err != nil {
+		JSONError(w, http.StatusInternalServerError, "Failed to get user")
+		return
+	}
+	if user == nil {
+		JSONError(w, http.StatusNotFound, "User not found")
 		return
 	}
 
@@ -51,6 +62,7 @@ func (s *Server) handleListNamespaces(w http.ResponseWriter, r *http.Request) {
 		}
 		result = append(result, namespaceListResponse{
 			Namespace: *ns,
+			IsPrimary: ns.ID == user.PrimaryNamespaceID,
 			Allow:     g.AllowBits.ToStrings(),
 			Deny:      g.DenyBits.ToStrings(),
 		})

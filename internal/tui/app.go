@@ -25,6 +25,7 @@ const (
 	modalCloneDir
 	modalManageFolders
 	modalHelp
+	modalNamespaceSwitcher
 )
 
 type detailTab int
@@ -68,9 +69,13 @@ type Model struct {
 	editingDescription bool
 	editText           string
 
-	modal        modalState
-	dialog       DialogModel
-	folderPicker FolderPickerModel
+	modal           modalState
+	dialog          DialogModel
+	folderPicker    FolderPickerModel
+	namespacePicker NamespacePickerModel
+
+	namespaces       []client.NamespaceWithAccess
+	namespacesLoaded bool
 
 	detailTab      detailTab
 	detailViewport viewport.Model
