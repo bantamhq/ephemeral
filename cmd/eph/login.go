@@ -145,7 +145,7 @@ func loginWithToken(serverURL string) error {
 		return fmt.Errorf("token cannot be empty")
 	}
 
-	return completeLogin(serverURL, token)
+	return completeLogin(serverURL, serverURL, token)
 }
 
 func loginWithWebAuth(connectedServer, targetServer, authEndpoint, sessionID string) error {
@@ -167,7 +167,7 @@ func loginWithWebAuth(connectedServer, targetServer, authEndpoint, sessionID str
 		return err
 	}
 
-	return completeLogin(targetServer, token)
+	return completeLogin(targetServer, connectedServer, token)
 }
 
 func createAuthSession(serverURL string) (string, error) {
@@ -245,7 +245,7 @@ func pollForToken(serverURL, sessionID string, timeout time.Duration) (string, e
 	return "", fmt.Errorf("authentication timed out")
 }
 
-func completeLogin(serverURL, token string) error {
+func completeLogin(serverURL, displayURL, token string) error {
 	c := client.New(serverURL, token)
 
 	var namespaces []client.NamespaceWithAccess
@@ -273,7 +273,7 @@ func completeLogin(serverURL, token string) error {
 		primaryNs = namespaces[0].Name
 	}
 
-	return saveLoginAndConfigure(serverURL, token, primaryNs, len(namespaces))
+	return saveLoginAndConfigure(serverURL, displayURL, token, primaryNs, len(namespaces))
 }
 
 func formatLoginError(err error) error {
@@ -290,7 +290,7 @@ func formatLoginError(err error) error {
 	return formatAPIError("authentication failed", err)
 }
 
-func saveLoginAndConfigure(serverURL, token, namespace string, namespaceCount int) error {
+func saveLoginAndConfigure(serverURL, displayURL, token, namespace string, namespaceCount int) error {
 	cfg := &config.ClientConfig{
 		Server:           serverURL,
 		Token:            token,
@@ -305,7 +305,7 @@ func saveLoginAndConfigure(serverURL, token, namespace string, namespaceCount in
 		fmt.Fprintf(os.Stderr, "Warning: failed to configure git credential helper: %v\n", err)
 	}
 
-	fmt.Printf("Logged in to %s\n", serverURL)
+	fmt.Printf("Logged in to %s\n", displayURL)
 	fmt.Printf("Default namespace: %s\n", namespace)
 	if namespaceCount > 1 {
 		fmt.Printf("You have access to %d namespaces. Use 'eph namespace' to list them.\n", namespaceCount)

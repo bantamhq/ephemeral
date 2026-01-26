@@ -175,14 +175,22 @@ func (m Model) setStatus(status string) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleRepoDeleted(_ RepoDeletedMsg) (tea.Model, tea.Cmd) {
-	m.statusMsg = "Repo deleted"
-	if len(m.filteredRepos) <= 1 {
-		m.focusedColumn = columnFolders
-		m.deselectRepo()
-	} else if m.repoCursor >= len(m.filteredRepos)-1 {
-		m.repoCursor--
+	return m, nil
+}
+
+func (m *Model) removeRepoByID(id string) {
+	m.repos = filterOutRepo(m.repos, id)
+	m.filteredRepos = filterOutRepo(m.filteredRepos, id)
+}
+
+func filterOutRepo(repos []client.Repo, id string) []client.Repo {
+	result := make([]client.Repo, 0, len(repos))
+	for _, r := range repos {
+		if r.ID != id {
+			result = append(result, r)
+		}
 	}
-	return m, m.loadData()
+	return result
 }
 
 func (m Model) handleFolderDeleted(_ FolderDeletedMsg) (tea.Model, tea.Cmd) {
@@ -198,6 +206,11 @@ func (m Model) handleActionError(msg ActionErrorMsg) (tea.Model, tea.Cmd) {
 		m.repoLoadingMore = false
 	}
 	m.statusMsg = "Could not " + msg.Operation + ": " + msg.Err.Error()
+
+	if msg.Operation == "delete repo" || msg.Operation == "delete folder" {
+		return m, m.loadData()
+	}
+
 	return m, nil
 }
 
@@ -838,7 +851,19 @@ func (m Model) handleDialogSubmit(msg DialogSubmitMsg) (tea.Model, tea.Cmd) {
 		if repo == nil {
 			return m, nil
 		}
-		return m, m.deleteRepo(repo.ID)
+		repoID := repo.ID
+
+		m.removeRepoByID(repoID)
+
+		if len(m.filteredRepos) == 0 {
+			m.focusedColumn = columnFolders
+			m.deselectRepo()
+		} else if m.repoCursor >= len(m.filteredRepos) {
+			m.repoCursor = len(m.filteredRepos) - 1
+		}
+
+		m.statusMsg = "Repo deleted"
+		return m, m.deleteRepo(repoID)
 
 	case modalDeleteFolder:
 		folder := m.selectedFolder()

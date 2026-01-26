@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
+	"github.com/charmbracelet/huh"
 	"github.com/go-git/go-git/v5"
 	gitconfig "github.com/go-git/go-git/v5/config"
 	"github.com/go-git/go-git/v5/plumbing/object"
@@ -90,7 +92,7 @@ func runNew(cmd *cobra.Command, args []string) error {
 
 	if existingRepo {
 		noPush, _ := cmd.Flags().GetBool("no-push")
-		return setupRemoteOnly(workDir, remoteURL, repo.Name, cfg.Token, noPush)
+		return setupRemoteOnly(workDir, remoteURL, cfg.Server, repo.Name, cfg.Token, noPush)
 	}
 
 	return initAndPush(workDir, remoteURL, repoName, cfg.Token)
@@ -104,25 +106,29 @@ func dirExists(path string) bool {
 	return info.IsDir()
 }
 
-func setupRemoteOnly(workDir, remoteURL, repoName, token string, noPush bool) error {
+func setupRemoteOnly(workDir, remoteURL, serverURL, repoName, token string, noPush bool) error {
 	repo, err := git.PlainOpen(workDir)
 	if err != nil {
 		return fmt.Errorf("open git repo: %w", err)
 	}
 
-	remoteAction, err := setOriginRemote(repo, remoteURL)
+	remoteName, remoteAction, err := configureRemote(repo, remoteURL, serverURL)
 	if err != nil {
 		return err
 	}
 
+	if remoteName == "" {
+		return nil
+	}
+
 	fmt.Printf("Created repository '%s'\n", repoName)
-	fmt.Printf("%s remote: %s\n", remoteAction, remoteURL)
+	fmt.Printf("%s remote '%s': %s\n", remoteAction, remoteName, remoteURL)
 
 	if noPush {
 		return nil
 	}
 
-	if err := pushToOrigin(repo, token); err != nil {
+	if err := pushToRemote(repo, remoteName, token); err != nil {
 		if errors.Is(err, git.NoErrAlreadyUpToDate) {
 			fmt.Println("Already up to date")
 			return nil
@@ -130,45 +136,133 @@ func setupRemoteOnly(workDir, remoteURL, repoName, token string, noPush bool) er
 		return err
 	}
 
-	fmt.Println("Pushed current branch to origin")
+	fmt.Printf("Pushed current branch to %s\n", remoteName)
 	return nil
 }
 
-func setOriginRemote(repo *git.Repository, remoteURL string) (string, error) {
-	_, err := repo.Remote("origin")
+func configureRemote(repo *git.Repository, remoteURL, serverURL string) (remoteName, action string, err error) {
+	existingRemote, err := repo.Remote("origin")
 	if errors.Is(err, git.ErrRemoteNotFound) {
-		_, err = repo.CreateRemote(&gitconfig.RemoteConfig{
-			Name: "origin",
-			URLs: []string{remoteURL},
-		})
-		if err != nil {
-			return "", fmt.Errorf("create remote: %w", err)
+		if err := createRemote(repo, "origin", remoteURL); err != nil {
+			return "", "", err
 		}
-		return "Added", nil
+		return "origin", "Added", nil
 	}
-
 	if err != nil {
-		return "", fmt.Errorf("check remote: %w", err)
+		return "", "", fmt.Errorf("check remote: %w", err)
 	}
 
-	if err := repo.DeleteRemote("origin"); err != nil {
-		return "", fmt.Errorf("delete old remote: %w", err)
+	existingURL := remoteFirstURL(existingRemote)
+	ephGitPrefix := serverURL + "/git/"
+
+	if strings.HasPrefix(existingURL, ephGitPrefix) {
+		if err := replaceRemote(repo, "origin", remoteURL); err != nil {
+			return "", "", err
+		}
+		return "origin", "Updated", nil
 	}
 
-	_, err = repo.CreateRemote(&gitconfig.RemoteConfig{
-		Name: "origin",
-		URLs: []string{remoteURL},
-	})
+	replaceOrigin, customName, err := promptRemoteConflict(existingURL)
 	if err != nil {
-		return "", fmt.Errorf("create remote: %w", err)
+		return "", "", err
 	}
 
-	return "Updated", nil
+	if customName == "" {
+		fmt.Println("Cancelled")
+		return "", "", nil
+	}
+
+	if replaceOrigin {
+		if err := replaceRemote(repo, "origin", remoteURL); err != nil {
+			return "", "", err
+		}
+		return "origin", "Replaced", nil
+	}
+
+	existingCustom, err := repo.Remote(customName)
+	if err == nil {
+		customURL := remoteFirstURL(existingCustom)
+		if strings.HasPrefix(customURL, ephGitPrefix) {
+			if err := replaceRemote(repo, customName, remoteURL); err != nil {
+				return "", "", err
+			}
+			return customName, "Updated", nil
+		}
+		return "", "", fmt.Errorf("remote %q already exists", customName)
+	}
+
+	if err := createRemote(repo, customName, remoteURL); err != nil {
+		return "", "", err
+	}
+	return customName, "Added", nil
 }
 
-func pushToOrigin(repo *git.Repository, token string) error {
+func remoteFirstURL(remote *git.Remote) string {
+	if urls := remote.Config().URLs; len(urls) > 0 {
+		return urls[0]
+	}
+	return ""
+}
+
+func createRemote(repo *git.Repository, name, url string) error {
+	_, err := repo.CreateRemote(&gitconfig.RemoteConfig{
+		Name: name,
+		URLs: []string{url},
+	})
+	if err != nil {
+		return fmt.Errorf("create remote: %w", err)
+	}
+	return nil
+}
+
+func replaceRemote(repo *git.Repository, name, url string) error {
+	if err := repo.DeleteRemote(name); err != nil {
+		return fmt.Errorf("delete old remote: %w", err)
+	}
+	return createRemote(repo, name, url)
+}
+
+func promptRemoteConflict(existingURL string) (replaceOrigin bool, customName string, err error) {
+	var replace bool
+	var remoteName string
+
+	form := huh.NewForm(
+		huh.NewGroup(
+			huh.NewConfirm().
+				Title("Remote 'origin' already exists").
+				Description(existingURL).
+				Affirmative("Replace origin").
+				Negative("Use different name").
+				Value(&replace),
+		),
+		huh.NewGroup(
+			huh.NewInput().
+				Title("Remote name").
+				Placeholder("eph").
+				Value(&remoteName),
+		).WithHideFunc(func() bool {
+			return replace
+		}),
+	).WithTheme(huh.ThemeBase())
+
+	if err := form.Run(); err != nil {
+		return false, "", fmt.Errorf("configure remote: %w", err)
+	}
+
+	if replace {
+		return true, "origin", nil
+	}
+
+	if remoteName == "" {
+		remoteName = "eph"
+	}
+
+	return false, remoteName, nil
+}
+
+func pushToRemote(repo *git.Repository, remoteName, token string) error {
 	err := repo.Push(&git.PushOptions{
-		RemoteName: "origin",
+		RemoteName: remoteName,
 		Auth: &http.BasicAuth{
 			Username: "x-token",
 			Password: token,
@@ -184,6 +278,11 @@ func initAndPush(workDir, remoteURL, repoName, token string) error {
 	repo, err := git.PlainInit(workDir, false)
 	if err != nil {
 		return fmt.Errorf("git init: %w", err)
+	}
+
+	headPath := filepath.Join(workDir, ".git", "HEAD")
+	if err := os.WriteFile(headPath, []byte("ref: refs/heads/main\n"), 0644); err != nil {
+		return fmt.Errorf("set default branch: %w", err)
 	}
 
 	_, err = repo.CreateRemote(&gitconfig.RemoteConfig{
@@ -220,7 +319,7 @@ func initAndPush(workDir, remoteURL, repoName, token string) error {
 		return fmt.Errorf("commit: %w", err)
 	}
 
-	if err := pushToOrigin(repo, token); err != nil {
+	if err := pushToRemote(repo, "origin", token); err != nil {
 		return err
 	}
 
