@@ -84,13 +84,13 @@ func (m Model) renderFolderColumn(width, height int) string {
 	countStr := fmt.Sprintf("%d", len(m.repos))
 
 	if m.folderCursor == 0 {
-		prefix := "  "
-		if m.focusedColumn == columnFolders {
-			prefix = "→ "
-		}
-		left := prefix + allReposLabel
+		left := "→ " + allReposLabel
 		line := m.rightAlignInWidth(left, countStr, width)
-		b.WriteString(Styles.Folder.Selected.Width(width).Render(line))
+		if m.focusedColumn == columnFolders {
+			b.WriteString(Styles.Folder.Selected.Width(width).Render(line))
+		} else {
+			b.WriteString(Styles.Folder.Unfocused.Width(width).Render(line))
+		}
 	} else {
 		left := "  " + allReposLabel
 		line := m.rightAlignInWidth(left, Styles.Common.MetaText.Render(countStr), width)
@@ -119,7 +119,7 @@ func (m Model) renderFolderColumn(width, height int) string {
 		isSelected := cursorIdx == m.folderCursor
 
 		prefix := "  "
-		if isSelected && m.focusedColumn == columnFolders {
+		if isSelected {
 			prefix = "→ "
 		}
 
@@ -130,11 +130,16 @@ func (m Model) renderFolderColumn(width, height int) string {
 			visibleText := truncateEditText(m.editText, maxNameWidth)
 			line := prefix + visibleText + "█"
 			b.WriteString(Styles.Folder.Editing.Width(width).Render(line))
-		} else if isSelected {
+		} else if isSelected && m.focusedColumn == columnFolders {
 			name := truncateWithEllipsis(folder.Name, maxNameWidth)
 			left := prefix + name
 			line := m.rightAlignInWidth(left, countStr, width)
 			b.WriteString(Styles.Folder.Selected.Width(width).Render(line))
+		} else if isSelected {
+			name := truncateWithEllipsis(folder.Name, maxNameWidth)
+			left := prefix + name
+			line := m.rightAlignInWidth(left, countStr, width)
+			b.WriteString(Styles.Folder.Unfocused.Width(width).Render(line))
 		} else {
 			name := truncateWithEllipsis(folder.Name, maxNameWidth)
 			left := prefix + name
@@ -657,12 +662,16 @@ func renderCommitStats(stats *client.CommitStats) string {
 }
 
 func (m Model) getFilesContent(width int) string {
+	if m.detailLoading {
+		return " " + Styles.Common.MetaText.Render("Loading...")
+	}
+
 	if m.currentDetail == nil || len(m.currentDetail.Tree) == 0 {
 		return " " + Styles.Common.MetaText.Render("No files")
 	}
 
 	entries := sortTreeEntries(m.currentDetail.Tree)
-	children := buildFileTreeChildren(entries)
+	children := buildFileTreeChildren(entries, 0)
 
 	t := tree.Root(" /")
 	if len(children) > 0 {
@@ -696,21 +705,28 @@ func sortTreeEntries(entries []client.TreeEntry) []client.TreeEntry {
 	return sorted
 }
 
-func buildFileTreeChildren(entries []client.TreeEntry) []any {
+func buildFileTreeChildren(entries []client.TreeEntry, depth int) []any {
 	children := make([]any, 0, len(entries))
 
 	for _, entry := range entries {
 		name := entry.Name
 		if entry.Type == "dir" {
-			name = Styles.Tree.Dir.Render(name)
+			name = Styles.Tree.Dir.Render(name + "/")
 		}
 
 		if len(entry.Children) > 0 {
 			node := tree.Root(name)
-			nodeChildren := buildFileTreeChildren(entry.Children)
+			nodeChildren := buildFileTreeChildren(entry.Children, depth+1)
 			if len(nodeChildren) > 0 {
 				node.Child(nodeChildren...)
 			}
+			children = append(children, node)
+			continue
+		}
+
+		if entry.Type == "dir" && depth >= 2 {
+			node := tree.Root(name)
+			node.Child(Styles.Common.MetaText.Render("..."))
 			children = append(children, node)
 			continue
 		}

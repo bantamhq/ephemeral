@@ -12,8 +12,9 @@ type Colors struct {
 }
 
 type FolderStyles struct {
-	Selected lipgloss.Style
-	Editing  lipgloss.Style
+	Selected  lipgloss.Style
+	Unfocused lipgloss.Style
+	Editing   lipgloss.Style
 }
 
 type RepoItemStyles struct {
@@ -137,6 +138,8 @@ func NewStyles() *StyleConfig {
 			Selected: lipgloss.NewStyle().
 				Background(colors.Subdued).
 				Foreground(colors.PrimaryReverse).
+				Bold(true),
+			Unfocused: lipgloss.NewStyle().
 				Bold(true),
 			Editing: editingStyle,
 		},

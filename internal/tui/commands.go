@@ -231,7 +231,7 @@ func (m Model) loadDetail(repoID string) tea.Cmd {
 			if err != nil {
 				return DetailLoadedMsg{RepoID: repoID, Err: fmt.Errorf("list commits for %s: %w", defaultRef, err)}
 			}
-			tree, err = m.client.GetTreeWithDepth(ctx, repoID, defaultRef, "", 2)
+			tree, err = m.client.GetTreeWithDepth(ctx, repoID, defaultRef, "", 3)
 			if err != nil {
 				return DetailLoadedMsg{RepoID: repoID, Err: fmt.Errorf("get tree for %s: %w", defaultRef, err)}
 			}

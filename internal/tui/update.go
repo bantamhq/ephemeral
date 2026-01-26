@@ -4,6 +4,9 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"sort"
+	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/spinner"
@@ -40,13 +43,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case FolderCreatedMsg:
-		return m.reloadWithStatus("Folder created: " + msg.Folder.Name)
+		m.replaceTempFolder(msg.Folder)
+		m.statusMsg = "Folder created: " + msg.Folder.Name
+		return m, nil
 
 	case FolderUpdatedMsg:
-		return m.reloadWithStatus("Folder renamed: " + msg.Folder.Name)
+		m.statusMsg = "Folder renamed: " + msg.Folder.Name
+		return m, nil
 
 	case RepoUpdatedMsg:
-		return m.reloadWithStatus("Repo updated: " + msg.Repo.Name)
+		m.statusMsg = "Repo updated: " + msg.Repo.Name
+		return m, nil
 
 	case RepoDeletedMsg:
 		return m.handleRepoDeleted(msg)
@@ -195,10 +202,61 @@ func filterOutRepo(repos []client.Repo, id string) []client.Repo {
 
 func (m Model) handleFolderDeleted(_ FolderDeletedMsg) (tea.Model, tea.Cmd) {
 	m.statusMsg = "Folder deleted"
-	if m.folderCursor > 0 {
-		m.folderCursor--
+	return m, nil
+}
+
+func (m *Model) removeFolderByID(id string) {
+	result := make([]client.Folder, 0, len(m.folders))
+	for _, f := range m.folders {
+		if f.ID != id {
+			result = append(result, f)
+		}
 	}
-	return m, m.loadData()
+	m.folders = result
+	delete(m.folderCounts, id)
+}
+
+func (m *Model) updateLocalFolder(id string, mutate func(*client.Folder)) {
+	for i := range m.folders {
+		if m.folders[i].ID == id {
+			mutate(&m.folders[i])
+			break
+		}
+	}
+}
+
+func (m *Model) addLocalFolder(name string) {
+	tempFolder := client.Folder{
+		ID:        "temp-" + name,
+		Name:      name,
+		CreatedAt: time.Now(),
+	}
+	m.folders = append(m.folders, tempFolder)
+	sort.Slice(m.folders, func(i, j int) bool {
+		return strings.ToLower(m.folders[i].Name) < strings.ToLower(m.folders[j].Name)
+	})
+	m.folderCounts[tempFolder.ID] = 0
+
+	for i, f := range m.folders {
+		if f.ID == tempFolder.ID {
+			m.folderCursor = i + 1
+			break
+		}
+	}
+}
+
+func (m *Model) replaceTempFolder(folder client.Folder) {
+	tempID := "temp-" + folder.Name
+	for i, f := range m.folders {
+		if f.ID == tempID {
+			m.folders[i] = folder
+			if count, ok := m.folderCounts[tempID]; ok {
+				delete(m.folderCounts, tempID)
+				m.folderCounts[folder.ID] = count
+			}
+			return
+		}
+	}
 }
 
 func (m Model) handleActionError(msg ActionErrorMsg) (tea.Model, tea.Cmd) {
@@ -207,7 +265,8 @@ func (m Model) handleActionError(msg ActionErrorMsg) (tea.Model, tea.Cmd) {
 	}
 	m.statusMsg = "Could not " + msg.Operation + ": " + msg.Err.Error()
 
-	if msg.Operation == "delete repo" || msg.Operation == "delete folder" {
+	switch msg.Operation {
+	case "delete repo", "delete folder", "rename folder", "create folder", "rename repo", "update repo description":
 		return m, m.loadData()
 	}
 
@@ -241,6 +300,7 @@ func (m *Model) applyRepoFolderRemoved(repoID, folderID string) {
 }
 
 func (m Model) handleDetailLoaded(msg DetailLoadedMsg) (tea.Model, tea.Cmd) {
+	m.detailLoading = false
 	detail := &RepoDetail{
 		RepoID:         msg.RepoID,
 		Refs:           msg.Refs,
@@ -500,6 +560,7 @@ func (m Model) submitEdit() (tea.Model, tea.Cmd) {
 		if newValue == editingFolder.Name {
 			return m, nil
 		}
+		m.updateLocalFolder(editingFolder.ID, func(f *client.Folder) { f.Name = newValue })
 		return m, m.renameFolder(editingFolder.ID, newValue)
 	}
 
@@ -844,6 +905,7 @@ func (m Model) handleDialogSubmit(msg DialogSubmitMsg) (tea.Model, tea.Cmd) {
 		if msg.Value == "" {
 			return m, nil
 		}
+		m.addLocalFolder(msg.Value)
 		return m, m.createFolder(msg.Value)
 
 	case modalDeleteRepo:
@@ -870,7 +932,16 @@ func (m Model) handleDialogSubmit(msg DialogSubmitMsg) (tea.Model, tea.Cmd) {
 		if folder == nil {
 			return m, nil
 		}
-		return m, m.deleteFolder(folder.ID)
+		folderID := folder.ID
+
+		m.removeFolderByID(folderID)
+
+		if m.folderCursor > len(m.folders) {
+			m.folderCursor = len(m.folders)
+		}
+		m.filterRepos()
+
+		return m, m.deleteFolder(folderID)
 
 	case modalCloneDir:
 		if msg.Value == "" {
@@ -926,6 +997,7 @@ func (m *Model) maybeLoadDetail() tea.Cmd {
 		m.resetDetailScroll()
 		m.currentDetail = nil
 		m.lastLoadedRepo = ""
+		m.detailLoading = false
 		m.setViewportContent()
 		return nil
 	}
@@ -939,12 +1011,15 @@ func (m *Model) maybeLoadDetail() tea.Cmd {
 	if cached, ok := m.detailCache[repo.ID]; ok {
 		m.currentDetail = cached
 		m.lastLoadedRepo = repo.ID
+		m.detailLoading = false
 		m.setViewportContent()
 		return nil
 	}
 
 	m.detailViewport.Height = m.detailViewportHeight()
 	m.lastLoadedRepo = repo.ID
+	m.detailLoading = true
+	m.setViewportContent()
 	return m.loadDetail(repo.ID)
 }
 

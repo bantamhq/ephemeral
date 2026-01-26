@@ -83,6 +83,7 @@ type Model struct {
 	detailScroll   map[detailTab]int
 	currentDetail  *RepoDetail
 	lastLoadedRepo string
+	detailLoading  bool
 
 	loading   bool
 	err       error
